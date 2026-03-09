@@ -1,6 +1,7 @@
 #include "UE_MCP_BridgeModule.h"
 #include "Modules/ModuleManager.h"
 #include "BridgeServer.h"
+#include "Handlers/DialogHandlers.h"
 #include "Misc/ConfigCacheIni.h"
 
 IMPLEMENT_MODULE(FUE_MCP_BridgeModule, UE_MCP_Bridge)
@@ -11,6 +12,8 @@ void FUE_MCP_BridgeModule::StartupModule()
 {
 	// Create and start bridge server
 	G_BridgeServer = MakeShared<FMCPBridgeServer>(9877);
+	FDialogHandlers::InstallDialogHook();
+
 	if (G_BridgeServer->Start())
 	{
 		UE_LOG(LogTemp, Log, TEXT("[UE-MCP] Bridge server started on port 9877"));
@@ -24,6 +27,8 @@ void FUE_MCP_BridgeModule::StartupModule()
 void FUE_MCP_BridgeModule::ShutdownModule()
 {
 	// Stop bridge server
+	FDialogHandlers::RemoveDialogHook();
+
 	if (G_BridgeServer.IsValid())
 	{
 		G_BridgeServer->Shutdown();

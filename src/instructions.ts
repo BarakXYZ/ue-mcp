@@ -73,7 +73,9 @@ editor — Console, Python, PIE, viewport, sequencer, perf, build pipeline, logs
   create_sequence, get_sequence_info, add_sequence_track, play_sequence,
   build_all, build_geometry, build_hlod, validate_assets,
   get_build_status, cook_content,
-  get_log, search_log, get_message_log
+  get_log, search_log, get_message_log,
+  set_dialog_policy, clear_dialog_policy, get_dialog_policy,
+  list_dialogs, respond_to_dialog
 
 reflection — UE class/struct/enum reflection, gameplay tags
   reflect_class, reflect_struct, reflect_enum, list_classes,

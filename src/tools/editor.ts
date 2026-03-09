@@ -57,6 +57,12 @@ export const editorTool: ToolDef = categoryTool(
     list_crashes: bp("list_crashes"),
     get_crash_info: bp("get_crash_info"),
     check_for_crashes: bp("check_for_crashes"),
+    // Dialogs
+    set_dialog_policy: bp("set_dialog_policy"),
+    clear_dialog_policy: bp("clear_dialog_policy"),
+    get_dialog_policy: bp("get_dialog_policy"),
+    list_dialogs: bp("list_dialogs"),
+    respond_to_dialog: bp("respond_to_dialog"),
     // Dev
     reload_bridge: bp("reload_handlers"),
   },
@@ -90,6 +96,11 @@ export const editorTool: ToolDef = categoryTool(
 - get_log: Read output log. Params: maxLines?, filter?, category?
 - search_log: Search log. Params: query
 - get_message_log: Read message log. Params: logName?
+- set_dialog_policy: Auto-respond to dialogs matching a pattern. Params: pattern, response ('yes'|'no'|'ok'|'cancel'|'retry'|'continue'|'yesall'|'noall')
+- clear_dialog_policy: Clear dialog policies. Params: pattern? (omit to clear all)
+- get_dialog_policy: Get current dialog policies
+- list_dialogs: List active modal dialogs with title, message, and button labels
+- respond_to_dialog: Click a button on the active modal dialog. Params: buttonIndex? or buttonLabel?, action? ('escape')
 - reload_bridge: Hot-reload all Python bridge handlers from disk (no editor restart needed)`,
   {
     command: z.string().optional(),
@@ -117,5 +128,9 @@ export const editorTool: ToolDef = categoryTool(
     query: z.string().optional(),
     logName: z.string().optional(),
     crashFolder: z.string().optional(),
+    pattern: z.string().optional().describe("Substring to match in dialog title or message"),
+    response: z.enum(["yes", "no", "ok", "cancel", "retry", "continue", "yesall", "noall"]).optional().describe("Auto-response for matched dialogs"),
+    buttonIndex: z.number().optional().describe("Index of button to click in active dialog"),
+    buttonLabel: z.string().optional().describe("Label of button to click in active dialog"),
   },
 );

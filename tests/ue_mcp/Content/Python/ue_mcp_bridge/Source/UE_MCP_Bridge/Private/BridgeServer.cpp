@@ -14,6 +14,7 @@
 #include "Handlers/ReflectionHandlers.h"
 #include "Handlers/GasHandlers.h"
 #include "Handlers/GameplayHandlers.h"
+#include "Handlers/DialogHandlers.h"
 
 // Platform-specific socket includes
 #if PLATFORM_WINDOWS
@@ -53,6 +54,7 @@ FMCPBridgeServer::FMCPBridgeServer(int32 Port)
 	FReflectionHandlers::RegisterHandlers(HandlerRegistry);
 	FGasHandlers::RegisterHandlers(HandlerRegistry);
 	FGameplayHandlers::RegisterHandlers(HandlerRegistry);
+	FDialogHandlers::RegisterHandlers(HandlerRegistry);
 }
 
 FMCPBridgeServer::~FMCPBridgeServer()
