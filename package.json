@@ -27,7 +27,8 @@
     "test:foliage": "vitest run tests/smoke/foliage.test.ts",
     "test:widget": "vitest run tests/smoke/widget.test.ts",
     "test:networking": "vitest run tests/smoke/networking.test.ts",
-    "test:gas": "vitest run tests/smoke/gas.test.ts"
+    "test:gas": "vitest run tests/smoke/gas.test.ts",
+    "test:smoke": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

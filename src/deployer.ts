@@ -13,10 +13,10 @@ export interface DeployResult {
 /**
  * Deploy the C++ bridge plugin to the target UE project.
  *
- * PythonScriptPlugin is still enabled because the C++ bridge's
- * `execute_python` handler calls into it at runtime — but the
- * Python WebSocket bridge server is gone.  The C++ module auto-starts
- * on editor load (Editor loading phase).
+ * Copies plugin source from plugin/ue_mcp_bridge/ into the target
+ * project's Plugins/UE_MCP_Bridge/ directory (skipping build artifacts).
+ * Also enables PythonScriptPlugin in the .uproject because the C++
+ * bridge's `execute_python` handler calls into it at runtime.
  */
 export function deploy(context: ProjectContext): DeployResult {
   const result: DeployResult = {
@@ -63,7 +63,7 @@ function ensurePythonPlugin(uprojectPath: string): boolean {
   if (already) return false;
 
   root.Plugins.unshift({ Name: "PythonScriptPlugin", Enabled: true });
-  fs.writeFileSync(uprojectPath, JSON.stringify(root, null, 2));
+  fs.writeFileSync(uprojectPath, JSON.stringify(root, null, "\t"));
   return true;
 }
 
@@ -98,16 +98,11 @@ function deployCppPlugin(uprojectPath: string): boolean {
       const srcPath = path.join(src, entry.name);
       const destPath = path.join(dest, entry.name);
 
-      // Skip build artifacts and Python files (no longer needed)
+      // Skip build artifacts
       if (
         entry.name === "Binaries" ||
         entry.name === "Intermediate" ||
-        entry.name === "Saved" ||
-        entry.name === "__pycache__" ||
-        entry.name === "handlers" ||
-        entry.name === "bridge_server.py" ||
-        entry.name === "startup_script.py" ||
-        entry.name === "__init__.py"
+        entry.name === "Saved"
       ) {
         continue;
       }

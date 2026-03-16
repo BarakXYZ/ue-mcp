@@ -79,8 +79,8 @@ TSharedPtr<FJsonValue> FNetworkingHandlers::GetNetworkingInfo(const TSharedPtr<F
 
 	Result->SetStringField(TEXT("blueprintPath"), BlueprintPath);
 	Result->SetBoolField(TEXT("replicates"), CDO->GetIsReplicated());
-	Result->SetNumberField(TEXT("netUpdateFrequency"), CDO->NetUpdateFrequency);
-	Result->SetNumberField(TEXT("minNetUpdateFrequency"), CDO->MinNetUpdateFrequency);
+	Result->SetNumberField(TEXT("netUpdateFrequency"), CDO->GetNetUpdateFrequency());
+	Result->SetNumberField(TEXT("minNetUpdateFrequency"), CDO->GetMinNetUpdateFrequency());
 	Result->SetNumberField(TEXT("netPriority"), CDO->NetPriority);
 	Result->SetBoolField(TEXT("alwaysRelevant"), CDO->bAlwaysRelevant);
 	Result->SetBoolField(TEXT("replicateMovement"), CDO->IsReplicatingMovement());
@@ -136,20 +136,20 @@ TSharedPtr<FJsonValue> FNetworkingHandlers::ConfigureNetUpdateFrequency(const TS
 	double NetUpdateFrequency = 0;
 	if (Params->TryGetNumberField(TEXT("netUpdateFrequency"), NetUpdateFrequency))
 	{
-		CDO->NetUpdateFrequency = (float)NetUpdateFrequency;
+		CDO->SetNetUpdateFrequency((float)NetUpdateFrequency);
 	}
 	double MinNetUpdateFrequency = 0;
 	if (Params->TryGetNumberField(TEXT("minNetUpdateFrequency"), MinNetUpdateFrequency))
 	{
-		CDO->MinNetUpdateFrequency = (float)MinNetUpdateFrequency;
+		CDO->SetMinNetUpdateFrequency((float)MinNetUpdateFrequency);
 	}
 
 	UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
 	SaveBlueprint(Blueprint);
 
 	Result->SetStringField(TEXT("blueprintPath"), BlueprintPath);
-	Result->SetNumberField(TEXT("netUpdateFrequency"), CDO->NetUpdateFrequency);
-	Result->SetNumberField(TEXT("minNetUpdateFrequency"), CDO->MinNetUpdateFrequency);
+	Result->SetNumberField(TEXT("netUpdateFrequency"), CDO->GetNetUpdateFrequency());
+	Result->SetNumberField(TEXT("minNetUpdateFrequency"), CDO->GetMinNetUpdateFrequency());
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }
@@ -393,7 +393,7 @@ TSharedPtr<FJsonValue> FNetworkingHandlers::GetReplicationInfo(const TSharedPtr<
 	Result->SetBoolField(TEXT("replicateMovement"), CDO->IsReplicatingMovement());
 	Result->SetBoolField(TEXT("alwaysRelevant"), CDO->bAlwaysRelevant);
 	Result->SetBoolField(TEXT("onlyRelevantToOwner"), CDO->bOnlyRelevantToOwner);
-	Result->SetNumberField(TEXT("netUpdateFrequency"), CDO->NetUpdateFrequency);
+	Result->SetNumberField(TEXT("netUpdateFrequency"), CDO->GetNetUpdateFrequency());
 	Result->SetNumberField(TEXT("netPriority"), CDO->NetPriority);
 	Result->SetNumberField(TEXT("netDormancy"), (int32)CDO->NetDormancy);
 

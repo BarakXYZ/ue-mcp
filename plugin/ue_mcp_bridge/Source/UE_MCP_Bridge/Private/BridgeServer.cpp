@@ -234,8 +234,10 @@ uint32 FMCPBridgeServer::Run()
 			if (ClientSocketFD >= 0)
 			{
 #endif
-			UE_LOG(LogMCPBridge, Log, TEXT("[UE-MCP] Client connected from %s:%d"), 
-				ANSI_TO_TCHAR(inet_ntoa(ClientAddr.sin_addr)), ntohs(ClientAddr.sin_port));
+			char AddrStr[INET_ADDRSTRLEN];
+			inet_ntop(AF_INET, &ClientAddr.sin_addr, AddrStr, INET_ADDRSTRLEN);
+			UE_LOG(LogMCPBridge, Log, TEXT("[UE-MCP] Client connected from %s:%d"),
+				ANSI_TO_TCHAR(AddrStr), ntohs(ClientAddr.sin_port));
 				
 				// Handle each WebSocket connection in its own thread
 				Async(EAsyncExecution::Thread, [this, ClientSocketFD]() {

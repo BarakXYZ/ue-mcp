@@ -89,12 +89,12 @@ TSharedPtr<FJsonValue> FAssetHandlers::ListAssets(const TSharedPtr<FJsonObject>&
 	TArray<TSharedPtr<FJsonValue>> AssetsArray;
 	for (const FAssetData& AssetData : AssetDataList)
 	{
-		FString AssetPath = AssetData.ObjectPath.ToString();
+		FString AssetPath = AssetData.GetObjectPathString();
 		if (Query == TEXT("*") || AssetPath.Contains(Query))
 		{
 			TSharedPtr<FJsonObject> AssetObj = MakeShared<FJsonObject>();
 			AssetObj->SetStringField(TEXT("path"), AssetPath);
-			AssetObj->SetStringField(TEXT("className"), AssetData.AssetClass.ToString());
+			AssetObj->SetStringField(TEXT("className"), AssetData.AssetClassPath.GetAssetName().ToString());
 			AssetObj->SetStringField(TEXT("name"), AssetData.AssetName.ToString());
 			AssetsArray.Add(MakeShared<FJsonValueObject>(AssetObj));
 		}
@@ -705,9 +705,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportStaticMesh(const TSharedPtr<FJsonOb
 	AssetToolsModule.Get().ImportAssetTasks(Tasks);
 
 	TArray<TSharedPtr<FJsonValue>> ImportedPaths;
-	if (Task->Result.Num() > 0)
+	if (Task->GetObjects().Num() > 0)
 	{
-		for (UObject* ImportedObj : Task->Result)
+		for (UObject* ImportedObj : Task->GetObjects())
 		{
 			if (ImportedObj)
 			{
@@ -817,9 +817,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportSkeletalMesh(const TSharedPtr<FJson
 	AssetToolsModule.Get().ImportAssetTasks(Tasks);
 
 	TArray<TSharedPtr<FJsonValue>> ImportedPaths;
-	if (Task->Result.Num() > 0)
+	if (Task->GetObjects().Num() > 0)
 	{
-		for (UObject* ImportedObj : Task->Result)
+		for (UObject* ImportedObj : Task->GetObjects())
 		{
 			if (ImportedObj)
 			{
@@ -931,9 +931,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportAnimation(const TSharedPtr<FJsonObj
 	AssetToolsModule.Get().ImportAssetTasks(Tasks);
 
 	TArray<TSharedPtr<FJsonValue>> ImportedPaths;
-	if (Task->Result.Num() > 0)
+	if (Task->GetObjects().Num() > 0)
 	{
-		for (UObject* ImportedObj : Task->Result)
+		for (UObject* ImportedObj : Task->GetObjects())
 		{
 			if (ImportedObj)
 			{
@@ -1246,9 +1246,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportTexture(const TSharedPtr<FJsonObjec
 	AssetToolsModule.Get().ImportAssetTasks(Tasks);
 
 	TArray<TSharedPtr<FJsonValue>> ImportedPaths;
-	if (Task->Result.Num() > 0)
+	if (Task->GetObjects().Num() > 0)
 	{
-		for (UObject* ImportedObj : Task->Result)
+		for (UObject* ImportedObj : Task->GetObjects())
 		{
 			if (ImportedObj)
 			{

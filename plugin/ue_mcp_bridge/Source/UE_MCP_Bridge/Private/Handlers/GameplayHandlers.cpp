@@ -1826,12 +1826,13 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetupPathFollowing(const TSharedPtr<FJ
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// In UE 5.7, SetMovementComponent() expects a UNavMovementComponent* (not UMovementComponent*).
-	// Get the CharacterMovementComponent which inherits from UNavMovementComponent.
+	// SetMovementComponent is deprecated but SetNavMoveInterface doesn't exist yet in 5.7
 	UNavMovementComponent* NavMoveComp = Pawn->FindComponentByClass<UNavMovementComponent>();
 	if (NavMoveComp)
 	{
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		PathFollowComp->SetMovementComponent(NavMoveComp);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 	else
 	{

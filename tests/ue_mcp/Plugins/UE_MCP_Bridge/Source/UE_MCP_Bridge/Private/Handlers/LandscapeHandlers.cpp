@@ -861,7 +861,9 @@ TSharedPtr<FJsonValue> FLandscapeHandlers::AddLandscapeLayerInfo(const TSharedPt
 			return MakeShared<FJsonValueObject>(Result);
 		}
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		LayerInfoObj->LayerName = FName(*LayerName);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// Set optional properties
 		bool bIsWeightBlended = true;

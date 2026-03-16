@@ -24,6 +24,8 @@
 #include "Components/ComboBoxString.h"
 #include "Animation/WidgetAnimation.h"
 #include "MovieScene.h"
+#include "MovieScenePossessable.h"
+#include "MovieSceneSpawnable.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "UObject/UnrealType.h"
@@ -567,7 +569,7 @@ TSharedPtr<FJsonValue> FWidgetHandlers::GetWidgetProperties(const TSharedPtr<FJs
 	{
 		PropsObj->SetStringField(TEXT("widgetType"), TEXT("EditableTextBox"));
 		PropsObj->SetStringField(TEXT("text"), EditableText->GetText().ToString());
-		PropsObj->SetStringField(TEXT("hintText"), EditableText->HintText.ToString());
+		PropsObj->SetStringField(TEXT("hintText"), EditableText->GetHintText().ToString());
 	}
 	else if (UComboBoxString* ComboBox = Cast<UComboBoxString>(FoundWidget))
 	{
@@ -840,11 +842,31 @@ TSharedPtr<FJsonValue> FWidgetHandlers::ReadWidgetAnimations(const TSharedPtr<FJ
 
 			// Tracks (bindings)
 			TArray<TSharedPtr<FJsonValue>> BindingsArray;
-			for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+			const UMovieScene* ConstMovieScene = MovieScene;
+			const TArray<FMovieSceneBinding>& Bindings = ConstMovieScene->GetBindings();
+			for (const FMovieSceneBinding& Binding : Bindings)
 			{
 				TSharedPtr<FJsonObject> BindingObj = MakeShared<FJsonObject>();
-				BindingObj->SetStringField(TEXT("name"), Binding.GetName());
-				BindingObj->SetStringField(TEXT("id"), Binding.GetObjectGuid().ToString());
+
+				// FMovieSceneBinding::GetName() is deprecated; look up the name from possessable/spawnable instead
+				FGuid ObjectGuid = Binding.GetObjectGuid();
+				FString BindingName;
+				FMovieScenePossessable* Possessable = MovieScene->FindPossessable(ObjectGuid);
+				if (Possessable)
+				{
+					BindingName = Possessable->GetName();
+				}
+				else
+				{
+					FMovieSceneSpawnable* Spawnable = MovieScene->FindSpawnable(ObjectGuid);
+					if (Spawnable)
+					{
+						BindingName = Spawnable->GetName();
+					}
+				}
+
+				BindingObj->SetStringField(TEXT("name"), BindingName);
+				BindingObj->SetStringField(TEXT("id"), ObjectGuid.ToString());
 
 				TArray<TSharedPtr<FJsonValue>> TracksArray;
 				for (UMovieSceneTrack* Track : Binding.GetTracks())
