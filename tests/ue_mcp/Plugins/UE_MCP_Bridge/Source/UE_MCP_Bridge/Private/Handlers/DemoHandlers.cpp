@@ -866,7 +866,7 @@ TSharedPtr<FJsonObject> FDemoHandlers::StepPostProcess()
 	return Result;
 }
 
-// Step 14: Niagara VFX
+// Step 14: Niagara VFX — continuous particle aura above hero sphere
 TSharedPtr<FJsonObject> FDemoHandlers::StepNiagaraVfx()
 {
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -879,29 +879,47 @@ TSharedPtr<FJsonObject> FDemoHandlers::StepNiagaraVfx()
 		return Result;
 	}
 
-	// Create a NiagaraSystem asset using the proper factory
+	// Clean up any existing asset
 	FString NiagaraAssetPath = DemoConstants::MAT_DIR / TEXT("NS_Demo_Aura");
 	if (UEditorAssetLibrary::DoesAssetExist(NiagaraAssetPath))
 	{
 		UEditorAssetLibrary::DeleteAsset(NiagaraAssetPath);
 	}
 
-	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-	IAssetTools& AssetTools = AssetToolsModule.Get();
-
-	UNiagaraSystemFactoryNew* NiagaraFactory = NewObject<UNiagaraSystemFactoryNew>();
-	UObject* NSAsset = AssetTools.CreateAsset(
-		TEXT("NS_Demo_Aura"), DemoConstants::MAT_DIR,
-		UNiagaraSystem::StaticClass(), NiagaraFactory);
-
-	UNiagaraSystem* NiagaraSys = Cast<UNiagaraSystem>(NSAsset);
-	if (!NiagaraSys)
+	// Load the Fountain emitter template from engine content — a fully configured
+	// continuous-spawn emitter with sprite renderer, velocity, lifetime, etc.
+	UNiagaraEmitter* FountainEmitter = LoadObject<UNiagaraEmitter>(
+		nullptr, TEXT("/Niagara/DefaultAssets/Templates/Emitters/Fountain.Fountain"));
+	if (!FountainEmitter)
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Failed to create Niagara system asset"));
+		Result->SetStringField(TEXT("error"), TEXT("Could not load engine Fountain emitter template"));
 		Result->SetBoolField(TEXT("success"), false);
 		return Result;
 	}
 
+	// Create the system using the factory with the Fountain emitter pre-configured
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	IAssetTools& AssetTools = AssetToolsModule.Get();
+
+	UNiagaraSystemFactoryNew* Factory = NewObject<UNiagaraSystemFactoryNew>();
+	FVersionedNiagaraEmitter VersionedEmitter;
+	VersionedEmitter.Emitter = FountainEmitter;
+	VersionedEmitter.Version = FountainEmitter->GetExposedVersion().VersionGuid;
+	Factory->EmittersToAddToNewSystem.Add(VersionedEmitter);
+
+	UObject* NSAsset = AssetTools.CreateAsset(
+		TEXT("NS_Demo_Aura"), DemoConstants::MAT_DIR,
+		UNiagaraSystem::StaticClass(), Factory);
+	UNiagaraSystem* NiagaraSys = Cast<UNiagaraSystem>(NSAsset);
+	if (!NiagaraSys)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Failed to create NiagaraSystem from Fountain emitter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return Result;
+	}
+
+	// Initialize and save
+	UNiagaraSystemFactoryNew::InitializeSystem(NiagaraSys, true);
 	UEditorAssetLibrary::SaveAsset(NiagaraSys->GetPathName());
 
 	// Spawn the system in the world above the hero sphere
@@ -910,7 +928,7 @@ TSharedPtr<FJsonObject> FDemoHandlers::StepNiagaraVfx()
 		FVector(0.0, 0.0, 380.0),
 		FRotator::ZeroRotator,
 		FVector::OneVector,
-		false // do not auto-destroy
+		false // persistent, not auto-destroy
 	);
 
 	if (SpawnedComp && SpawnedComp->GetOwner())
