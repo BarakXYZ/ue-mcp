@@ -12,7 +12,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "PCGGraph.h"
-#include "PCGGraphInterface.h"
+// PCGGraphInterface.h may not be directly includable in 5.7
 #include "PCGComponent.h"
 #include "PCGNode.h"
 #include "PCGSettings.h"
@@ -168,7 +168,7 @@ TSharedPtr<FJsonValue> FPCGHandlers::ReadPCGGraph(const TSharedPtr<FJsonObject>&
 		if (!Node) continue;
 		TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
 		NodeObj->SetStringField(TEXT("name"), Node->GetName());
-		NodeObj->SetStringField(TEXT("title"), Node->GetNodeTitle().ToString());
+		NodeObj->SetStringField(TEXT("title"), Node->GetNodeTitle(EPCGNodeTitleType::ListView).ToString());
 		NodeArray.Add(MakeShared<FJsonValueObject>(NodeObj));
 	}
 
@@ -248,11 +248,11 @@ TSharedPtr<FJsonValue> FPCGHandlers::AddPCGNode(const TSharedPtr<FJsonObject>& P
 	}
 
 	// Set position if provided
-	// UE 5.7: PositionX/PositionY are no longer public; use SetPosition() instead
 	double PosX = 0, PosY = 0;
 	if (Params->TryGetNumberField(TEXT("posX"), PosX) || Params->TryGetNumberField(TEXT("posY"), PosY))
 	{
-		NewNode->SetPosition(PosX, PosY);
+		NewNode->PositionX = (int32)PosX;
+		NewNode->PositionY = (int32)PosY;
 	}
 
 	// Save the graph asset
@@ -261,7 +261,7 @@ TSharedPtr<FJsonValue> FPCGHandlers::AddPCGNode(const TSharedPtr<FJsonObject>& P
 	Result->SetStringField(TEXT("assetPath"), AssetPath);
 	Result->SetStringField(TEXT("nodeName"), NewNode->GetName());
 	Result->SetStringField(TEXT("nodeType"), NodeType);
-	Result->SetStringField(TEXT("nodeTitle"), NewNode->GetNodeTitle().ToString());
+	Result->SetStringField(TEXT("nodeTitle"), NewNode->GetNodeTitle(EPCGNodeTitleType::ListView).ToString());
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }
@@ -394,9 +394,8 @@ TSharedPtr<FJsonValue> FPCGHandlers::ConnectPCGNodes(const TSharedPtr<FJsonObjec
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// UE 5.7: AddEdgeTo() was removed from UPCGPin; use Graph->AddEdge() instead
-	bool bConnected = Graph->AddEdge(SourceNode, ResolvedSourcePinLabel, TargetNode, ResolvedTargetPinLabel);
-	if (!bConnected)
+	UPCGNode* ResultNode = Graph->AddEdge(SourceNode, ResolvedSourcePinLabel, TargetNode, ResolvedTargetPinLabel);
+	if (!ResultNode)
 	{
 		Result->SetStringField(TEXT("error"), TEXT("Failed to connect pins - connection may already exist or be incompatible"));
 		Result->SetBoolField(TEXT("success"), false);
@@ -409,8 +408,8 @@ TSharedPtr<FJsonValue> FPCGHandlers::ConnectPCGNodes(const TSharedPtr<FJsonObjec
 	Result->SetStringField(TEXT("assetPath"), AssetPath);
 	Result->SetStringField(TEXT("sourceNodeName"), SourceNodeName);
 	Result->SetStringField(TEXT("targetNodeName"), TargetNodeName);
-	Result->SetStringField(TEXT("sourcePinLabel"), SourcePin->Properties.Label.ToString());
-	Result->SetStringField(TEXT("targetPinLabel"), TargetPin->Properties.Label.ToString());
+	Result->SetStringField(TEXT("sourcePinLabel"), ResolvedSourcePinLabel.ToString());
+	Result->SetStringField(TEXT("targetPinLabel"), ResolvedTargetPinLabel.ToString());
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }
@@ -538,7 +537,7 @@ TSharedPtr<FJsonValue> FPCGHandlers::SetPCGNodeSettings(const TSharedPtr<FJsonOb
 	}
 
 	// Get the settings object from the node
-	UPCGSettings* Settings = FoundNode->GetSettings();
+	UPCGSettings* Settings = const_cast<UPCGSettings*>(FoundNode->GetSettings());
 	if (!Settings)
 	{
 		Result->SetStringField(TEXT("error"), TEXT("Node has no settings object"));
@@ -557,8 +556,8 @@ TSharedPtr<FJsonValue> FPCGHandlers::SetPCGNodeSettings(const TSharedPtr<FJsonOb
 
 	// Set the property value from string
 	void* PropertyAddr = Property->ContainerPtrToValuePtr<void>(Settings);
-	bool bSetSuccess = Property->ImportText_Direct(*PropertyValue, PropertyAddr, Settings, PPF_None);
-	if (!bSetSuccess)
+	const TCHAR* ImportResult = Property->ImportText_Direct(*PropertyValue, PropertyAddr, Settings, PPF_None);
+	if (ImportResult == nullptr)
 	{
 		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to set property '%s' to value '%s'"), *PropertyName, *PropertyValue));
 		Result->SetBoolField(TEXT("success"), false);

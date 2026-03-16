@@ -27,7 +27,7 @@
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
 #include "NavModifierVolume.h"
-#include "Engine/WorldSettings.h"
+#include "GameFramework/WorldSettings.h"
 #include "UObject/UnrealType.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Bool.h"
@@ -44,18 +44,21 @@
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISenseConfig_Damage.h"
-#include "EnhancedInput/EnhancedInputComponent.h"
+#include "EnhancedInputComponent.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "AIController.h"
+#include "Engine/SCS_Node.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "GameFramework/NavMovementComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Character.h"
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
+#include "EnvironmentQuery/EnvQueryInstanceBlueprintWrapper.h"
 
 void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -1943,9 +1946,9 @@ TSharedPtr<FJsonValue> FGameplayHandlers::RunEqsQuery(const TSharedPtr<FJsonObje
 
 	// Run the query synchronously-ish: we trigger it and report that it was started.
 	// EQS queries in UE are async by nature; we start the query and return its ID.
-	int32 QueryId = EQSManager->RunEQSQuery(World, EnvQuery, QuerierActor, EEnvQueryRunMode::AllMatching, nullptr);
+	UEnvQueryInstanceBlueprintWrapper* QueryInstance = EQSManager->RunEQSQuery(World, EnvQuery, QuerierActor, EEnvQueryRunMode::AllMatching, nullptr);
 
-	if (QueryId == INDEX_NONE)
+	if (!QueryInstance)
 	{
 		Result->SetStringField(TEXT("error"), TEXT("Failed to start EQS query"));
 		Result->SetBoolField(TEXT("success"), false);
@@ -1955,7 +1958,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::RunEqsQuery(const TSharedPtr<FJsonObje
 	Result->SetStringField(TEXT("queryPath"), QueryPath);
 	Result->SetStringField(TEXT("queryName"), EnvQuery->GetName());
 	Result->SetStringField(TEXT("querierActor"), ActorLabel);
-	Result->SetNumberField(TEXT("queryId"), QueryId);
+	Result->SetNumberField(TEXT("queryId"), QueryInstance->GetUniqueID());
 	Result->SetStringField(TEXT("status"), TEXT("query_started"));
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);

@@ -594,7 +594,7 @@ TSharedPtr<FJsonValue> FAnimationHandlers::CreateAnimBlueprint(const TSharedPtr<
 	// Resolve parent class if specified, default to UAnimInstance
 	if (!ParentClassName.IsEmpty())
 	{
-		UClass* FoundClass = FindObject<UClass>(ANY_PACKAGE, *ParentClassName);
+		UClass* FoundClass = FindFirstObject<UClass>(*ParentClassName);
 		if (FoundClass && FoundClass->IsChildOf(UAnimInstance::StaticClass()))
 		{
 			Factory->ParentClass = FoundClass;
@@ -759,17 +759,15 @@ TSharedPtr<FJsonValue> FAnimationHandlers::CreateBlendspace(const TSharedPtr<FJs
 	UBlendSpace* BlendSpace = Cast<UBlendSpace>(NewAsset);
 	if (BlendSpace)
 	{
-		FBlendParameter BlendParam0 = BlendSpace->GetBlendParameter(0);
+		FBlendParameter& BlendParam0 = const_cast<FBlendParameter&>(BlendSpace->GetBlendParameter(0));
 		BlendParam0.DisplayName = AxisHorizontal;
 		BlendParam0.Min = HorizontalMin;
 		BlendParam0.Max = HorizontalMax;
-		BlendSpace->SetBlendParameter(0, BlendParam0);
 
-		FBlendParameter BlendParam1 = BlendSpace->GetBlendParameter(1);
+		FBlendParameter& BlendParam1 = const_cast<FBlendParameter&>(BlendSpace->GetBlendParameter(1));
 		BlendParam1.DisplayName = AxisVertical;
 		BlendParam1.Min = VerticalMin;
 		BlendParam1.Max = VerticalMax;
-		BlendSpace->SetBlendParameter(1, BlendParam1);
 	}
 
 	UEditorAssetLibrary::SaveAsset(NewAsset->GetPathName());

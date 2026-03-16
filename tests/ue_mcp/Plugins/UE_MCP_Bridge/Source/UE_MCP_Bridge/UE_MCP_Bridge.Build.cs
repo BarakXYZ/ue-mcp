@@ -69,6 +69,12 @@ public class UE_MCP_Bridge : ModuleRules
 				"Foliage",
 				"UMGEditor",
 				"DataValidation",
+				"LevelSequence",
+				"MovieScene",
+				"MovieSceneTracks",
+				"Blutility",
+				"GameplayTasks",
+				"AudioEditor",
 			}
 		);
 

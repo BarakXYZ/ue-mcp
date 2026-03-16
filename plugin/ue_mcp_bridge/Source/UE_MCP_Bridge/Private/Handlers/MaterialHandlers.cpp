@@ -877,18 +877,16 @@ TSharedPtr<FJsonValue> FMaterialHandlers::ConnectExpression(const TSharedPtr<FJs
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Get the target expression's input count
-	int32 NumInputs = TargetExpression->GetNumInputs();
-	if (TargetInputIndex < 0 || TargetInputIndex >= NumInputs)
+	// Validate target input index by probing GetInput()
+	FExpressionInput* TargetInput = TargetExpression->GetInput(TargetInputIndex);
+	if (!TargetInput)
 	{
-		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Target input index %d out of range (0-%d)"), TargetInputIndex, NumInputs - 1));
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Target input index %d is out of range"), TargetInputIndex));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	Material->PreEditChange(nullptr);
-
-	FExpressionInput* TargetInput = TargetExpression->GetInput(TargetInputIndex);
 	TargetInput->Connect(SourceOutputIndex, SourceExpression);
 
 	Material->PostEditChange();

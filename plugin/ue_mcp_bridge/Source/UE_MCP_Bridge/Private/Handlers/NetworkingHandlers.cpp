@@ -335,14 +335,14 @@ TSharedPtr<FJsonValue> FNetworkingHandlers::SetVariableReplication(const TShared
 		VarDesc->PropertyFlags |= CPF_Net;
 		VarDesc->PropertyFlags &= ~CPF_RepNotify;
 		VarDesc->ReplicationCondition = COND_None;
-		FBlueprintEditorUtils::SetBlueprintVariableRepCondition(Blueprint, VarFName, COND_None);
+		// Replication condition is already set on VarDesc above
 	}
 	else if (ReplicationType == TEXT("RepNotify"))
 	{
 		VarDesc->PropertyFlags |= CPF_Net;
 		VarDesc->PropertyFlags |= CPF_RepNotify;
 		VarDesc->ReplicationCondition = COND_None;
-		FBlueprintEditorUtils::SetBlueprintVariableRepCondition(Blueprint, VarFName, COND_None);
+		// Replication condition is already set on VarDesc above
 	}
 	else // "None"
 	{

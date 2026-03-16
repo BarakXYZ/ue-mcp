@@ -1,7 +1,8 @@
 #include "SequencerHandlers.h"
 #include "HandlerRegistry.h"
 #include "LevelSequence.h"
-#include "Factories/LevelSequenceFactoryNew.h"
+#include "LevelSequenceActor.h"
+// LevelSequenceFactoryNew may not be available; use AssetTools directly
 #include "MovieScene.h"
 #include "MovieSceneTrack.h"
 #include "MovieSceneSection.h"
@@ -55,16 +56,9 @@ TSharedPtr<FJsonValue> FSequencerHandlers::CreateLevelSequence(const TSharedPtr<
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Create the level sequence using the factory
-	ULevelSequenceFactoryNew* Factory = NewObject<ULevelSequenceFactoryNew>();
-	ULevelSequence* NewSequence = Cast<ULevelSequence>(Factory->FactoryCreateNew(
-		ULevelSequence::StaticClass(),
-		Package,
-		FName(*Name),
-		RF_Public | RF_Standalone,
-		nullptr,
-		GWarn
-	));
+	// Create the level sequence asset
+	ULevelSequence* NewSequence = NewObject<ULevelSequence>(Package, FName(*Name), RF_Public | RF_Standalone);
+	NewSequence->Initialize();
 
 	if (!NewSequence)
 	{

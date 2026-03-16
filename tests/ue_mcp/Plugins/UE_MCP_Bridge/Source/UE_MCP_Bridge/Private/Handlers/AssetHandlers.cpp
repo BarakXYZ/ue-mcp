@@ -26,6 +26,9 @@
 // FBX
 #include "Factories/FbxFactory.h"
 #include "Factories/FbxImportUI.h"
+#include "Factories/FbxStaticMeshImportData.h"
+#include "Factories/FbxSkeletalMeshImportData.h"
+#include "Factories/FbxAnimSequenceImportData.h"
 
 // Texture
 #include "Engine/Texture2D.h"
