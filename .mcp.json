@@ -6,7 +6,7 @@
     },
     "ue-mcp": {
       "command": "node",
-      "args": ["C:\\Users\\david\\Projects\\UE\\ue-mcp\\dist\\index.js"]
+      "args": ["C:\\Users\\david\\Projects\\UE\\ue-mcp\\dist\\index.js", "C:\\Users\\david\\Projects\\UE\\ue-mcp\\tests\\ue_mcp"]
     }
   }
 }

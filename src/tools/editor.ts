@@ -19,7 +19,7 @@ export const editorTool: ToolDef = categoryTool(
     },
     restart_editor: {
       handler: async (ctx: ToolContext) => {
-        return restartEditor(ctx.project);
+        return restartEditor(ctx.project, ctx.bridge);
       },
     },
     // Editor Commands

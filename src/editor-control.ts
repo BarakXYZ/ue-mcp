@@ -140,16 +140,22 @@ export async function startEditor(project: ProjectContext): Promise<{ success: b
   }
 }
 
-export async function stopEditor(): Promise<{ success: boolean; message: string }> {
+export async function stopEditor(force = false): Promise<{ success: boolean; message: string }> {
   if (!isEditorRunning()) {
     return { success: false, message: "Editor is not running" };
   }
 
   try {
+    if (force) {
+      execSync('taskkill /F /IM UnrealEditor.exe', { stdio: "pipe" });
+      editorProcess = null;
+      return { success: true, message: "Editor force-killed" };
+    }
+
     // Graceful close - sends WM_CLOSE, allows save dialogs
     execSync('taskkill /IM UnrealEditor.exe', { stdio: "pipe" });
 
-    // Wait up to 10 seconds for editor to close
+    // Wait up to 10 seconds for editor to close gracefully
     for (let i = 0; i < 10; i++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       if (!isEditorRunning()) {
@@ -158,10 +164,18 @@ export async function stopEditor(): Promise<{ success: boolean; message: string 
       }
     }
 
-    // Still running - user may have cancelled save dialog
+    // Graceful close failed — force kill
+    execSync('taskkill /F /IM UnrealEditor.exe', { stdio: "pipe" });
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    editorProcess = null;
+
+    if (!isEditorRunning()) {
+      return { success: true, message: "Editor force-killed after graceful close timed out" };
+    }
+
     return {
       success: false,
-      message: "Editor still running (user may have cancelled save dialog). Close manually if needed.",
+      message: "Editor still running after force kill attempt. Close manually.",
     };
   } catch (error) {
     return {
@@ -171,14 +185,28 @@ export async function stopEditor(): Promise<{ success: boolean; message: string 
   }
 }
 
-export async function restartEditor(project: ProjectContext): Promise<{ success: boolean; message: string }> {
+export async function restartEditor(project: ProjectContext, bridge?: { connect: (timeoutMs?: number) => Promise<void> }): Promise<{ success: boolean; message: string }> {
   const stopResult = await stopEditor();
   if (!stopResult.success && isEditorRunning()) {
     return { success: false, message: `Failed to stop editor: ${stopResult.message}` };
   }
 
-  // Wait a bit for process to fully terminate
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  // Wait for process to fully terminate and release locks
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
-  return startEditor(project);
+  const startResult = await startEditor(project);
+  if (!startResult.success) {
+    return startResult;
+  }
+
+  // Reconnect the bridge if provided
+  if (bridge) {
+    try {
+      await bridge.connect(5000);
+    } catch {
+      // Bridge reconnect timer will handle it
+    }
+  }
+
+  return startResult;
 }

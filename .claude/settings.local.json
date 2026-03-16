@@ -21,7 +21,9 @@
       "Bash(find:*)",
       "mcp__ue-mcp__level",
       "mcp__ue-mcp__editor",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(sleep:*)",
+      "mcp__ue-mcp__project"
     ]
   },
   "enableAllProjectMcpServers": true,
