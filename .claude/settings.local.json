@@ -11,7 +11,8 @@
       "Bash(cp:*)",
       "Bash(taskkill:*)",
       "Bash(git:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(rm:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

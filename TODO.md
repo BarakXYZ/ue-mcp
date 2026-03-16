@@ -12,49 +12,47 @@
 > `execute_python` stays as an escape hatch via `IPythonScriptPlugin` in EditorHandlers.cpp.
 > The Python WebSocket bridge server is retired.
 
-### Handler Parity (~250 methods to port)
+### Handler Parity — DONE
 
-C++ has ~100 methods today. Python has ~350-400. The gap, grouped by handler:
+~95 new C++ handler methods ported across all categories:
 
-- [ ] **Animation** — port: anim BP creation, montage creation, blendspace creation, sequence reading
-- [ ] **Asset** — port: DataTable JSON import/export, texture property mutation, FBX mesh import (static/skeletal/anim)
-- [ ] **Audio** — port: runtime playback (`play_sound_at_location`), AmbientSound spawning, MetaSound creation
-- [ ] **Behavior Tree** — port: blackboard key creation, BT↔Blackboard binding
-- [ ] **Blueprint** — audit parity: Python has ~25 methods with multi-fallback chains; C++ has 17. Port remaining (interface impl, event dispatcher details, graph reading depth)
-- [ ] **Demo** — port the 19-step procedural scene builder (low priority — nice for showcase, not critical)
-- [ ] **Editor** — port: INI read/write (use `GConfig`/`FConfigCacheIni`), save-all, undo/redo transaction control
-- [ ] **Foliage** — port: settings inspection, paint/erase (`FoliageEditorLibrary`), instance sampling, layer creation
-- [ ] **Game Framework** — port: CDO access/defaults, world settings override
-- [ ] **GAS** — port: AttributeSet population, ability tag configuration, GameplayCue notify variants
-- [ ] **Input** — already covered in GameplayHandlers; verify feature parity
-- [ ] **Landscape** — port: sculpt/paint operations, heightmap import (use `FFileHelper`), material binding
-- [ ] **Level Management** — port: sublevel enumeration, level loading/saving
-- [ ] **Lighting** — port: full light property set (temperature, attenuation, shadow params)
-- [ ] **Logs** — port: editor log reading (`FFileHelper::LoadFileToStringArray`), crash report scanning, log search
-- [ ] **Material Authoring** — port: texture sample expression creation, expression connection, property binding
-- [ ] **Navigation** — port: NavModifier volume spawning, navmesh rebuild
-- [ ] **Networking** — audit: C++ has 7 methods, Python has 10. Port variable replication type, replication info query
-- [ ] **Niagara** — port: emitter creation from template, parameter mutation on running components, system assembly
-- [ ] **PCG** — port: node manipulation (add/connect/remove/set params), graph execution with seed, PCG volume placement
-- [ ] **Performance** — port: actor class histogram, stat commands, scalability presets, viewport camera query
-- [ ] **PIE** — port: runtime value query during play (`get_game_world` → actor → property)
-- [ ] **Pipeline** — port: lighting build (quality-gated), HLOD generation, content cooking, asset validation
-- [ ] **Reflection** — audit: verify gameplay tag creation parity (C++ has it; confirm INI fallback equivalent via `GConfig`)
-- [ ] **Sequencer** — port: level sequence creation, track addition, actor binding, playback control
-- [ ] **Skeleton** — port: physics asset body setup detail, socket transform data
-- [ ] **Spline** — port: spline actor creation, point read/write
-- [ ] **Texture** — port: texture listing, property inspection, settings mutation, file import
-- [ ] **Volume** — port: volume type mapping (10 types: Trigger, Blocking, PainCausing, KillZ, Audio, PostProcess, etc.)
-- [ ] **Widget/UMG** — port: widget tree traversal, property inspection/mutation, animation reading, EUW/EUB execution
+- [x] **Animation** — read_anim_blueprint, read_anim_montage, read_anim_sequence, create_anim_blueprint, create_montage, create_blendspace
+- [x] **Asset** — import_datatable_json, export_datatable_json, import_static_mesh, import_skeletal_mesh, import_animation, list_texture_properties, set_texture_properties, import_texture
+- [x] **Audio** — play_sound_at_location, spawn_ambient_sound
+- [x] **Blueprint** — list_node_types_detailed, search_callable_functions, connect_pins, delete_node, set_node_property
+- [x] **Editor** — read_config, save_asset, save_all, get_crash_reports, read_editor_log, pie_get_runtime_value, build_lighting, build_all, validate_assets, cook_content
+- [x] **Foliage** — get_foliage_settings, paint_foliage, erase_foliage, sample_foliage_instances, create_foliage_layer
+- [x] **GAS** — add_ability_tag, create_gameplay_cue_notify
+- [x] **Gameplay** — set_collision_profile, set_physics_enabled, set_collision_type, set_body_properties, spawn_nav_modifier_volume, rebuild_navmesh, get_cdo_defaults, set_world_game_mode, create_ai_perception_config, add_blackboard_key
+- [x] **Landscape** — sculpt_landscape, paint_landscape_layer, import_heightmap, set_landscape_material, get_landscape_bounds
+- [x] **Level** — load_level, save_level, list_sublevels
+- [x] **Material** — set_material_parameter, connect_expression, connect_material_property, delete_expression, set_expression_value, create_material_from_texture, read_material_instance
+- [x] **Networking** — set_variable_replication, get_replication_info, set_owner_only_relevant
+- [x] **Niagara** — spawn_niagara_at_location, set_niagara_parameter, create_niagara_system_from_emitter
+- [x] **PCG** — add_pcg_node, connect_pcg_nodes, remove_pcg_node, set_pcg_node_settings, execute_pcg_graph, spawn_pcg_volume
+- [x] **Widget** — search_widget_by_name, get_widget_properties, set_widget_property, read_widget_animations, run_editor_utility_widget, run_editor_utility_blueprint
+
+**New handler files created:**
+- [x] SequencerHandlers (create_level_sequence, read_sequence_info, add_track, sequence_control)
+- [x] SplineHandlers (create_spline_actor, read_spline, set_spline_points)
+- [x] PhysicsHandlers (set_collision_profile, set_physics_enabled, set_collision_enabled, set_body_properties)
 
 ### Infrastructure
 
-- [ ] Remove Python bridge server code (`plugin/ue_mcp_bridge/*.py` handlers + `bridge_server.py`)
-- [ ] Keep `execute_python` in EditorHandlers.cpp (escape hatch — requires PythonScriptPlugin at runtime, but bridge no longer depends on it)
-- [ ] Update deployer (`deployer.ts`) — stop deploying Python bridge files, stop patching `DefaultEngine.ini` startup script, stop `pip install websockets`
-- [ ] Update deployer to handle C++ plugin compilation or ship prebuilt binaries per UE version
-- [ ] Remove `websockets` Python dependency
-- [ ] Merge `feature/tests__cpp` → `main` once handler parity is achieved
+- [x] Update deployer (`deployer.ts`) — removed Python bridge deployment, startup script patching, `pip install websockets`
+- [x] Register new handler files in BridgeServer.cpp (Sequencer, Spline, Physics)
+- [x] Keep `execute_python` in EditorHandlers.cpp (escape hatch)
+- [ ] Remove Python bridge server code (`plugin/ue_mcp_bridge/handlers/*.py`, `bridge_server.py`, `startup_script.py`, `__init__.py`)
+- [ ] Merge `feature/tests__cpp` → `main` once stable
+- [ ] Ship prebuilt binaries per UE version OR document build-from-source
+
+### Remaining Handler Gaps (lower priority)
+
+- [ ] **Demo** — port the 19-step procedural scene builder (nice for showcase, not critical for v1)
+- [ ] **Skeleton** — physics asset body setup detail already in AnimationHandlers; verify completeness
+- [ ] **Volume** — LevelHandlers already has spawn_volume; verify all 10 volume types work
+- [ ] **Performance** — EditorHandlers already has get_editor_performance_stats + capture_screenshot; verify stat commands
+- [ ] **Reflection** — verify gameplay tag INI fallback works via GConfig in C++
 
 ### Multi-Version Support
 
@@ -64,10 +62,11 @@ C++ has ~100 methods today. Python has ~350-400. The gap, grouped by handler:
 
 ---
 
-## Type Safety
+## Type Safety — DONE
 
-- [ ] Eliminate `as any` casts in test files (`setup.ts`, `asset.test.ts`, `animation.test.ts`, `landscape.test.ts`, `level.test.ts`)
-- [ ] Replace `catch (e: any)` with `catch (e: unknown)` + type narrowing in `tests/setup.ts` and `tests/reload-bridge.ts`
+- [x] Eliminate `as any` casts in test files (animation, asset, landscape, level tests)
+- [x] Replace `catch (e: any)` with `catch (e: unknown)` + type narrowing in `tests/setup.ts` and `tests/reload-bridge.ts`
+- [x] Add `resultArray()` and `resultField()` typed helpers in setup.ts
 - [ ] Type bridge response payloads — define interfaces for each handler's return shape instead of using `Record<string, unknown>` / untyped `.result`
 - [ ] Add typed action parameter maps per tool (currently all params merge into one loose `Record<string, unknown>`)
 
