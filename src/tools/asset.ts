@@ -41,14 +41,28 @@ export const assetTool: ToolDef = categoryTool(
     },
     search: {
       handler: async (ctx, p) => {
-        const params: Record<string, unknown> = { ...p };
-        delete params.action;
-        // If no directory specified and contentRoots configured, search all roots
+        const { action: _, ...rest } = p;
         const roots = ctx.project.config.contentRoots;
+        // If no directory specified and contentRoots configured, search each root and merge
         if (!p.directory && roots && roots.length > 0) {
-          params.searchAll = true;
+          const maxResults = (p.maxResults as number) ?? 50;
+          const allResults: Array<Record<string, unknown>> = [];
+          for (const root of roots) {
+            const res = await ctx.bridge.call("search_assets", { ...rest, directory: root }) as Record<string, unknown>;
+            if (res.results && Array.isArray(res.results)) {
+              allResults.push(...(res.results as Array<Record<string, unknown>>));
+            }
+            if (allResults.length >= maxResults) break;
+          }
+          return {
+            query: p.query ?? "",
+            searchScope: roots,
+            resultCount: Math.min(allResults.length, maxResults),
+            results: allResults.slice(0, maxResults),
+            success: true,
+          };
         }
-        return ctx.bridge.call("search_assets", params);
+        return ctx.bridge.call("search_assets", rest);
       },
     },
     read:           bp("read_asset", (p) => ({ path: p.assetPath })),
