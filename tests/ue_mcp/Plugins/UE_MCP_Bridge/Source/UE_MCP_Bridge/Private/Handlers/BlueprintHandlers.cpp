@@ -1645,33 +1645,33 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ConnectPins(const TSharedPtr<FJsonObj
 	Params->TryGetStringField(TEXT("graphName"), GraphName);
 
 	FString SourceNodeId;
-	if (!Params->TryGetStringField(TEXT("sourceNodeId"), SourceNodeId))
+	if (!Params->TryGetStringField(TEXT("sourceNodeId"), SourceNodeId) && !Params->TryGetStringField(TEXT("sourceNode"), SourceNodeId))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'sourceNodeId' parameter"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'sourceNode' parameter"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	FString SourcePinName;
-	if (!Params->TryGetStringField(TEXT("sourcePinName"), SourcePinName))
+	if (!Params->TryGetStringField(TEXT("sourcePinName"), SourcePinName) && !Params->TryGetStringField(TEXT("sourcePin"), SourcePinName))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'sourcePinName' parameter"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'sourcePin' parameter"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	FString TargetNodeId;
-	if (!Params->TryGetStringField(TEXT("targetNodeId"), TargetNodeId))
+	if (!Params->TryGetStringField(TEXT("targetNodeId"), TargetNodeId) && !Params->TryGetStringField(TEXT("targetNode"), TargetNodeId))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'targetNodeId' parameter"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'targetNode' parameter"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	FString TargetPinName;
-	if (!Params->TryGetStringField(TEXT("targetPinName"), TargetPinName))
+	if (!Params->TryGetStringField(TEXT("targetPinName"), TargetPinName) && !Params->TryGetStringField(TEXT("targetPin"), TargetPinName))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'targetPinName' parameter"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'targetPin' parameter"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
