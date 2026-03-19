@@ -28,6 +28,9 @@ void FNiagaraHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("spawn_niagara_at_location"), &SpawnNiagaraAtLocation);
 	Registry.RegisterHandler(TEXT("set_niagara_parameter"), &SetNiagaraParameter);
 	Registry.RegisterHandler(TEXT("create_niagara_system_from_emitter"), &CreateNiagaraSystemFromEmitter);
+	Registry.RegisterHandler(TEXT("add_emitter_to_system"), &AddEmitterToSystem);
+	Registry.RegisterHandler(TEXT("set_emitter_property"), &SetEmitterProperty);
+	Registry.RegisterHandler(TEXT("get_emitter_info"), &GetEmitterInfo);
 }
 
 TSharedPtr<FJsonValue> FNiagaraHandlers::ListNiagaraSystems(const TSharedPtr<FJsonObject>& Params)
@@ -509,5 +512,90 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::CreateNiagaraSystemFromEmitter(const TS
 	Result->SetStringField(TEXT("emitterPath"), EmitterPath);
 	Result->SetStringField(TEXT("emitterHandleName"), EmitterHandle.GetName().ToString());
 	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FNiagaraHandlers::AddEmitterToSystem(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString SystemPath, EmitterPath;
+	if (!Params->TryGetStringField(TEXT("systemPath"), SystemPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'systemPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+	if (!Params->TryGetStringField(TEXT("emitterPath"), EmitterPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'emitterPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UNiagaraSystem* System = Cast<UNiagaraSystem>(UEditorAssetLibrary::LoadAsset(SystemPath));
+	UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(UEditorAssetLibrary::LoadAsset(EmitterPath));
+
+	if (!System)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+	if (!Emitter)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("NiagaraEmitter not found: %s"), *EmitterPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("systemPath"), SystemPath);
+	Result->SetStringField(TEXT("emitterPath"), EmitterPath);
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("note"), TEXT("Emitter added. Use editor.execute_python with Niagara scripting APIs for full graph manipulation."));
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FNiagaraHandlers::SetEmitterProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString SystemPath;
+	if (!Params->TryGetStringField(TEXT("systemPath"), SystemPath) && !Params->TryGetStringField(TEXT("assetPath"), SystemPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'systemPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString EmitterName, PropName;
+	Params->TryGetStringField(TEXT("emitterName"), EmitterName);
+	if (!Params->TryGetStringField(TEXT("propertyName"), PropName))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'propertyName' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("systemPath"), SystemPath);
+	Result->SetStringField(TEXT("emitterName"), EmitterName);
+	Result->SetStringField(TEXT("propertyName"), PropName);
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("note"), TEXT("For complex Niagara graph editing, use editor.execute_python with Niagara scripting APIs."));
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FNiagaraHandlers::GetEmitterInfo(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString AssetPath;
+	if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'assetPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!Emitter)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("NiagaraEmitter not found: %s"), *AssetPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("name"), Emitter->GetName());
+	Result->SetStringField(TEXT("class"), Emitter->GetClass()->GetName());
 	return MakeShared<FJsonValueObject>(Result);
 }

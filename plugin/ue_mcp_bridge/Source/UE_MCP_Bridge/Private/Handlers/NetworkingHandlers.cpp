@@ -11,6 +11,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "UObject/UnrealType.h"
+#include "EditorScriptingUtilities/Public/EditorAssetLibrary.h"
 
 void FNetworkingHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -24,6 +25,13 @@ void FNetworkingHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("set_variable_replication"), &SetVariableReplication);
 	Registry.RegisterHandler(TEXT("get_replication_info"), &GetReplicationInfo);
 	Registry.RegisterHandler(TEXT("set_owner_only_relevant"), &SetOwnerOnlyRelevant);
+
+	// Aliases
+	Registry.RegisterHandler(TEXT("set_property_replicated"), &SetVariableReplication);
+	Registry.RegisterHandler(TEXT("set_only_relevant_to_owner"), &SetOwnerOnlyRelevant);
+	// New handlers
+	Registry.RegisterHandler(TEXT("set_net_load_on_client"), &SetNetLoadOnClient);
+	Registry.RegisterHandler(TEXT("configure_net_cull_distance"), &ConfigureNetCullDistance);
 }
 
 AActor* FNetworkingHandlers::LoadBlueprintCDO(const FString& BlueprintPath, TSharedPtr<FJsonObject>& OutResult)
@@ -480,6 +488,67 @@ TSharedPtr<FJsonValue> FNetworkingHandlers::SetOwnerOnlyRelevant(const TSharedPt
 
 	Result->SetStringField(TEXT("blueprintPath"), BlueprintPath);
 	Result->SetBoolField(TEXT("onlyRelevantToOwner"), bOnlyRelevantToOwner);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FNetworkingHandlers::SetNetLoadOnClient(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	AActor* CDO = LoadBlueprintCDO(Params->GetStringField(TEXT("blueprintPath")), Result);
+	if (!CDO) return MakeShared<FJsonValueObject>(Result);
+
+	bool bLoadOnClient = true;
+	Params->TryGetBoolField(TEXT("loadOnClient"), bLoadOnClient);
+
+	FProperty* Prop = CDO->GetClass()->FindPropertyByName(TEXT("bNetLoadOnClient"));
+	if (Prop)
+	{
+		bool* ValPtr = Prop->ContainerPtrToValuePtr<bool>(CDO);
+		if (ValPtr)
+		{
+			*ValPtr = bLoadOnClient;
+		}
+	}
+
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(Params->GetStringField(TEXT("blueprintPath"))));
+	if (BP) SaveBlueprint(BP);
+
+	Result->SetStringField(TEXT("blueprintPath"), Params->GetStringField(TEXT("blueprintPath")));
+	Result->SetBoolField(TEXT("loadOnClient"), bLoadOnClient);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FNetworkingHandlers::ConfigureNetCullDistance(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	AActor* CDO = LoadBlueprintCDO(Params->GetStringField(TEXT("blueprintPath")), Result);
+	if (!CDO) return MakeShared<FJsonValueObject>(Result);
+
+	double Distance = 225000000.0;
+	Params->TryGetNumberField(TEXT("netCullDistanceSquared"), Distance);
+
+	FProperty* Prop = CDO->GetClass()->FindPropertyByName(TEXT("NetCullDistanceSquared"));
+	if (Prop)
+	{
+		FFloatProperty* FloatProp = CastField<FFloatProperty>(Prop);
+		FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Prop);
+		if (FloatProp)
+		{
+			FloatProp->SetPropertyValue_InContainer(CDO, static_cast<float>(Distance));
+		}
+		else if (DoubleProp)
+		{
+			DoubleProp->SetPropertyValue_InContainer(CDO, Distance);
+		}
+	}
+
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(Params->GetStringField(TEXT("blueprintPath"))));
+	if (BP) SaveBlueprint(BP);
+
+	Result->SetStringField(TEXT("blueprintPath"), Params->GetStringField(TEXT("blueprintPath")));
+	Result->SetNumberField(TEXT("netCullDistanceSquared"), Distance);
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }

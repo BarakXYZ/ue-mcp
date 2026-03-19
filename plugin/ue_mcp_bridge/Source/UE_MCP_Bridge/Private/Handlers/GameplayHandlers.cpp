@@ -95,6 +95,14 @@ void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("configure_behavior_tree"), &ConfigureBehaviorTree);
 	Registry.RegisterHandler(TEXT("setup_path_following"), &SetupPathFollowing);
 	Registry.RegisterHandler(TEXT("run_eqs_query"), &RunEqsQuery);
+	// Aliases
+	Registry.RegisterHandler(TEXT("rebuild_navigation"), &RebuildNavmesh);
+	// New handlers
+	Registry.RegisterHandler(TEXT("get_behavior_tree_info"), &GetBehaviorTreeInfo);
+	Registry.RegisterHandler(TEXT("add_perception_component"), &AddPerceptionComponent);
+	Registry.RegisterHandler(TEXT("configure_ai_perception_sense"), &ConfigureAiPerceptionSense);
+	Registry.RegisterHandler(TEXT("add_state_tree_component"), &AddStateTreeComponent);
+	Registry.RegisterHandler(TEXT("add_smart_object_component"), &AddSmartObjectComponent);
 }
 
 TSharedPtr<FJsonValue> FGameplayHandlers::CreateSmartObjectDefinition(const TSharedPtr<FJsonObject>& Params)
@@ -1961,6 +1969,254 @@ TSharedPtr<FJsonValue> FGameplayHandlers::RunEqsQuery(const TSharedPtr<FJsonObje
 	Result->SetStringField(TEXT("querierActor"), ActorLabel);
 	Result->SetNumberField(TEXT("queryId"), QueryInstance->GetUniqueID());
 	Result->SetStringField(TEXT("status"), TEXT("query_started"));
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FGameplayHandlers::GetBehaviorTreeInfo(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString AssetPath;
+	if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath) && !Params->TryGetStringField(TEXT("path"), AssetPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'assetPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("BehaviorTree not found: %s"), *AssetPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("name"), Asset->GetName());
+	Result->SetStringField(TEXT("className"), Asset->GetClass()->GetName());
+
+	// Try to read blackboard asset
+	FProperty* BBProp = Asset->GetClass()->FindPropertyByName(TEXT("BlackboardAsset"));
+	if (BBProp)
+	{
+		FObjectProperty* ObjProp = CastField<FObjectProperty>(BBProp);
+		if (ObjProp)
+		{
+			UObject* BB = ObjProp->GetObjectPropertyValue(BBProp->ContainerPtrToValuePtr<void>(Asset));
+			if (BB)
+			{
+				Result->SetStringField(TEXT("blackboardAsset"), BB->GetPathName());
+
+				// Try to read blackboard keys
+				TArray<TSharedPtr<FJsonValue>> KeysArray;
+				FProperty* KeysProp = BB->GetClass()->FindPropertyByName(TEXT("Keys"));
+				if (KeysProp)
+				{
+					FArrayProperty* ArrProp = CastField<FArrayProperty>(KeysProp);
+					if (ArrProp)
+					{
+						FScriptArrayHelper ArrayHelper(ArrProp, ArrProp->ContainerPtrToValuePtr<void>(BB));
+						for (int32 i = 0; i < ArrayHelper.Num(); i++)
+						{
+							TSharedPtr<FJsonObject> KeyObj = MakeShared<FJsonObject>();
+							UObject* KeyEntry = *reinterpret_cast<UObject**>(ArrayHelper.GetRawPtr(i));
+							if (KeyEntry)
+							{
+								FProperty* NameProp = KeyEntry->GetClass()->FindPropertyByName(TEXT("EntryName"));
+								if (NameProp)
+								{
+									FString EntryName;
+									NameProp->ExportTextItem_Direct(EntryName, NameProp->ContainerPtrToValuePtr<void>(KeyEntry), nullptr, KeyEntry, PPF_None);
+									KeyObj->SetStringField(TEXT("name"), EntryName);
+								}
+								else
+								{
+									KeyObj->SetStringField(TEXT("name"), KeyEntry->GetName());
+								}
+							}
+							KeysArray.Add(MakeShared<FJsonValueObject>(KeyObj));
+						}
+					}
+				}
+				Result->SetArrayField(TEXT("blackboardKeys"), KeysArray);
+			}
+		}
+	}
+
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FGameplayHandlers::AddPerceptionComponent(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString BPPath;
+	if (!Params->TryGetStringField(TEXT("blueprintPath"), BPPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'blueprintPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+	if (!BP)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BPPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UClass* CompClass = FindObject<UClass>(nullptr, TEXT("/Script/AIModule.AIPerceptionComponent"));
+	if (!CompClass)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("AIPerceptionComponent not found. Enable AIModule."));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	USCS_Node* NewNode = BP->SimpleConstructionScript->CreateNode(CompClass, TEXT("AIPerceptionComp"));
+	if (NewNode)
+	{
+		BP->SimpleConstructionScript->AddNode(NewNode);
+		FKismetEditorUtilities::CompileBlueprint(BP);
+
+		UPackage* Pkg = BP->GetOutermost();
+		if (Pkg)
+		{
+			Pkg->MarkPackageDirty();
+			FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Standalone;
+			UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
+		}
+	}
+
+	Result->SetStringField(TEXT("blueprintPath"), BPPath);
+	Result->SetStringField(TEXT("component"), TEXT("AIPerceptionComp"));
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FGameplayHandlers::ConfigureAiPerceptionSense(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString BPPath;
+	if (!Params->TryGetStringField(TEXT("blueprintPath"), BPPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'blueprintPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString SenseType = TEXT("Sight");
+	Params->TryGetStringField(TEXT("senseType"), SenseType);
+
+	TMap<FString, FString> SenseMap;
+	SenseMap.Add(TEXT("Sight"), TEXT("AISenseConfig_Sight"));
+	SenseMap.Add(TEXT("Hearing"), TEXT("AISenseConfig_Hearing"));
+	SenseMap.Add(TEXT("Damage"), TEXT("AISenseConfig_Damage"));
+	SenseMap.Add(TEXT("Touch"), TEXT("AISenseConfig_Touch"));
+	SenseMap.Add(TEXT("Team"), TEXT("AISenseConfig_Team"));
+
+	FString* SenseClassName = SenseMap.Find(SenseType);
+	if (!SenseClassName)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown sense type: %s. Available: Sight, Hearing, Damage, Touch, Team"), *SenseType));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("blueprintPath"), BPPath);
+	Result->SetStringField(TEXT("senseType"), SenseType);
+	Result->SetStringField(TEXT("senseClass"), *SenseClassName);
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("note"), FString::Printf(TEXT("Use editor.execute_python to fully configure %s properties."), **SenseClassName));
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FGameplayHandlers::AddStateTreeComponent(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString BPPath;
+	if (!Params->TryGetStringField(TEXT("blueprintPath"), BPPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'blueprintPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+	if (!BP)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BPPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UClass* CompClass = FindObject<UClass>(nullptr, TEXT("/Script/StateTreeModule.StateTreeComponent"));
+	if (!CompClass)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("StateTreeComponent not found. Enable StateTree plugin."));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	USCS_Node* NewNode = BP->SimpleConstructionScript->CreateNode(CompClass, TEXT("StateTreeComp"));
+	if (NewNode)
+	{
+		BP->SimpleConstructionScript->AddNode(NewNode);
+		FKismetEditorUtilities::CompileBlueprint(BP);
+
+		UPackage* Pkg = BP->GetOutermost();
+		if (Pkg)
+		{
+			Pkg->MarkPackageDirty();
+			FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Standalone;
+			UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
+		}
+	}
+
+	Result->SetStringField(TEXT("blueprintPath"), BPPath);
+	Result->SetStringField(TEXT("component"), TEXT("StateTreeComp"));
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FGameplayHandlers::AddSmartObjectComponent(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString BPPath;
+	if (!Params->TryGetStringField(TEXT("blueprintPath"), BPPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'blueprintPath' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+	if (!BP)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BPPath));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UClass* CompClass = FindObject<UClass>(nullptr, TEXT("/Script/SmartObjectsModule.SmartObjectComponent"));
+	if (!CompClass)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("SmartObjectComponent not found. Enable SmartObjects plugin."));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	USCS_Node* NewNode = BP->SimpleConstructionScript->CreateNode(CompClass, TEXT("SmartObjectComp"));
+	if (NewNode)
+	{
+		BP->SimpleConstructionScript->AddNode(NewNode);
+		FKismetEditorUtilities::CompileBlueprint(BP);
+
+		UPackage* Pkg = BP->GetOutermost();
+		if (Pkg)
+		{
+			Pkg->MarkPackageDirty();
+			FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Standalone;
+			UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
+		}
+	}
+
+	Result->SetStringField(TEXT("blueprintPath"), BPPath);
+	Result->SetStringField(TEXT("component"), TEXT("SmartObjectComp"));
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }

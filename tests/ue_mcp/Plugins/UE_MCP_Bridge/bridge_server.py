@@ -37,26 +37,8 @@ class BridgeServer:
         self._register_handlers()
 
     def _get_handler_modules(self) -> list:
-        from .handlers import (
-            asset, blueprint, editor, pie, reflection, nodes, level,
-            material, animation, umg, pcg, landscape, foliage, sequencer,
-            niagara, lighting, audio, navigation, spline, volume,
-            material_authoring, texture, level_management, input_system,
-            behavior_tree, skeleton, widget, performance, demo,
-            asset_management, mesh_import, physics, gas, networking,
-            ai_systems, material_graph, niagara_authoring, game_framework,
-            pipeline, logs,
-        )
-        return [
-            asset, blueprint, editor, pie, reflection, nodes, level,
-            material, animation, umg, pcg, landscape, foliage, sequencer,
-            niagara, lighting, audio, navigation, spline, volume,
-            material_authoring, texture, level_management, input_system,
-            behavior_tree, skeleton, widget, performance, demo,
-            asset_management, mesh_import, physics, gas, networking,
-            ai_systems, material_graph, niagara_authoring, game_framework,
-            pipeline, logs,
-        ]
+        # Python handlers removed — all functionality ported to C++ bridge
+        return []
 
     def _register_handlers(self):
         self._handler_modules = self._get_handler_modules()

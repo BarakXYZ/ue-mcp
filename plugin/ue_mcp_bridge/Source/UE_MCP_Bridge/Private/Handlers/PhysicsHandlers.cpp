@@ -16,6 +16,9 @@ void FPhysicsHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("set_physics_enabled"), &SetPhysicsEnabled);
 	Registry.RegisterHandler(TEXT("set_collision_enabled"), &SetCollisionEnabled);
 	Registry.RegisterHandler(TEXT("set_body_properties"), &SetBodyProperties);
+	// Aliases
+	Registry.RegisterHandler(TEXT("set_simulate_physics"), &SetPhysicsEnabled);
+	Registry.RegisterHandler(TEXT("set_physics_properties"), &SetBodyProperties);
 }
 
 TSharedPtr<FJsonValue> FPhysicsHandlers::SetCollisionProfile(const TSharedPtr<FJsonObject>& Params)

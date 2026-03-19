@@ -70,6 +70,16 @@ void FEditorHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("create_new_level"), &CreateNewLevel);
 	Registry.RegisterHandler(TEXT("save_current_level"), &SaveCurrentLevel);
 	Registry.RegisterHandler(TEXT("open_asset"), &OpenAsset);
+	// Aliases for TS tool compatibility
+	Registry.RegisterHandler(TEXT("get_runtime_value"), &PieGetRuntimeValue);
+	// New handlers
+	Registry.RegisterHandler(TEXT("run_stat_command"), &RunStatCommand);
+	Registry.RegisterHandler(TEXT("set_scalability"), &SetScalability);
+	Registry.RegisterHandler(TEXT("build_geometry"), &BuildGeometry);
+	Registry.RegisterHandler(TEXT("build_hlod"), &BuildHlod);
+	Registry.RegisterHandler(TEXT("list_crashes"), &ListCrashes);
+	Registry.RegisterHandler(TEXT("get_crash_info"), &GetCrashInfo);
+	Registry.RegisterHandler(TEXT("check_for_crashes"), &CheckForCrashes);
 }
 
 TSharedPtr<FJsonValue> FEditorHandlers::ExecuteCommand(const TSharedPtr<FJsonObject>& Params)
@@ -1440,5 +1450,227 @@ TSharedPtr<FJsonValue> FEditorHandlers::OpenAsset(const TSharedPtr<FJsonObject>&
 	Result->SetStringField(TEXT("assetClass"), Asset->GetClass()->GetName());
 	Result->SetBoolField(TEXT("success"), true);
 
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::RunStatCommand(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString Command = TEXT("stat fps");
+	Params->TryGetStringField(TEXT("command"), Command);
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	GEditor->Exec(World, *Command);
+	Result->SetStringField(TEXT("command"), Command);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::SetScalability(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString Level = TEXT("Epic");
+	Params->TryGetStringField(TEXT("level"), Level);
+
+	int32 Idx = 3; // Default to Epic
+	if (Level == TEXT("Low")) Idx = 0;
+	else if (Level == TEXT("Medium")) Idx = 1;
+	else if (Level == TEXT("High")) Idx = 2;
+	else if (Level == TEXT("Epic")) Idx = 3;
+	else if (Level == TEXT("Cinematic")) Idx = 4;
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	TArray<FString> Commands = {
+		FString::Printf(TEXT("sg.ViewDistanceQuality %d"), Idx),
+		FString::Printf(TEXT("sg.AntiAliasingQuality %d"), Idx),
+		FString::Printf(TEXT("sg.ShadowQuality %d"), Idx),
+		FString::Printf(TEXT("sg.GlobalIlluminationQuality %d"), Idx),
+		FString::Printf(TEXT("sg.ReflectionQuality %d"), Idx),
+		FString::Printf(TEXT("sg.PostProcessQuality %d"), Idx),
+		FString::Printf(TEXT("sg.TextureQuality %d"), Idx),
+		FString::Printf(TEXT("sg.EffectsQuality %d"), Idx),
+		FString::Printf(TEXT("sg.FoliageQuality %d"), Idx),
+		FString::Printf(TEXT("sg.ShadingQuality %d"), Idx),
+	};
+
+	for (const FString& Cmd : Commands)
+	{
+		GEditor->Exec(World, *Cmd);
+	}
+
+	Result->SetStringField(TEXT("level"), Level);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::BuildGeometry(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+	GEditor->Exec(World, TEXT("MAP REBUILD"));
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("message"), TEXT("Geometry rebuild triggered"));
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::BuildHlod(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+	GEditor->Exec(World, TEXT("BuildHLOD"));
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("message"), TEXT("HLOD build triggered"));
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::ListCrashes(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString CrashesDir = FPaths::ProjectSavedDir() / TEXT("Crashes");
+	Result->SetStringField(TEXT("crashesDir"), CrashesDir);
+
+	TArray<TSharedPtr<FJsonValue>> CrashArray;
+	IFileManager& FileManager = IFileManager::Get();
+
+	TArray<FString> CrashFolders;
+	FileManager.FindFiles(CrashFolders, *(CrashesDir / TEXT("*")), false, true);
+
+	for (const FString& Folder : CrashFolders)
+	{
+		TSharedPtr<FJsonObject> CrashObj = MakeShared<FJsonObject>();
+		FString FullPath = CrashesDir / Folder;
+		CrashObj->SetStringField(TEXT("folder"), Folder);
+		CrashObj->SetStringField(TEXT("path"), FullPath);
+
+		FFileStatData StatData = FileManager.GetStatData(*FullPath);
+		if (StatData.bIsValid)
+		{
+			CrashObj->SetNumberField(TEXT("modified"), StatData.ModificationTime.ToUnixTimestamp());
+		}
+
+		TArray<FString> Files;
+		FileManager.FindFiles(Files, *(FullPath / TEXT("*")), true, false);
+		TArray<TSharedPtr<FJsonValue>> FileArray;
+		for (const FString& File : Files)
+		{
+			FileArray.Add(MakeShared<FJsonValueString>(File));
+		}
+		CrashObj->SetArrayField(TEXT("files"), FileArray);
+		CrashArray.Add(MakeShared<FJsonValueObject>(CrashObj));
+	}
+
+	Result->SetNumberField(TEXT("crashCount"), CrashArray.Num());
+	Result->SetArrayField(TEXT("crashes"), CrashArray);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::GetCrashInfo(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString CrashFolder;
+	if (!Params->TryGetStringField(TEXT("crashFolder"), CrashFolder))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'crashFolder' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString CrashPath = FPaths::ProjectSavedDir() / TEXT("Crashes") / CrashFolder;
+	if (!IFileManager::Get().DirectoryExists(*CrashPath))
+	{
+		Result->SetBoolField(TEXT("available"), false);
+		Result->SetStringField(TEXT("note"), FString::Printf(TEXT("Crash folder not found: %s"), *CrashFolder));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("folder"), CrashFolder);
+	Result->SetStringField(TEXT("path"), CrashPath);
+
+	TSharedPtr<FJsonObject> FilesObj = MakeShared<FJsonObject>();
+	TArray<FString> Files;
+	IFileManager::Get().FindFiles(Files, *(CrashPath / TEXT("*")), true, false);
+
+	for (const FString& File : Files)
+	{
+		TSharedPtr<FJsonObject> FileInfo = MakeShared<FJsonObject>();
+		FString FilePath = CrashPath / File;
+		FFileStatData StatData = IFileManager::Get().GetStatData(*FilePath);
+		if (StatData.bIsValid)
+		{
+			FileInfo->SetNumberField(TEXT("size"), StatData.FileSize);
+			FileInfo->SetNumberField(TEXT("modified"), StatData.ModificationTime.ToUnixTimestamp());
+		}
+
+		// Read text files
+		if (File.EndsWith(TEXT(".log")) || File.EndsWith(TEXT(".txt")) || File.EndsWith(TEXT(".xml")) || File.EndsWith(TEXT(".json")))
+		{
+			FString Content;
+			if (FFileHelper::LoadFileToString(Content, *FilePath))
+			{
+				// Limit content to 50KB
+				if (Content.Len() > 50000)
+				{
+					Content = Content.Left(50000) + TEXT("\n... [truncated]");
+				}
+				FileInfo->SetStringField(TEXT("content"), Content);
+			}
+		}
+		FilesObj->SetObjectField(File, FileInfo);
+	}
+
+	Result->SetObjectField(TEXT("files"), FilesObj);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FEditorHandlers::CheckForCrashes(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	FString CrashesDir = FPaths::ProjectSavedDir() / TEXT("Crashes");
+
+	TArray<TSharedPtr<FJsonValue>> RecentCrashes;
+	IFileManager& FileManager = IFileManager::Get();
+	FDateTime Now = FDateTime::UtcNow();
+	FDateTime Threshold = Now - FTimespan::FromHours(24);
+
+	TArray<FString> CrashFolders;
+	FileManager.FindFiles(CrashFolders, *(CrashesDir / TEXT("*")), false, true);
+
+	for (const FString& Folder : CrashFolders)
+	{
+		FString FullPath = CrashesDir / Folder;
+		FFileStatData StatData = FileManager.GetStatData(*FullPath);
+		if (StatData.bIsValid && StatData.ModificationTime > Threshold)
+		{
+			TSharedPtr<FJsonObject> CrashObj = MakeShared<FJsonObject>();
+			CrashObj->SetStringField(TEXT("folder"), Folder);
+			CrashObj->SetStringField(TEXT("path"), FullPath);
+			CrashObj->SetNumberField(TEXT("timestamp"), StatData.ModificationTime.ToUnixTimestamp());
+			RecentCrashes.Add(MakeShared<FJsonValueObject>(CrashObj));
+		}
+	}
+
+	Result->SetNumberField(TEXT("recentCrashCount"), RecentCrashes.Num());
+	Result->SetArrayField(TEXT("recentCrashes"), RecentCrashes);
 	return MakeShared<FJsonValueObject>(Result);
 }

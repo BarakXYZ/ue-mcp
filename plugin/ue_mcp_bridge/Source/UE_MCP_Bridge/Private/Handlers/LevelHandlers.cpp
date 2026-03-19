@@ -52,6 +52,8 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("load_level"), &LoadLevel);
 	Registry.RegisterHandler(TEXT("save_level"), &SaveLevel);
 	Registry.RegisterHandler(TEXT("list_sublevels"), &ListSublevels);
+	Registry.RegisterHandler(TEXT("set_component_property"), &SetComponentProperty);
+	Registry.RegisterHandler(TEXT("set_volume_properties"), &SetVolumeProperties);
 }
 
 TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>& Params)
@@ -1076,5 +1078,193 @@ TSharedPtr<FJsonValue> FLevelHandlers::ListSublevels(const TSharedPtr<FJsonObjec
 	Result->SetNumberField(TEXT("count"), SublevelsArray.Num());
 	Result->SetBoolField(TEXT("success"), true);
 
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ActorLabel;
+	if (!Params->TryGetStringField(TEXT("actorLabel"), ActorLabel))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'actorLabel' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString ComponentName;
+	Params->TryGetStringField(TEXT("componentName"), ComponentName);
+
+	FString PropertyName;
+	if (!Params->TryGetStringField(TEXT("propertyName"), PropertyName))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'propertyName' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	AActor* TargetActor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetActorLabel() == ActorLabel)
+		{
+			TargetActor = *It;
+			break;
+		}
+	}
+
+	if (!TargetActor)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Find the component
+	UActorComponent* TargetComp = nullptr;
+	if (!ComponentName.IsEmpty())
+	{
+		TArray<UActorComponent*> Components;
+		TargetActor->GetComponents(Components);
+		for (UActorComponent* Comp : Components)
+		{
+			if (Comp->GetName() == ComponentName || Comp->GetClass()->GetName() == ComponentName)
+			{
+				TargetComp = Comp;
+				break;
+			}
+		}
+	}
+	else
+	{
+		// Use root component as default
+		TargetComp = TargetActor->GetRootComponent();
+	}
+
+	if (!TargetComp)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Component '%s' not found on actor '%s'"), *ComponentName, *ActorLabel));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Set the property
+	FProperty* Prop = TargetComp->GetClass()->FindPropertyByName(*PropertyName);
+	if (!Prop)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Property '%s' not found on component"), *PropertyName));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Handle different value types from JSON
+	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
+	if (!ValueField || !(*ValueField).IsValid())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'value' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString ValueStr;
+	if ((*ValueField)->TryGetString(ValueStr))
+	{
+		Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+	}
+	else
+	{
+		double NumValue;
+		if ((*ValueField)->TryGetNumber(NumValue))
+		{
+			ValueStr = FString::SanitizeFloat(NumValue);
+			Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+		}
+		else
+		{
+			bool BoolValue;
+			if ((*ValueField)->TryGetBool(BoolValue))
+			{
+				ValueStr = BoolValue ? TEXT("true") : TEXT("false");
+				Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+			}
+		}
+	}
+
+	TargetComp->MarkPackageDirty();
+
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetStringField(TEXT("componentClass"), TargetComp->GetClass()->GetName());
+	Result->SetStringField(TEXT("propertyName"), PropertyName);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ActorLabel;
+	if (!Params->TryGetStringField(TEXT("actorLabel"), ActorLabel))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'actorLabel' parameter"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	AActor* TargetActor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetActorLabel() == ActorLabel || It->GetName() == ActorLabel)
+		{
+			TargetActor = *It;
+			break;
+		}
+	}
+
+	if (!TargetActor)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Volume not found: %s"), *ActorLabel));
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Changes;
+	for (auto& Pair : Params->Values)
+	{
+		if (Pair.Key == TEXT("actorLabel") || Pair.Key == TEXT("action"))
+			continue;
+
+		FProperty* Prop = TargetActor->GetClass()->FindPropertyByName(*Pair.Key);
+		if (Prop)
+		{
+			FString ValueStr;
+			if (Pair.Value->TryGetString(ValueStr))
+			{
+				Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
+				Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
+			}
+			else
+			{
+				double NumVal;
+				if (Pair.Value->TryGetNumber(NumVal))
+				{
+					ValueStr = FString::SanitizeFloat(NumVal);
+					Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
+					Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
+				}
+			}
+		}
+	}
+
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetArrayField(TEXT("changes"), Changes);
+	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }

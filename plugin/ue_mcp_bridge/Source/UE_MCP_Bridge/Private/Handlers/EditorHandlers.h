@@ -43,4 +43,11 @@ private:
 	static TSharedPtr<FJsonValue> CreateNewLevel(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SaveCurrentLevel(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> OpenAsset(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> RunStatCommand(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetScalability(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> BuildGeometry(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> BuildHlod(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ListCrashes(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> GetCrashInfo(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> CheckForCrashes(const TSharedPtr<FJsonObject>& Params);
 };

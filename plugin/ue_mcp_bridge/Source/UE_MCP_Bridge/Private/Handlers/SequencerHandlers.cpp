@@ -29,6 +29,11 @@ void FSequencerHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("read_sequence_info"), &ReadSequenceInfo);
 	Registry.RegisterHandler(TEXT("add_track"), &AddTrack);
 	Registry.RegisterHandler(TEXT("sequence_control"), &SequenceControl);
+
+	// Aliases
+	Registry.RegisterHandler(TEXT("get_sequence_info"), &ReadSequenceInfo);
+	Registry.RegisterHandler(TEXT("add_sequence_track"), &AddTrack);
+	Registry.RegisterHandler(TEXT("play_sequence"), &SequenceControl);
 }
 
 TSharedPtr<FJsonValue> FSequencerHandlers::CreateLevelSequence(const TSharedPtr<FJsonObject>& Params)
