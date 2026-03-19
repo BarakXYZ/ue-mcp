@@ -67,8 +67,9 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("get_texture_info"), &ListTextureProperties);
 	Registry.RegisterHandler(TEXT("set_texture_settings"), &SetTextureProperties);
 
-	// Mesh material handlers
+	// Mesh handlers
 	Registry.RegisterHandler(TEXT("set_mesh_material"), &SetMeshMaterial);
+	Registry.RegisterHandler(TEXT("recenter_pivot"), &RecenterPivot);
 
 	// Additional DataTable handlers
 	Registry.RegisterHandler(TEXT("create_datatable"), &CreateDataTable);
@@ -1392,6 +1393,75 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportTexture(const TSharedPtr<FJsonObjec
 
 	Task->RemoveFromRoot();
 	TextureFactory->RemoveFromRoot();
+
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FAssetHandlers::RecenterPivot(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	if ((!Params->TryGetStringField(TEXT("assetPath"), AssetPath) && !Params->TryGetStringField(TEXT("path"), AssetPath)) || AssetPath.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing or empty 'assetPath' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *AssetPath));
+	if (!Mesh)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to load static mesh at '%s'"), *AssetPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FMeshDescription* MeshDesc = Mesh->GetMeshDescription(0);
+	if (!MeshDesc)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Failed to get mesh description for LOD 0"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Calculate the center of all vertices
+	FVertexArray& Vertices = MeshDesc->Vertices();
+	TVertexAttributesRef<FVector3f> VertexPositions = MeshDesc->GetVertexPositions();
+
+	FVector3f Center = FVector3f::ZeroVector;
+	int32 VertCount = Vertices.Num();
+	if (VertCount == 0)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Mesh has no vertices"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	for (FVertexID VertID : Vertices.GetElementIDs())
+	{
+		Center += VertexPositions[VertID];
+	}
+	Center /= (float)VertCount;
+
+	// Shift all vertices so center becomes origin
+	for (FVertexID VertID : Vertices.GetElementIDs())
+	{
+		VertexPositions[VertID] -= Center;
+	}
+
+	// Commit and rebuild
+	Mesh->CommitMeshDescription(0);
+	Mesh->Build(false);
+	Mesh->PostEditChange();
+	Mesh->MarkPackageDirty();
+
+	UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetNumberField(TEXT("vertexCount"), VertCount);
+	Result->SetStringField(TEXT("offsetApplied"), FString::Printf(TEXT("(%.2f, %.2f, %.2f)"), Center.X, Center.Y, Center.Z));
+	Result->SetBoolField(TEXT("success"), true);
 
 	return MakeShared<FJsonValueObject>(Result);
 }

@@ -73,10 +73,11 @@ export const assetTool: ToolDef = categoryTool(
     delete:         bp("delete_asset"),
     save:           bp("save_asset"),
     set_mesh_material:    bp("set_mesh_material"),
-    import_static_mesh:   bp("import_static_mesh", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, importMaterials: p.importMaterials, importTextures: p.importTextures, combineMeshes: p.combineMeshes, generateLightmapUVs: p.generateLightmapUVs })),
-    import_skeletal_mesh: bp("import_skeletal_mesh", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, skeletonPath: p.skeletonPath })),
-    import_animation:     bp("import_animation", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, skeletonPath: p.skeletonPath })),
-    import_texture:       bp("import_texture", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, noCompression: p.noCompression, noAlpha: p.noAlpha })),
+    recenter_pivot:       bp("recenter_pivot"),
+    import_static_mesh:   bp("import_static_mesh"),
+    import_skeletal_mesh: bp("import_skeletal_mesh"),
+    import_animation:     bp("import_animation"),
+    import_texture:       bp("import_texture"),
     read_datatable:       bp("read_datatable", (p) => ({ path: p.assetPath, rowFilter: p.rowFilter })),
     create_datatable:     bp("create_datatable"),
     reimport_datatable:   bp("reimport_datatable", (p) => ({ path: p.assetPath, jsonPath: p.jsonPath, jsonString: p.jsonString })),
@@ -94,6 +95,7 @@ export const assetTool: ToolDef = categoryTool(
 - delete: Delete asset. Params: assetPath
 - save: Save asset(s). Params: assetPath?
 - set_mesh_material: Assign material to static mesh slot. Params: assetPath, materialPath, slotIndex?
+- recenter_pivot: Move static mesh pivot to geometry center. Params: assetPath
 - import_static_mesh: Import from FBX/OBJ. Params: filePath, name?, packagePath?
 - import_skeletal_mesh: Import from FBX. Params: filePath, name?, packagePath?, skeletonPath?
 - import_animation: Import anim from FBX. Params: filePath, name?, packagePath?, skeletonPath?
