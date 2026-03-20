@@ -125,12 +125,18 @@ async function main() {
 }
 
 // Route subcommands
-if (process.argv[2] === "init") {
+const subcmd = process.argv[2];
+if (subcmd === "init") {
   process.argv.splice(2, 1);
   import("./init.js");
-} else if (process.argv[2] === "update") {
+} else if (subcmd === "update") {
   process.argv.splice(2, 1);
   import("./update.js");
+} else if (subcmd === "version" || subcmd === "--version" || subcmd === "-v") {
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const pkg = require("../package.json");
+  console.log(pkg.version);
 } else {
   main().catch((e) => {
     console.error(`[ue-mcp] Fatal error: ${e}`);
