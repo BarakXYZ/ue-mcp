@@ -8,46 +8,33 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          registry-url: "https://registry.npmjs.org"
           cache: "npm"
 
       - name: Install
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npx tsc
 
-      - name: Package
-        run: |
-          tar czf ue-mcp.tar.gz dist/ plugin/ package.json package-lock.json README.md LICENSE
+      - name: Package tarball
+        run: tar czf ue-mcp.tar.gz dist/ plugin/ package.json package-lock.json README.md LICENSE
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ue-mcp
-          path: ue-mcp.tar.gz
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: Create GitHub Release
+      - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: false
           generate_release_notes: true
-          files: artifacts/**/*
+          files: ue-mcp.tar.gz
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
