@@ -41,6 +41,22 @@
 #include "Kismet/KismetStringLibrary.h"
 #include "Kismet/KismetArrayLibrary.h"
 
+// Helper: find a UClass by short name (e.g. "AnimInstance" finds UAnimInstance)
+static UClass* FindClassByShortName(const FString& ClassName)
+{
+	UClass* PrefixedMatch = nullptr;
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		const FString& Name = It->GetName();
+		if (Name == ClassName) return *It;
+		if (!PrefixedMatch && (Name == TEXT("U") + ClassName || Name == TEXT("A") + ClassName))
+		{
+			PrefixedMatch = *It;
+		}
+	}
+	return PrefixedMatch;
+}
+
 void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
 	Registry.RegisterHandler(TEXT("create_blueprint"), &CreateBlueprint);
@@ -996,8 +1012,12 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddNode(const TSharedPtr<FJsonObject>
 
 	// Resolve short aliases to full class names
 	FString ResolvedClass = NodeClass;
-	if (NodeClass == TEXT("CallFunction")) ResolvedClass = TEXT("K2Node_CallFunction");
-	else if (NodeClass == TEXT("Event"))   ResolvedClass = TEXT("K2Node_Event");
+	if (NodeClass == TEXT("CallFunction"))  ResolvedClass = TEXT("K2Node_CallFunction");
+	else if (NodeClass == TEXT("Event"))    ResolvedClass = TEXT("K2Node_Event");
+	else if (NodeClass == TEXT("GetVar"))   ResolvedClass = TEXT("K2Node_VariableGet");
+	else if (NodeClass == TEXT("SetVar"))   ResolvedClass = TEXT("K2Node_VariableSet");
+	else if (NodeClass == TEXT("Branch"))   ResolvedClass = TEXT("K2Node_IfThenElse");
+	else if (NodeClass == TEXT("CustomEvent")) ResolvedClass = TEXT("K2Node_CustomEvent");
 
 	// Find the UEdGraphNode subclass by name (works for K2, AnimGraph, and any other graph node types)
 	UClass* NodeUClass = nullptr;
@@ -1026,34 +1046,34 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddNode(const TSharedPtr<FJsonObject>
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Special-case initialization for known types
+	// Special-case initialization for known types (must happen BEFORE AllocateDefaultPins)
 	if (UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(NewNode))
 	{
 		if (NodeParams)
 		{
 			FString FunctionName;
-			if ((*NodeParams)->TryGetStringField(TEXT("functionName"), FunctionName))
+			if (!(*NodeParams)->TryGetStringField(TEXT("functionName"), FunctionName))
+				(*NodeParams)->TryGetStringField(TEXT("memberName"), FunctionName);
+
+			if (!FunctionName.IsEmpty())
 			{
 				FString TargetClassName;
-				if ((*NodeParams)->TryGetStringField(TEXT("targetClass"), TargetClassName))
+				if (!(*NodeParams)->TryGetStringField(TEXT("targetClass"), TargetClassName))
+					(*NodeParams)->TryGetStringField(TEXT("memberParent"), TargetClassName);
+
+				UClass* TargetClass = nullptr;
+				if (!TargetClassName.IsEmpty())
 				{
-					UClass* TargetClass = FindObject<UClass>(nullptr, *TargetClassName);
-					if (!TargetClass)
-					{
-						TargetClass = FindObject<UClass>(nullptr, *(TEXT("U") + TargetClassName));
-					}
-					if (TargetClass)
-					{
-						UFunction* Func = TargetClass->FindFunctionByName(FName(*FunctionName));
-						if (Func)
-						{
-							CallNode->SetFromFunction(Func);
-						}
-					}
+					TargetClass = FindClassByShortName(TargetClassName);
 				}
-				else if (Blueprint->ParentClass)
+				if (!TargetClass)
 				{
-					UFunction* Func = Blueprint->ParentClass->FindFunctionByName(FName(*FunctionName));
+					TargetClass = Blueprint->ParentClass;
+				}
+
+				if (TargetClass)
+				{
+					UFunction* Func = TargetClass->FindFunctionByName(FName(*FunctionName));
 					if (Func)
 					{
 						CallNode->SetFromFunction(Func);
@@ -1067,9 +1087,58 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddNode(const TSharedPtr<FJsonObject>
 		if (NodeParams)
 		{
 			FString EventName;
-			if ((*NodeParams)->TryGetStringField(TEXT("eventName"), EventName))
+			if (!(*NodeParams)->TryGetStringField(TEXT("eventName"), EventName))
+				(*NodeParams)->TryGetStringField(TEXT("memberName"), EventName);
+
+			if (!EventName.IsEmpty())
 			{
-				EventNode->CustomFunctionName = FName(*EventName);
+				FString EventClassName;
+				if (!(*NodeParams)->TryGetStringField(TEXT("eventClass"), EventClassName))
+					(*NodeParams)->TryGetStringField(TEXT("memberParent"), EventClassName);
+
+				if (!EventClassName.IsEmpty())
+				{
+					// Engine event override — bind via EventReference
+					UClass* EventClass = FindClassByShortName(EventClassName);
+					if (!EventClass) EventClass = Blueprint->ParentClass;
+
+					if (EventClass)
+					{
+						UFunction* EventFunc = EventClass->FindFunctionByName(FName(*EventName));
+						if (EventFunc)
+						{
+							bool bIsSelf = Blueprint->ParentClass && Blueprint->ParentClass->IsChildOf(EventClass);
+							EventNode->EventReference.SetFromField<UFunction>(EventFunc, bIsSelf);
+						}
+					}
+				}
+				else
+				{
+					// Custom event — just set the name
+					EventNode->CustomFunctionName = FName(*EventName);
+				}
+			}
+		}
+	}
+	else if (UK2Node_VariableGet* GetNode = Cast<UK2Node_VariableGet>(NewNode))
+	{
+		if (NodeParams)
+		{
+			FString VarName;
+			if ((*NodeParams)->TryGetStringField(TEXT("variableName"), VarName))
+			{
+				GetNode->VariableReference.SetSelfMember(FName(*VarName));
+			}
+		}
+	}
+	else if (UK2Node_VariableSet* SetNode = Cast<UK2Node_VariableSet>(NewNode))
+	{
+		if (NodeParams)
+		{
+			FString VarName;
+			if ((*NodeParams)->TryGetStringField(TEXT("variableName"), VarName))
+			{
+				SetNode->VariableReference.SetSelfMember(FName(*VarName));
 			}
 		}
 	}
