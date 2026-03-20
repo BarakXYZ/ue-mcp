@@ -26,8 +26,21 @@ You can also pass the project path directly:
 npx ue-mcp init C:/Users/you/UnrealProjects/MyGame/MyGame.uproject
 ```
 
+!!! tip "Run from your project directory"
+    If you run `npx ue-mcp init` from inside your UE project folder, it auto-detects the `.uproject` file — no need to type the path.
+
 !!! warning "Restart Required"
     After setup, **restart the editor once** so the C++ bridge plugin loads. From then on it starts automatically with the editor.
+
+## Updating
+
+When a new version of ue-mcp is published, update the plugin in your project:
+
+```bash
+npx ue-mcp update
+```
+
+Run this from your project directory. It redeploys the C++ bridge plugin and tells you if an editor restart is needed.
 
 ## 2. Manual Configuration
 

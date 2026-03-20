@@ -20,13 +20,15 @@ npx ue-mcp init
 
 The interactive setup will:
 
-1. Ask for your `.uproject` path
+1. Find your `.uproject` (auto-detects in current directory)
 2. Let you choose which tool categories to enable
 3. Deploy the C++ bridge plugin to your project
 4. Enable required UE plugins (Niagara, PCG, GAS, etc.)
 5. Detect and configure your MCP client (Claude Code, Claude Desktop, Cursor)
 
-Restart the editor once after setup to load the bridge plugin. Then ask your AI:
+Restart the editor once after setup to load the bridge plugin. To update later: `npx ue-mcp update`
+
+Then ask your AI:
 
 ```
 project(action="get_status")        — verify connection
