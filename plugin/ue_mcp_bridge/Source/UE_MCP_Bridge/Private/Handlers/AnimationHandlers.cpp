@@ -1326,6 +1326,25 @@ TSharedPtr<FJsonValue> FAnimationHandlers::GetBoneTransforms(const TSharedPtr<FJ
 }
 
 // ---------------------------------------------------------------------------
+// Helper: Set the protected SegmentLength property on an FAnimLinkableElement
+// (e.g. FCompositeSection) via reflection.
+// ---------------------------------------------------------------------------
+static void SetSegmentLength(FAnimLinkableElement& Element, float NewLength)
+{
+	FProperty* Prop = FAnimLinkableElement::StaticStruct()->FindPropertyByName(TEXT("SegmentLength"));
+	if (!Prop) return;
+
+	if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Prop))
+	{
+		FloatProp->SetPropertyValue_InContainer(&Element, NewLength);
+	}
+	else if (FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Prop))
+	{
+		DoubleProp->SetPropertyValue_InContainer(&Element, static_cast<double>(NewLength));
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Helper: Set the protected SequenceLength property on a montage via reflection.
 // Handles both float (UE 5.3 and earlier) and double (UE 5.4+) property types.
 // ---------------------------------------------------------------------------
@@ -1436,7 +1455,7 @@ TSharedPtr<FJsonValue> FAnimationHandlers::SetMontageSequence(const TSharedPtr<F
 	// Update composite sections' segment lengths to match new duration
 	for (FCompositeSection& Section : Montage->CompositeSections)
 	{
-		Section.SegmentLength = NewTotalLength;
+		SetSegmentLength(Section, NewTotalLength);
 	}
 
 	Montage->PostEditChange();
@@ -1491,7 +1510,7 @@ TSharedPtr<FJsonValue> FAnimationHandlers::SetMontageProperties(const TSharedPtr
 		// Also update composite sections' segment lengths to match
 		for (FCompositeSection& Section : Montage->CompositeSections)
 		{
-			Section.SegmentLength = NewLength;
+			SetSegmentLength(Section, NewLength);
 		}
 		Modified.Add(TEXT("sequenceLength"));
 	}
