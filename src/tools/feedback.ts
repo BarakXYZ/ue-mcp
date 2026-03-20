@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { categoryTool, type ToolDef, type ToolContext } from "../types.js";
 import { submitFeedback } from "../github-app.js";
+import { getWorkarounds, clearWorkarounds } from "../workaround-tracker.js";
 
 export const feedbackTool: ToolDef = categoryTool(
   "feedback",
@@ -27,6 +28,23 @@ export const feedbackTool: ToolDef = categoryTool(
             pythonWorkaround,
             "```",
           );
+        }
+
+        // Append session workaround log if any calls were tracked
+        const workarounds = getWorkarounds();
+        if (workarounds.length > 0) {
+          sections.push("", "## Session Workaround Log", `${workarounds.length} execute_python call(s) this session:`, "");
+          for (const w of workarounds) {
+            sections.push(
+              `### ${w.timestamp}`,
+              "```python",
+              w.code,
+              "```",
+              w.resultSnippet ? `> Result: \`${w.resultSnippet}\`` : "",
+              "",
+            );
+          }
+          clearWorkarounds();
         }
 
         sections.push("", "---", "*Submitted via ue-mcp agent feedback*");

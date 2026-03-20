@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { categoryTool, bp, type ToolDef, type ToolContext } from "../types.js";
 import { startEditor, stopEditor, restartEditor } from "../editor-control.js";
+import { pushWorkaround, workaroundCount } from "../workaround-tracker.js";
 
 export const editorTool: ToolDef = categoryTool(
   "editor",
@@ -24,7 +25,28 @@ export const editorTool: ToolDef = categoryTool(
     },
     // Editor Commands
     execute_command: bp("execute_command"),
-    execute_python: bp("execute_python"),
+    execute_python: {
+      handler: async (ctx: ToolContext, params: Record<string, unknown>) => {
+        const code = (params.code as string) ?? "";
+        const result = await ctx.bridge.call("execute_python", { code });
+
+        // Track this workaround
+        const snippet = typeof result === "object" && result !== null
+          ? JSON.stringify(result).slice(0, 200)
+          : String(result).slice(0, 200);
+        pushWorkaround({ code, timestamp: new Date().toISOString(), resultSnippet: snippet });
+
+        const n = workaroundCount();
+        const nudge = `\n\n⚠️ execute_python workaround logged (${n} this session). `
+          + `When your task is complete, ask the user if they'd like to submit feedback via feedback(action="submit").`;
+
+        // Inject nudge into the response
+        if (typeof result === "object" && result !== null) {
+          return { ...result as Record<string, unknown>, _workaround_nudge: nudge };
+        }
+        return { result, _workaround_nudge: nudge };
+      },
+    },
     set_property: bp("set_property"),
     play_in_editor: bp("pie_control", (p) => ({ action: p.pieAction ?? "status" })),
     get_runtime_value: bp("get_runtime_value"),
