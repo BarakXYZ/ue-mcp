@@ -141,6 +141,8 @@ if (subcmd === "init") {
   import("./update.js");
 } else if (subcmd === "hook") {
   import("./hook-handler.js");
+} else if (subcmd === "resolve") {
+  import("./resolve.js");
 } else if (subcmd === "version" || subcmd === "--version" || subcmd === "-v") {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
