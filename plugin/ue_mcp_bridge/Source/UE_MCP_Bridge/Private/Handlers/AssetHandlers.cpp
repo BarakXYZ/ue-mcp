@@ -1843,9 +1843,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::AddSocket(const TSharedPtr<FJsonObject>& 
 		NewSocket->RelativeLocation = RelLoc;
 		NewSocket->RelativeRotation = RelRot;
 		NewSocket->RelativeScale = RelScale;
+		SM->Modify();
 		SM->Sockets.Add(NewSocket);
 		SM->MarkPackageDirty();
-		SM->PostEditChange();
 
 		Result->SetBoolField(TEXT("success"), true);
 		Result->SetStringField(TEXT("socketName"), SocketName);
@@ -1910,9 +1910,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::RemoveSocket(const TSharedPtr<FJsonObject
 		{
 			if (SM->Sockets[i] && SM->Sockets[i]->SocketName == FName(*SocketName))
 			{
+				SM->Modify();
 				SM->Sockets.RemoveAt(i);
 				SM->MarkPackageDirty();
-				SM->PostEditChange();
 
 				TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 				Result->SetBoolField(TEXT("success"), true);
