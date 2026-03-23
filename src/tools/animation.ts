@@ -30,7 +30,7 @@ export const animationTool: ToolDef = categoryTool(
 - read_blendspace: Read blendspace. Params: assetPath
 - list: List anim assets. Params: directory?, recursive?
 - create_montage: Create montage. Params: animSequencePath, name?, packagePath?
-- create_anim_blueprint: Create AnimBP. Params: skeletonPath, name?, packagePath?
+- create_anim_blueprint: Create AnimBP. Params: skeletonPath, name?, packagePath?, parentClass? (e.g. "MyAnimInstance")
 - create_blendspace: Create blendspace. Params: skeletonPath, name?, packagePath?, axisHorizontal?, axisVertical?
 - add_notify: Add notify. Params: assetPath, notifyName, triggerTime, notifyClass?
 - get_skeleton_info: Read skeleton. Params: assetPath
@@ -64,6 +64,7 @@ export const animationTool: ToolDef = categoryTool(
     frameRate: z.number().optional(),
     boneName: z.string().optional(),
     boneNames: z.array(z.string()).optional(),
+    parentClass: z.string().optional().describe("Parent AnimInstance class name for create_anim_blueprint"),
     keyframes: z.array(z.object({
       frame: z.number(),
       location: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
