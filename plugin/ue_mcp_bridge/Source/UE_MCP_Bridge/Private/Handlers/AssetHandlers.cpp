@@ -708,15 +708,18 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportStaticMesh(const TSharedPtr<FJsonOb
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
 	FString FileName;
-	if (!Params->TryGetStringField(TEXT("filename"), FileName))
+	if (!Params->TryGetStringField(TEXT("filename"), FileName) && !Params->TryGetStringField(TEXT("filePath"), FileName))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'filename' parameter (path to FBX file)"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'filePath' parameter (absolute path to FBX/OBJ file)"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	FString DestinationPath = TEXT("/Game/Meshes");
-	Params->TryGetStringField(TEXT("destinationPath"), DestinationPath);
+	if (!Params->TryGetStringField(TEXT("destinationPath"), DestinationPath))
+	{
+		Params->TryGetStringField(TEXT("packagePath"), DestinationPath);
+	}
 
 	if (!FPaths::FileExists(FileName))
 	{
@@ -771,7 +774,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportStaticMesh(const TSharedPtr<FJsonOb
 
 	// Optional asset name
 	FString AssetName;
-	if (Params->TryGetStringField(TEXT("assetName"), AssetName) && !AssetName.IsEmpty())
+	if (!Params->TryGetStringField(TEXT("assetName"), AssetName))
+	{
+		Params->TryGetStringField(TEXT("name"), AssetName);
+	}
+	if (!AssetName.IsEmpty())
 	{
 		Task->DestinationName = AssetName;
 	}
@@ -815,15 +822,18 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportSkeletalMesh(const TSharedPtr<FJson
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
 	FString FileName;
-	if (!Params->TryGetStringField(TEXT("filename"), FileName))
+	if (!Params->TryGetStringField(TEXT("filename"), FileName) && !Params->TryGetStringField(TEXT("filePath"), FileName))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'filename' parameter (path to FBX file)"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'filePath' parameter (absolute path to FBX file)"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	FString DestinationPath = TEXT("/Game/Meshes");
-	Params->TryGetStringField(TEXT("destinationPath"), DestinationPath);
+	if (!Params->TryGetStringField(TEXT("destinationPath"), DestinationPath))
+	{
+		Params->TryGetStringField(TEXT("packagePath"), DestinationPath);
+	}
 
 	if (!FPaths::FileExists(FileName))
 	{
@@ -883,7 +893,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportSkeletalMesh(const TSharedPtr<FJson
 
 	// Optional asset name
 	FString AssetName;
-	if (Params->TryGetStringField(TEXT("assetName"), AssetName) && !AssetName.IsEmpty())
+	if (!Params->TryGetStringField(TEXT("assetName"), AssetName))
+	{
+		Params->TryGetStringField(TEXT("name"), AssetName);
+	}
+	if (!AssetName.IsEmpty())
 	{
 		Task->DestinationName = AssetName;
 	}
@@ -927,9 +941,9 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportAnimation(const TSharedPtr<FJsonObj
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
 	FString FileName;
-	if (!Params->TryGetStringField(TEXT("filename"), FileName))
+	if (!Params->TryGetStringField(TEXT("filename"), FileName) && !Params->TryGetStringField(TEXT("filePath"), FileName))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'filename' parameter (path to FBX file)"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'filePath' parameter (absolute path to FBX file)"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
@@ -943,7 +957,10 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportAnimation(const TSharedPtr<FJsonObj
 	}
 
 	FString DestinationPath = TEXT("/Game/Animations");
-	Params->TryGetStringField(TEXT("destinationPath"), DestinationPath);
+	if (!Params->TryGetStringField(TEXT("destinationPath"), DestinationPath))
+	{
+		Params->TryGetStringField(TEXT("packagePath"), DestinationPath);
+	}
 
 	if (!FPaths::FileExists(FileName))
 	{
@@ -997,7 +1014,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportAnimation(const TSharedPtr<FJsonObj
 
 	// Optional asset name
 	FString AssetName;
-	if (Params->TryGetStringField(TEXT("assetName"), AssetName) && !AssetName.IsEmpty())
+	if (!Params->TryGetStringField(TEXT("assetName"), AssetName))
+	{
+		Params->TryGetStringField(TEXT("name"), AssetName);
+	}
+	if (!AssetName.IsEmpty())
 	{
 		Task->DestinationName = AssetName;
 	}
@@ -1326,15 +1347,18 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportTexture(const TSharedPtr<FJsonObjec
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
 	FString FileName;
-	if (!Params->TryGetStringField(TEXT("filename"), FileName))
+	if (!Params->TryGetStringField(TEXT("filename"), FileName) && !Params->TryGetStringField(TEXT("filePath"), FileName))
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing 'filename' parameter (path to texture file)"));
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'filePath' parameter (absolute path to texture file)"));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
 	FString DestinationPath = TEXT("/Game/Textures");
-	Params->TryGetStringField(TEXT("destinationPath"), DestinationPath);
+	if (!Params->TryGetStringField(TEXT("destinationPath"), DestinationPath))
+	{
+		Params->TryGetStringField(TEXT("packagePath"), DestinationPath);
+	}
 
 	if (!FPaths::FileExists(FileName))
 	{
@@ -1369,7 +1393,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::ImportTexture(const TSharedPtr<FJsonObjec
 
 	// Optional asset name
 	FString AssetName;
-	if (Params->TryGetStringField(TEXT("assetName"), AssetName) && !AssetName.IsEmpty())
+	if (!Params->TryGetStringField(TEXT("assetName"), AssetName))
+	{
+		Params->TryGetStringField(TEXT("name"), AssetName);
+	}
+	if (!AssetName.IsEmpty())
 	{
 		Task->DestinationName = AssetName;
 	}
