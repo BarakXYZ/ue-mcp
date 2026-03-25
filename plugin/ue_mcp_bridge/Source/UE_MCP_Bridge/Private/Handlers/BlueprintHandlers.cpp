@@ -2481,7 +2481,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetComponentProperty(const TSharedPtr
 	else if (FSoftObjectProperty* SoftProp = CastField<FSoftObjectProperty>(FinalProp))
 	{
 		FSoftObjectPath SoftPath(Value);
-		SoftProp->SetPropertyValue(ValuePtr, SoftPath);
+		SoftProp->SetPropertyValue(ValuePtr, FSoftObjectPtr(SoftPath));
 	}
 	else
 	{

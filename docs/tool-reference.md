@@ -66,7 +66,7 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 
 | Action | Description | Key Params |
 |--------|-------------|------------|
-| `read` | Read full Blueprint structure | `assetPath` |
+| `read` | Read Blueprint structure incl. SCS components (name, class, mesh, materials, transform) | `assetPath` |
 | `list_variables` | List variables with types and flags | `assetPath` |
 | `list_functions` | List functions and graphs | `assetPath` |
 | `list_graphs` | List all graphs in a blueprint (EventGraph, AnimGraph, etc.) | `assetPath` |
@@ -82,6 +82,7 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `set_node_property` | Set pin default or struct property (supports dot paths) | `assetPath`, `graphName`, `nodeName`, `propertyName`, `value` |
 | `connect_pins` | Wire two node pins together | `assetPath`, `sourceNode`, `sourcePin`, `targetNode`, `targetPin` |
 | `add_component` | Add a component to the BP | `assetPath`, `componentClass` |
+| `set_component_property` | Set property on SCS component template (dot paths, asset paths) | `assetPath`, `componentName`, `propertyName`, `value` |
 | `compile` | Compile the Blueprint | `assetPath` |
 | `list_node_types` | List available node types by category | `category?` |
 | `search_node_types` | Search for node types | `query` |
