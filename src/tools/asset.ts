@@ -78,10 +78,10 @@ export const assetTool: ToolDef = categoryTool(
       if (paths && paths.length > 0) return { assetPaths: paths };
       return { assetPath: p.assetPath };
     }),
-    import_static_mesh:   bp("import_static_mesh"),
-    import_skeletal_mesh: bp("import_skeletal_mesh"),
-    import_animation:     bp("import_animation"),
-    import_texture:       bp("import_texture"),
+    import_static_mesh:   bp("import_static_mesh", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, combineMeshes: p.combineMeshes, importMaterials: p.importMaterials, importTextures: p.importTextures, generateLightmapUVs: p.generateLightmapUVs })),
+    import_skeletal_mesh: bp("import_skeletal_mesh", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, skeletonPath: p.skeletonPath, importMaterials: p.importMaterials, importTextures: p.importTextures })),
+    import_animation:     bp("import_animation", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name, skeletonPath: p.skeletonPath })),
+    import_texture:       bp("import_texture", (p) => ({ filename: p.filePath, destinationPath: p.packagePath, assetName: p.name })),
     read_datatable:       bp("read_datatable", (p) => ({ path: p.assetPath, rowFilter: p.rowFilter })),
     create_datatable:     bp("create_datatable"),
     reimport_datatable:   bp("reimport_datatable", (p) => ({ path: p.assetPath, jsonPath: p.jsonPath, jsonString: p.jsonString })),
@@ -103,9 +103,9 @@ export const assetTool: ToolDef = categoryTool(
 - save: Save asset(s). Params: assetPath?
 - set_mesh_material: Assign material to static mesh slot. Params: assetPath, materialPath, slotIndex?
 - recenter_pivot: Move static mesh pivot to geometry center. Params: assetPath OR assetPaths (array — first mesh sets the reference pivot for all)
-- import_static_mesh: Import from FBX/OBJ. Params: filePath, name?, packagePath?
-- import_skeletal_mesh: Import from FBX. Params: filePath, name?, packagePath?, skeletonPath?
-- import_animation: Import anim from FBX. Params: filePath, name?, packagePath?, skeletonPath?
+- import_static_mesh: Import from FBX/OBJ. Multi-mesh FBX imports as separate assets by default (combineMeshes=false). Params: filePath, name?, packagePath?, combineMeshes?, importMaterials?, importTextures?, generateLightmapUVs?
+- import_skeletal_mesh: Import from FBX. Params: filePath, name?, packagePath?, skeletonPath?, importMaterials?, importTextures?
+- import_animation: Import anim from FBX. Params: filePath, name?, packagePath?, skeletonPath
 - import_texture: Import image. Params: filePath, name?, packagePath?
 - read_datatable: Read DataTable rows. Params: assetPath, rowFilter?
 - create_datatable: Create DataTable. Params: name, packagePath?, rowStruct
@@ -127,8 +127,12 @@ export const assetTool: ToolDef = categoryTool(
     materialPath: z.string().optional().describe("Material asset path for set_mesh_material"),
     slotIndex: z.number().optional().describe("Material slot index (default 0)"),
     filePath: z.string().optional().describe("Absolute file path for imports"),
-    name: z.string().optional(), packagePath: z.string().optional(),
+    name: z.string().optional().describe("Asset name (defaults to filename)"),
+    packagePath: z.string().optional().describe("Destination package path (e.g. /Game/Meshes)"),
     skeletonPath: z.string().optional(),
+    combineMeshes: z.boolean().optional().describe("Combine all meshes in FBX into one (default false — imports as separate assets)"),
+    importMaterials: z.boolean().optional(), importTextures: z.boolean().optional(),
+    generateLightmapUVs: z.boolean().optional(),
     rowFilter: z.string().optional(), rowStruct: z.string().optional(),
     jsonPath: z.string().optional(), jsonString: z.string().optional(),
     exportName: z.string().optional(), propertyName: z.string().optional(),
