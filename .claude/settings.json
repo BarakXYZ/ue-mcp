@@ -1,6 +1,7 @@
 {
   "permissions": {
     "defaultMode": "bypassPermissions",
+    "additionalDirectories": ["~/.claude/"],
     "allow": [
       "Bash(*)",
       "Read",
