@@ -21,6 +21,7 @@ export const blueprintTool: ToolDef = categoryTool(
     connect_pins:      bp("connect_pins"),
     add_component:     bp("add_component", (p) => ({ path: p.assetPath, componentClass: p.componentClass, componentName: p.componentName ?? p.componentClass })),
     set_component_property: bp("set_blueprint_component_property", (p) => ({ path: p.assetPath, componentName: p.componentName, propertyName: p.propertyName, value: p.value })),
+    set_class_default: bp("set_class_default", (p) => ({ path: p.assetPath, propertyName: p.propertyName, value: p.value })),
     compile:           bp("compile_blueprint", (p) => ({ path: p.assetPath })),
     list_node_types:   bp("list_node_types"),
     search_node_types: bp("search_node_types"),
@@ -46,6 +47,7 @@ export const blueprintTool: ToolDef = categoryTool(
 - connect_pins: Wire nodes. Params: sourceNode, sourcePin, targetNode, targetPin, assetPath, graphName?
 - add_component: Add BP component. Params: assetPath, componentClass, componentName?
 - set_component_property: Set property on SCS component template (supports dot paths, asset paths for object refs). Params: assetPath, componentName, propertyName, value
+- set_class_default: Set UPROPERTY on Blueprint CDO (FName, object refs, soft refs, TArray, TMap via ImportText). Params: assetPath, propertyName, value
 - compile: Compile Blueprint. Params: assetPath
 - list_node_types: List node types. Params: category?, includeFunctions?
 - search_node_types: Search nodes. Params: query
