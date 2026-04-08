@@ -338,6 +338,43 @@ TSharedPtr<FJsonValue> FMaterialHandlers::ReadMaterial(const TSharedPtr<FJsonObj
 			ExprObj->SetObjectField(TEXT("value"), ConstColor);
 		}
 
+		// Expression-to-expression input connections
+		TArray<TSharedPtr<FJsonValue>> InputsArray;
+		for (int32 InputIdx = 0; ; InputIdx++)
+		{
+			FExpressionInput* Input = Expression->GetInput(InputIdx);
+			if (!Input) break;
+
+			TSharedPtr<FJsonObject> InputObj = MakeShared<FJsonObject>();
+			InputObj->SetNumberField(TEXT("inputIndex"), InputIdx);
+			InputObj->SetStringField(TEXT("inputName"), Expression->GetInputName(InputIdx).ToString());
+
+			if (Input->Expression)
+			{
+				InputObj->SetStringField(TEXT("connectedExpressionClass"), Input->Expression->GetClass()->GetName());
+				InputObj->SetStringField(TEXT("connectedExpressionDescription"), Input->Expression->GetDescription());
+				InputObj->SetNumberField(TEXT("connectedOutputIndex"), Input->OutputIndex);
+
+				// Find index of connected expression
+				int32 ConnIdx = 0;
+				for (UMaterialExpression* Expr : Material->GetExpressions())
+				{
+					if (Expr == Input->Expression)
+					{
+						InputObj->SetNumberField(TEXT("connectedExpressionIndex"), ConnIdx);
+						break;
+					}
+					ConnIdx++;
+				}
+			}
+
+			InputsArray.Add(MakeShared<FJsonValueObject>(InputObj));
+		}
+		if (InputsArray.Num() > 0)
+		{
+			ExprObj->SetArrayField(TEXT("inputs"), InputsArray);
+		}
+
 		ExpressionsArray.Add(MakeShared<FJsonValueObject>(ExprObj));
 		Index++;
 	}
@@ -2246,6 +2283,52 @@ TSharedPtr<FJsonValue> FMaterialHandlers::DeleteMaterialExpression(const TShared
 	FString DeletedClass = Expression->GetClass()->GetName();
 
 	Material->PreEditChange(nullptr);
+
+	// Disconnect all references from other expressions that point to this one
+	for (UMaterialExpression* OtherExpr : Material->GetExpressions())
+	{
+		if (!OtherExpr || OtherExpr == Expression) continue;
+		for (int32 i = 0; ; i++)
+		{
+			FExpressionInput* Input = OtherExpr->GetInput(i);
+			if (!Input) break;
+			if (Input->Expression == Expression)
+			{
+				Input->Expression = nullptr;
+				Input->OutputIndex = 0;
+			}
+		}
+	}
+
+	// Disconnect any material property inputs that reference this expression
+	UMaterialEditorOnlyData* EditorOnlyData = Material->GetEditorOnlyData();
+	if (EditorOnlyData)
+	{
+		auto ClearIfMatch = [Expression](FExpressionInput& Input)
+		{
+			if (Input.Expression == Expression)
+			{
+				Input.Expression = nullptr;
+				Input.OutputIndex = 0;
+			}
+		};
+		ClearIfMatch(EditorOnlyData->BaseColor);
+		ClearIfMatch(EditorOnlyData->Metallic);
+		ClearIfMatch(EditorOnlyData->Specular);
+		ClearIfMatch(EditorOnlyData->Roughness);
+		ClearIfMatch(EditorOnlyData->Anisotropy);
+		ClearIfMatch(EditorOnlyData->EmissiveColor);
+		ClearIfMatch(EditorOnlyData->Opacity);
+		ClearIfMatch(EditorOnlyData->OpacityMask);
+		ClearIfMatch(EditorOnlyData->Normal);
+		ClearIfMatch(EditorOnlyData->Tangent);
+		ClearIfMatch(EditorOnlyData->WorldPositionOffset);
+		ClearIfMatch(EditorOnlyData->SubsurfaceColor);
+		ClearIfMatch(EditorOnlyData->AmbientOcclusion);
+		ClearIfMatch(EditorOnlyData->Refraction);
+		ClearIfMatch(EditorOnlyData->PixelDepthOffset);
+	}
+
 	Material->GetExpressionCollection().RemoveExpression(Expression);
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
