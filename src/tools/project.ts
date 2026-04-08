@@ -220,6 +220,8 @@ export const projectTool: ToolDef = categoryTool(
       },
     },
     set_config: bp("set_config"),
+    build: bp("build_project"),
+    generate_project_files: bp("generate_project_files"),
   },
   `- get_status: Check server mode and editor connection
 - set_project: Switch project. Params: projectPath
@@ -231,7 +233,9 @@ export const projectTool: ToolDef = categoryTool(
 - read_cpp_header: Parse a .h file. Params: headerPath
 - read_module: Read module source. Params: moduleName
 - list_modules: List C++ modules
-- search_cpp: Search .h/.cpp files. Params: query, directory?`,
+- search_cpp: Search .h/.cpp files. Params: query, directory?
+- build: Build C++ project. Params: configuration? (Development|Debug|Shipping), platform? (Win64|Linux|Mac), clean?
+- generate_project_files: Generate IDE project files (Visual Studio, Xcode, etc.)`,
   {
     projectPath: z.string().optional().describe("For set_project: path to .uproject"),
     configName: z.string().optional().describe("For read_config/set_config: config file name"),
@@ -242,5 +246,8 @@ export const projectTool: ToolDef = categoryTool(
     section: z.string().optional().describe("For set_config: INI section"),
     key: z.string().optional().describe("For set_config: INI key"),
     value: z.string().optional().describe("For set_config: INI value"),
+    configuration: z.string().optional().describe("Build configuration: Development, Debug, Shipping"),
+    platform: z.string().optional().describe("Target platform: Win64, Linux, Mac"),
+    clean: z.boolean().optional().describe("Clean build"),
   },
 );
