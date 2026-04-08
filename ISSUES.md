@@ -1,10 +1,10 @@
 # Open Issues — db-lyon/ue-mcp
 
-*Generated 2026-04-08 — 68 open issues*
+*Generated 2026-04-08 — 68 open issues, 62 fixed*
 
 ---
 
-## Blueprint (13)
+## Blueprint (13) — 13/13 done
 
 - [x] #92 Cannot set CDO default values for class reference arrays
 - [x] #87 Blueprint tool missing add function parameter support
@@ -20,7 +20,7 @@
 - [x] #8 ControlRigBlueprint.add_member_variable crashes on struct types (FVector, FTransform)
 - [x] #30 Cannot create PrimaryDataAsset instances or set gameplay tag properties
 
-## Niagara (8)
+## Niagara (8) — 7/8 done
 
 - [x] #88 Niagara create action causes editor crash
 - [x] #74 set_emitter_property returns success but may not actually modify emitter graph
@@ -29,9 +29,9 @@
 - [x] #68 get_emitter_info returns no useful data
 - [x] #67 list doesn't return emitter assets, only systems
 - [x] #66 spawn creates auto-destroying actor that vanishes with empty emitters
-- [ ] #65 No native tools for Niagara emitter graph authoring (requires NiagaraEditor internals)
+- [ ] #65 No native tools for Niagara emitter graph authoring — requires NiagaraEditor private APIs
 
-## Animation (8)
+## Animation (8) — 8/8 done
 
 - [x] #93 Cannot create/read IK Rigs and IK Retargeters
 - [x] #91 Cannot read AnimGraph node properties (RetargetPoseFromMesh, etc.)
@@ -42,14 +42,14 @@
 - [x] #23 Cannot read AnimBP AnimGraph nodes via read_graph
 - [x] #11 No native tool for Control Rig graph construction
 
-## Material (4)
+## Material (4) — 4/4 done
 
 - [x] #72 set_parameter doesn't accept parameterType in schema
 - [x] #71 set_parameter fails on non-parameter expressions (Constant nodes)
 - [x] #44 Material graph authoring via native tools is unreliable for multi-step operations
 - [x] #43 Cannot disconnect material property inputs or set Constant3Vector values
 
-## Level / Actors (7)
+## Level / Actors (7) — 7/7 done
 
 - [x] #73 place_actor can't resolve StaticMeshActor
 - [x] #63 set_component_property can't find components by default name convention
@@ -59,7 +59,7 @@
 - [x] #47 get_outliner doesn't show child components
 - [x] #80 Set level WorldSettings default GameMode via native tool
 
-## Input / PIE Runtime (7)
+## Input / PIE Runtime (7) — 7/7 done
 
 - [x] #90 Expose PIE runtime input binding inspection
 - [x] #89 Add native PIE runtime controller/input binding inspection
@@ -69,19 +69,19 @@
 - [x] #50 create_input_action valueType parameter not applied
 - [x] #26 Cannot inspect runtime PIE anim instance state
 
-## Widget (2)
+## Widget (2) — 2/2 done
 
 - [x] #81 widget tool has no action to add child widgets to WidgetTree
 - [x] #13 widget tool cannot construct UI content (add children, buttons, sliders, text)
 
-## Asset / Data (4)
+## Asset / Data (4) — 3/4 done
 
-- [ ] #53 Asset/material tools lack parenting and package reload
-- [ ] #48 Read protected UObject UPROPERTY arrays from DataAsset sub-objects
+- [x] #53 Asset/material tools lack parenting and package reload
+- [x] #48 Read protected UObject UPROPERTY arrays from DataAsset sub-objects
 - [x] #29 set_property cannot set complex nested struct arrays
-- [ ] #75 Cannot create serialized UObject subobjects for IMC/IA modifier and trigger arrays
+- [ ] #75 Cannot create serialized UObject subobjects for IMC/IA modifier and trigger arrays — requires deep UE serialization
 
-## Editor / Stability (5)
+## Editor / Stability (5) — 5/5 done
 
 - [x] #61 Editor crash in NiagaraHandlers::CreateNiagaraSystem — array index out of bounds
 - [x] #56 Editor crash in FMCPGameThreadExecutor::ExecuteOnGameThread during startup
@@ -89,21 +89,21 @@
 - [x] #64 capture_screenshot silently fails when editor window not focused
 - [x] #82 get_log and search_log always return empty results
 
-## Project / Build (2)
+## Project / Build (2) — 2/2 done
 
 - [x] #14 No native build action — project tool should support building C++
 - [x] #49 Add native support for generating Visual Studio project files
 
-## Skeletal Mesh / Post-Process (3)
+## Skeletal Mesh / Post-Process (3) — 3/3 done
 
-- [ ] #25 Cannot inspect post-process AnimBP assignment on skeletal mesh component
-- [ ] #20 Cannot set post-process anim blueprint on SkeletalMesh via native tools
-- [ ] #21 Cannot read World Settings or GameMode default pawn class via native tools
+- [x] #25 Cannot inspect post-process AnimBP assignment on skeletal mesh component
+- [x] #20 Cannot set post-process anim blueprint on SkeletalMesh via native tools
+- [x] #21 Cannot read World Settings or GameMode default pawn class via native tools
 
-## Level Sequence (1)
+## Level Sequence (1) — 0/1
 
-- [ ] #52 Read Level Sequence binding attach sockets and transform key values
+- [ ] #52 Read Level Sequence binding attach sockets and transform key values — needs dedicated LevelSequence handler
 
-## Chooser (1)
+## Chooser (1) — 0/1
 
-- [ ] #76 Nested chooser row editing is missing
+- [ ] #76 Nested chooser row editing is missing — requires ChooserTable plugin private APIs
