@@ -27,6 +27,8 @@ export const levelTool: ToolDef = categoryTool(
     build_lighting:     bp("build_lighting"),
     get_spline_info:    bp("get_spline_info"),
     set_spline_points:  bp("set_spline_points"),
+    get_world_settings: bp("get_world_settings"),
+    set_world_settings: bp("set_world_settings"),
   },
   `- get_outliner: List actors. Params: classFilter?, nameFilter?
 - place_actor: Spawn actor. Params: actorClass, label?, location?, rotation?, scale?, properties?
@@ -45,7 +47,9 @@ export const levelTool: ToolDef = categoryTool(
 - set_light_properties: Edit light. Params: actorLabel, intensity?, color?, temperature?, castShadows?, attenuationRadius?
 - build_lighting: Build lights. Params: quality?
 - get_spline_info: Read spline. Params: actorLabel
-- set_spline_points: Set spline points. Params: actorLabel, points[], closedLoop?`,
+- set_spline_points: Set spline points. Params: actorLabel, points[], closedLoop?
+- get_world_settings: Read world settings (GameMode, KillZ, gravity, etc.)
+- set_world_settings: Set world settings. Params: defaultGameMode?, killZ?, globalGravityZ?, enableWorldBoundsChecks?`,
   {
     actorLabel: z.string().optional(), actorLabels: z.array(z.string()).optional(),
     actorClass: z.string().optional(), label: z.string().optional(),
@@ -68,5 +72,9 @@ export const levelTool: ToolDef = categoryTool(
     quality: z.string().optional(),
     points: z.array(z.object({ x: z.number(), y: z.number(), z: z.number() })).optional(),
     closedLoop: z.boolean().optional(),
+    defaultGameMode: z.string().optional(),
+    killZ: z.number().optional(),
+    globalGravityZ: z.number().optional(),
+    enableWorldBoundsChecks: z.boolean().optional(),
   },
 );

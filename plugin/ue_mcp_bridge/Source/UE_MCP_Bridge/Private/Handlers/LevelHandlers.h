@@ -31,4 +31,6 @@ private:
 	static TSharedPtr<FJsonValue> ListSublevels(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetComponentProperty(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetVolumeProperties(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> GetWorldSettings(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetWorldSettings(const TSharedPtr<FJsonObject>& Params);
 };

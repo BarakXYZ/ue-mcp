@@ -27,11 +27,34 @@
 #include "GameFramework/Volume.h"
 #include "Engine/BlockingVolume.h"
 #include "Engine/TriggerVolume.h"
+#include "Engine/PostProcessVolume.h"
+#include "Sound/AudioVolume.h"
+#include "Lightmass/LightmassImportanceVolume.h"
+#include "NavMesh/NavMeshBoundsVolume.h"
+#include "GameFramework/PainCausingVolume.h"
 #include "Selection.h"
 #include "Engine/LevelStreaming.h"
 #include "LevelEditorSubsystem.h"
 #include "EditorLevelUtils.h"
 #include "FileHelpers.h"
+#include "GameFramework/WorldSettings.h"
+#include "GameFramework/GameModeBase.h"
+
+// Helper: find a UClass by short name (e.g. "StaticMeshActor" finds AStaticMeshActor)
+static UClass* FindClassByShortName(const FString& ClassName)
+{
+	UClass* PrefixedMatch = nullptr;
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		const FString& Name = It->GetName();
+		if (Name == ClassName) return *It;
+		if (!PrefixedMatch && (Name == TEXT("U") + ClassName || Name == TEXT("A") + ClassName))
+		{
+			PrefixedMatch = *It;
+		}
+	}
+	return PrefixedMatch;
+}
 
 void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -54,6 +77,8 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("list_sublevels"), &ListSublevels);
 	Registry.RegisterHandler(TEXT("set_component_property"), &SetComponentProperty);
 	Registry.RegisterHandler(TEXT("set_volume_properties"), &SetVolumeProperties);
+	Registry.RegisterHandler(TEXT("get_world_settings"), &GetWorldSettings);
+	Registry.RegisterHandler(TEXT("set_world_settings"), &SetWorldSettings);
 }
 
 TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>& Params)
@@ -117,6 +142,20 @@ TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>
 		RotationObj->SetNumberField(TEXT("roll"), Rotation.Roll);
 		ActorObj->SetObjectField(TEXT("rotation"), RotationObj);
 
+		// Include child components
+		TArray<TSharedPtr<FJsonValue>> ComponentsArray;
+		TArray<UActorComponent*> Components;
+		Actor->GetComponents(Components);
+		for (UActorComponent* Comp : Components)
+		{
+			if (!Comp) continue;
+			TSharedPtr<FJsonObject> CompObj = MakeShared<FJsonObject>();
+			CompObj->SetStringField(TEXT("name"), Comp->GetName());
+			CompObj->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
+			ComponentsArray.Add(MakeShared<FJsonValueObject>(CompObj));
+		}
+		ActorObj->SetArrayField(TEXT("components"), ComponentsArray);
+
 		ActorsArray.Add(MakeShared<FJsonValueObject>(ActorObj));
 	}
 
@@ -149,11 +188,15 @@ TSharedPtr<FJsonValue> FLevelHandlers::PlaceActor(const TSharedPtr<FJsonObject>&
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Find actor class
+	// Find actor class — try full path first, then broad short-name search
 	UClass* Class = FindObject<UClass>(nullptr, *ActorClass);
 	if (!Class)
 	{
-		Class = FindObject<UClass>(nullptr, *(TEXT("A") + ActorClass));
+		Class = LoadObject<UClass>(nullptr, *ActorClass);
+	}
+	if (!Class)
+	{
+		Class = FindClassByShortName(ActorClass);
 	}
 
 	if (!Class)
@@ -804,14 +847,34 @@ TSharedPtr<FJsonValue> FLevelHandlers::SpawnVolume(const TSharedPtr<FJsonObject>
 	{
 		VolumeClass = ATriggerVolume::StaticClass();
 	}
+	else if (VolumeType.Equals(TEXT("PostProcessVolume"), ESearchCase::IgnoreCase) || VolumeType.Equals(TEXT("postprocess"), ESearchCase::IgnoreCase))
+	{
+		VolumeClass = APostProcessVolume::StaticClass();
+	}
+	else if (VolumeType.Equals(TEXT("AudioVolume"), ESearchCase::IgnoreCase) || VolumeType.Equals(TEXT("audio"), ESearchCase::IgnoreCase))
+	{
+		VolumeClass = AAudioVolume::StaticClass();
+	}
+	else if (VolumeType.Equals(TEXT("LightmassImportanceVolume"), ESearchCase::IgnoreCase) || VolumeType.Equals(TEXT("lightmass"), ESearchCase::IgnoreCase))
+	{
+		VolumeClass = ALightmassImportanceVolume::StaticClass();
+	}
+	else if (VolumeType.Equals(TEXT("CullDistanceVolume"), ESearchCase::IgnoreCase) || VolumeType.Equals(TEXT("culldistance"), ESearchCase::IgnoreCase))
+	{
+		VolumeClass = FindClassByShortName(TEXT("CullDistanceVolume"));
+	}
+	else if (VolumeType.Equals(TEXT("NavMeshBoundsVolume"), ESearchCase::IgnoreCase) || VolumeType.Equals(TEXT("navmesh"), ESearchCase::IgnoreCase))
+	{
+		VolumeClass = ANavMeshBoundsVolume::StaticClass();
+	}
+	else if (VolumeType.Equals(TEXT("PainCausingVolume"), ESearchCase::IgnoreCase) || VolumeType.Equals(TEXT("pain"), ESearchCase::IgnoreCase))
+	{
+		VolumeClass = APainCausingVolume::StaticClass();
+	}
 	else
 	{
-		// Try to find class by name
-		VolumeClass = FindObject<UClass>(nullptr, *VolumeType);
-		if (!VolumeClass)
-		{
-			VolumeClass = FindObject<UClass>(nullptr, *(TEXT("A") + VolumeType));
-		}
+		// Try broad class lookup
+		VolumeClass = FindClassByShortName(VolumeType);
 	}
 
 	if (!VolumeClass)
@@ -1125,18 +1188,31 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Find the component
+	// Find the component — exact match first, then prefix/class match
 	UActorComponent* TargetComp = nullptr;
 	if (!ComponentName.IsEmpty())
 	{
 		TArray<UActorComponent*> Components;
 		TargetActor->GetComponents(Components);
+		// Pass 1: exact match by name or class name
 		for (UActorComponent* Comp : Components)
 		{
 			if (Comp->GetName() == ComponentName || Comp->GetClass()->GetName() == ComponentName)
 			{
 				TargetComp = Comp;
 				break;
+			}
+		}
+		// Pass 2: prefix match (e.g. "StaticMeshComponent" matches "StaticMeshComponent0")
+		if (!TargetComp)
+		{
+			for (UActorComponent* Comp : Components)
+			{
+				if (Comp->GetName().StartsWith(ComponentName) || Comp->GetClass()->GetName().StartsWith(ComponentName))
+				{
+					TargetComp = Comp;
+					break;
+				}
 			}
 		}
 	}
@@ -1265,6 +1341,139 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 
 	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
 	Result->SetArrayField(TEXT("changes"), Changes);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::GetWorldSettings(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	AWorldSettings* Settings = World->GetWorldSettings();
+	if (!Settings)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("WorldSettings not available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// DefaultGameMode
+	if (Settings->DefaultGameMode)
+	{
+		Result->SetStringField(TEXT("defaultGameMode"), Settings->DefaultGameMode->GetPathName());
+	}
+	else
+	{
+		Result->SetStringField(TEXT("defaultGameMode"), TEXT("None"));
+	}
+
+	// KillZ
+	Result->SetNumberField(TEXT("killZ"), Settings->KillZ);
+
+	// GlobalGravityZ
+	Result->SetNumberField(TEXT("globalGravityZ"), Settings->GlobalGravityZ);
+
+	// bEnableWorldBoundsChecks
+	Result->SetBoolField(TEXT("enableWorldBoundsChecks"), Settings->bEnableWorldBoundsChecks);
+
+	// bEnableNavigationSystem
+	Result->SetBoolField(TEXT("enableNavigationSystem"), Settings->IsNavigationSystemEnabled());
+
+	// World name
+	Result->SetStringField(TEXT("worldName"), World->GetName());
+
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::SetWorldSettings(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No editor world"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	AWorldSettings* Settings = World->GetWorldSettings();
+	if (!Settings)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("WorldSettings not available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Changes;
+
+	// DefaultGameMode
+	FString GameModeStr;
+	if (Params->TryGetStringField(TEXT("defaultGameMode"), GameModeStr))
+	{
+		if (GameModeStr.Equals(TEXT("None"), ESearchCase::IgnoreCase) || GameModeStr.IsEmpty())
+		{
+			Settings->DefaultGameMode = nullptr;
+			Changes.Add(MakeShared<FJsonValueString>(TEXT("defaultGameMode")));
+		}
+		else
+		{
+			UClass* GMClass = LoadObject<UClass>(nullptr, *GameModeStr);
+			if (!GMClass)
+			{
+				GMClass = FindClassByShortName(GameModeStr);
+			}
+			if (GMClass && GMClass->IsChildOf(AGameModeBase::StaticClass()))
+			{
+				Settings->DefaultGameMode = GMClass;
+				Changes.Add(MakeShared<FJsonValueString>(TEXT("defaultGameMode")));
+			}
+			else
+			{
+				Result->SetStringField(TEXT("error"), FString::Printf(TEXT("GameMode class not found or invalid: %s"), *GameModeStr));
+				Result->SetBoolField(TEXT("success"), false);
+				return MakeShared<FJsonValueObject>(Result);
+			}
+		}
+	}
+
+	// KillZ
+	double KillZ;
+	if (Params->TryGetNumberField(TEXT("killZ"), KillZ))
+	{
+		Settings->KillZ = KillZ;
+		Changes.Add(MakeShared<FJsonValueString>(TEXT("killZ")));
+	}
+
+	// GlobalGravityZ
+	double GravityZ;
+	if (Params->TryGetNumberField(TEXT("globalGravityZ"), GravityZ))
+	{
+		Settings->GlobalGravityZ = GravityZ;
+		Changes.Add(MakeShared<FJsonValueString>(TEXT("globalGravityZ")));
+	}
+
+	// bEnableWorldBoundsChecks
+	bool bBoundsChecks;
+	if (Params->TryGetBoolField(TEXT("enableWorldBoundsChecks"), bBoundsChecks))
+	{
+		Settings->bEnableWorldBoundsChecks = bBoundsChecks;
+		Changes.Add(MakeShared<FJsonValueString>(TEXT("enableWorldBoundsChecks")));
+	}
+
+	Settings->MarkPackageDirty();
+
+	Result->SetArrayField(TEXT("changes"), Changes);
+	Result->SetStringField(TEXT("worldName"), World->GetName());
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }
