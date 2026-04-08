@@ -19,6 +19,8 @@ export const gameplayTool: ToolDef = categoryTool(
     create_input_action:    bp("create_input_action"),
     create_input_mapping:   bp("create_input_mapping_context"),
     list_input_assets:      bp("list_input_assets"),
+    read_imc:               bp("read_imc"),
+    add_imc_mapping:        bp("add_imc_mapping"),
     // Behavior Trees
     list_behavior_trees:    bp("list_behavior_trees"),
     get_behavior_tree_info: bp("get_behavior_tree_info"),
@@ -37,6 +39,9 @@ export const gameplayTool: ToolDef = categoryTool(
     // Smart Objects
     create_smart_object_def: bp("create_smart_object_definition"),
     add_smart_object_component: bp("add_smart_object_component"),
+    // PIE Inspection
+    inspect_pie:            bp("inspect_pie"),
+    get_pie_anim_state:     bp("get_pie_anim_state"),
     // Game Framework
     create_game_mode:       bp("create_game_mode"),
     create_game_state:      bp("create_game_state"),
@@ -57,6 +62,10 @@ export const gameplayTool: ToolDef = categoryTool(
 - create_input_action: Create InputAction. Params: name, packagePath?, valueType?
 - create_input_mapping: Create InputMappingContext. Params: name, packagePath?
 - list_input_assets: List input assets. Params: directory?, recursive?
+- read_imc: Read InputMappingContext mappings. Params: imcPath
+- add_imc_mapping: Add key mapping to InputMappingContext. Params: imcPath, inputActionPath, key (e.g. "W", "SpaceBar", "LeftMouseButton")
+- inspect_pie: Inspect PIE runtime. No params = list all PIE actors. Params: actorLabel? (detailed info with components)
+- get_pie_anim_state: Get PIE anim instance state. Params: actorLabel (returns current montage, state machines, anim class)
 - list_behavior_trees: List BTs. Params: directory?, recursive?
 - get_behavior_tree_info: Inspect BT. Params: assetPath
 - create_blackboard: Create Blackboard. Params: name, packagePath?
@@ -103,5 +112,8 @@ export const gameplayTool: ToolDef = categoryTool(
     parentClass: z.string().optional(),
     defaults: z.record(z.string()).optional(),
     gameModePath: z.string().optional(),
+    imcPath: z.string().optional(),
+    inputActionPath: z.string().optional(),
+    key: z.string().optional(),
   },
 );
