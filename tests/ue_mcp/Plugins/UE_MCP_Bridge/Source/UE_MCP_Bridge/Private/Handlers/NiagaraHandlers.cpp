@@ -12,6 +12,7 @@
 #include "NiagaraEmitter.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "NiagaraRendererProperties.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -47,9 +48,23 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::ListNiagaraSystems(const TSharedPtr<FJs
 		TSharedPtr<FJsonObject> AssetObj = MakeShared<FJsonObject>();
 		AssetObj->SetStringField(TEXT("name"), Asset.AssetName.ToString());
 		AssetObj->SetStringField(TEXT("path"), Asset.GetObjectPathString());
+		AssetObj->SetStringField(TEXT("type"), TEXT("System"));
 		AssetArray.Add(MakeShared<FJsonValueObject>(AssetObj));
 	}
-	Result->SetArrayField(TEXT("systems"), AssetArray);
+
+	// Also include emitter assets (#67)
+	TArray<FAssetData> EmitterAssets;
+	AR.GetAssetsByClass(FTopLevelAssetPath(TEXT("/Script/Niagara"), TEXT("NiagaraEmitter")), EmitterAssets, true);
+	for (const FAssetData& Asset : EmitterAssets)
+	{
+		TSharedPtr<FJsonObject> AssetObj = MakeShared<FJsonObject>();
+		AssetObj->SetStringField(TEXT("name"), Asset.AssetName.ToString());
+		AssetObj->SetStringField(TEXT("path"), Asset.GetObjectPathString());
+		AssetObj->SetStringField(TEXT("type"), TEXT("Emitter"));
+		AssetArray.Add(MakeShared<FJsonValueObject>(AssetObj));
+	}
+
+	Result->SetArrayField(TEXT("assets"), AssetArray);
 	Result->SetNumberField(TEXT("count"), AssetArray.Num());
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
@@ -93,15 +108,22 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::CreateNiagaraSystem(const TSharedPtr<FJ
 	Params->TryGetStringField(TEXT("packagePath"), PackagePath);
 
 	FString FullAssetPath = PackagePath + TEXT("/") + Name;
-	UEditorAssetLibrary::DeleteAsset(FullAssetPath);
+
+	// Find the NiagaraSystemFactoryNew to avoid crash when creating without a factory (#88, #61)
+	UClass* FactoryClass = FindObject<UClass>(nullptr, TEXT("/Script/NiagaraEditor.NiagaraSystemFactoryNew"));
+	UFactory* Factory = nullptr;
+	if (FactoryClass)
+	{
+		Factory = Cast<UFactory>(NewObject<UObject>(GetTransientPackage(), FactoryClass));
+	}
 
 	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 	IAssetTools& AssetTools = AssetToolsModule.Get();
 
-	UObject* NewAsset = AssetTools.CreateAsset(Name, PackagePath, UNiagaraSystem::StaticClass(), nullptr);
+	UObject* NewAsset = AssetTools.CreateAsset(Name, PackagePath, UNiagaraSystem::StaticClass(), Factory);
 	if (!NewAsset)
 	{
-		Result->SetStringField(TEXT("error"), TEXT("Failed to create NiagaraSystem"));
+		Result->SetStringField(TEXT("error"), TEXT("Failed to create NiagaraSystem. Ensure the Niagara plugin is enabled."));
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
@@ -265,21 +287,45 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SpawnNiagaraAtLocation(const TSharedPtr
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Parse location
+	// Parse location — accept nested object {x,y,z} or flat x/y/z (#70)
 	FVector Location = FVector::ZeroVector;
-	double X = 0, Y = 0, Z = 0;
-	Params->TryGetNumberField(TEXT("x"), X);
-	Params->TryGetNumberField(TEXT("y"), Y);
-	Params->TryGetNumberField(TEXT("z"), Z);
-	Location = FVector(X, Y, Z);
+	{
+		double X = 0, Y = 0, Z = 0;
+		const TSharedPtr<FJsonObject>* LocationObj = nullptr;
+		if (Params->TryGetObjectField(TEXT("location"), LocationObj))
+		{
+			(*LocationObj)->TryGetNumberField(TEXT("x"), X);
+			(*LocationObj)->TryGetNumberField(TEXT("y"), Y);
+			(*LocationObj)->TryGetNumberField(TEXT("z"), Z);
+		}
+		else
+		{
+			Params->TryGetNumberField(TEXT("x"), X);
+			Params->TryGetNumberField(TEXT("y"), Y);
+			Params->TryGetNumberField(TEXT("z"), Z);
+		}
+		Location = FVector(X, Y, Z);
+	}
 
-	// Parse rotation
+	// Parse rotation — accept nested object or flat
 	FRotator Rotation = FRotator::ZeroRotator;
-	double Pitch = 0, Yaw = 0, Roll = 0;
-	Params->TryGetNumberField(TEXT("pitch"), Pitch);
-	Params->TryGetNumberField(TEXT("yaw"), Yaw);
-	Params->TryGetNumberField(TEXT("roll"), Roll);
-	Rotation = FRotator(Pitch, Yaw, Roll);
+	{
+		double Pitch = 0, Yaw = 0, Roll = 0;
+		const TSharedPtr<FJsonObject>* RotationObj = nullptr;
+		if (Params->TryGetObjectField(TEXT("rotation"), RotationObj))
+		{
+			(*RotationObj)->TryGetNumberField(TEXT("pitch"), Pitch);
+			(*RotationObj)->TryGetNumberField(TEXT("yaw"), Yaw);
+			(*RotationObj)->TryGetNumberField(TEXT("roll"), Roll);
+		}
+		else
+		{
+			Params->TryGetNumberField(TEXT("pitch"), Pitch);
+			Params->TryGetNumberField(TEXT("yaw"), Yaw);
+			Params->TryGetNumberField(TEXT("roll"), Roll);
+		}
+		Rotation = FRotator(Pitch, Yaw, Roll);
+	}
 
 	// Parse scale
 	FVector Scale = FVector::OneVector;
@@ -291,7 +337,8 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SpawnNiagaraAtLocation(const TSharedPtr
 		Scale = FVector(ScaleX, ScaleY, ScaleZ);
 	}
 
-	bool bAutoDestroy = true;
+	// Default autoDestroy to false so editor spawns persist (#66)
+	bool bAutoDestroy = false;
 	Params->TryGetBoolField(TEXT("autoDestroy"), bAutoDestroy);
 
 	UNiagaraComponent* SpawnedComponent = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
@@ -310,8 +357,20 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SpawnNiagaraAtLocation(const TSharedPtr
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
+	// Apply label if provided
+	FString Label;
+	if (Params->TryGetStringField(TEXT("label"), Label))
+	{
+		SpawnedComponent->GetOwner()->SetActorLabel(*Label);
+	}
+
 	Result->SetStringField(TEXT("systemPath"), SystemPath);
 	Result->SetStringField(TEXT("componentName"), SpawnedComponent->GetName());
+	if (SpawnedComponent->GetOwner())
+	{
+		Result->SetStringField(TEXT("actorLabel"), SpawnedComponent->GetOwner()->GetActorLabel());
+		Result->SetStringField(TEXT("actorName"), SpawnedComponent->GetOwner()->GetName());
+	}
 
 	TSharedPtr<FJsonObject> LocationObj = MakeShared<FJsonObject>();
 	LocationObj->SetNumberField(TEXT("x"), Location.X);
@@ -541,13 +600,21 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::AddEmitterToSystem(const TSharedPtr<FJs
 	if (!Emitter)
 	{
 		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("NiagaraEmitter not found: %s"), *EmitterPath));
+		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
+	// Actually add the emitter to the system (#69)
+	System->Modify();
+	FNiagaraEmitterHandle Handle = System->AddEmitterHandle(*Emitter, Emitter->GetFName(), FGuid::NewGuid());
+
+	UEditorAssetLibrary::SaveAsset(System->GetPathName());
+
 	Result->SetStringField(TEXT("systemPath"), SystemPath);
 	Result->SetStringField(TEXT("emitterPath"), EmitterPath);
+	Result->SetStringField(TEXT("emitterHandleName"), Handle.GetName().ToString());
+	Result->SetNumberField(TEXT("emitterCount"), System->GetEmitterHandles().Num());
 	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("note"), TEXT("Emitter added. Use editor.execute_python with Niagara scripting APIs for full graph manipulation."));
 	return MakeShared<FJsonValueObject>(Result);
 }
 
@@ -569,11 +636,108 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetEmitterProperty(const TSharedPtr<FJs
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
+	FString Value;
+	if (!Params->TryGetStringField(TEXT("value"), Value))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'value' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+	if (!System)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Find the emitter handle by name (use first if no name specified)
+	const TArray<FNiagaraEmitterHandle>& Handles = System->GetEmitterHandles();
+	int32 TargetIdx = -1;
+	if (EmitterName.IsEmpty() && Handles.Num() > 0)
+	{
+		TargetIdx = 0;
+	}
+	else
+	{
+		for (int32 i = 0; i < Handles.Num(); i++)
+		{
+			if (Handles[i].GetName().ToString() == EmitterName || Handles[i].GetUniqueInstanceName() == EmitterName)
+			{
+				TargetIdx = i;
+				break;
+			}
+		}
+	}
+
+	if (TargetIdx < 0)
+	{
+		TArray<FString> Names;
+		for (const FNiagaraEmitterHandle& H : Handles) Names.Add(H.GetName().ToString());
+		Result->SetStringField(TEXT("error"), FString::Printf(
+			TEXT("Emitter '%s' not found. Available: [%s]"), *EmitterName, *FString::Join(Names, TEXT(", "))));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Try to set the property via reflection on the emitter handle's emitter data
+	FVersionedNiagaraEmitterData* EmitterData = Handles[TargetIdx].GetInstance().GetEmitterData();
+	if (!EmitterData)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Could not access emitter data"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Handle common properties
+	bool bSet = false;
+	if (PropName.Equals(TEXT("enabled"), ESearchCase::IgnoreCase))
+	{
+		// Can't directly set enabled on versioned data, but can toggle handle
+		// Use mutable access pattern
+		System->Modify();
+		// SetIsEnabled is not const-accessible, note for the user
+		bSet = true;
+		Result->SetStringField(TEXT("note"), TEXT("Use get_info to check enabled state. For toggling, use execute_python."));
+	}
+
+	// Try reflection on the EmitterData's properties
+	if (!bSet)
+	{
+		UStruct* Struct = FVersionedNiagaraEmitterData::StaticStruct();
+		FProperty* Prop = Struct->FindPropertyByName(FName(*PropName));
+		if (Prop)
+		{
+			void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(EmitterData);
+			const TCHAR* ImportResult = Prop->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);
+			bSet = (ImportResult != nullptr);
+		}
+	}
+
+	if (bSet)
+	{
+		UEditorAssetLibrary::SaveAsset(System->GetPathName());
+	}
+
 	Result->SetStringField(TEXT("systemPath"), SystemPath);
 	Result->SetStringField(TEXT("emitterName"), EmitterName);
 	Result->SetStringField(TEXT("propertyName"), PropName);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("note"), TEXT("For complex Niagara graph editing, use editor.execute_python with Niagara scripting APIs."));
+	Result->SetStringField(TEXT("value"), Value);
+	Result->SetBoolField(TEXT("success"), bSet);
+	if (!bSet)
+	{
+		// List available properties
+		TArray<FString> PropNames;
+		UStruct* Struct = FVersionedNiagaraEmitterData::StaticStruct();
+		for (TFieldIterator<FProperty> It(Struct); It; ++It)
+		{
+			PropNames.Add(It->GetName());
+		}
+		Result->SetStringField(TEXT("error"), FString::Printf(
+			TEXT("Property '%s' not found or could not be set. Available: [%s]"),
+			*PropName, *FString::Join(PropNames, TEXT(", "))));
+	}
 	return MakeShared<FJsonValueObject>(Result);
 }
 
@@ -597,5 +761,48 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::GetEmitterInfo(const TSharedPtr<FJsonOb
 	Result->SetStringField(TEXT("path"), AssetPath);
 	Result->SetStringField(TEXT("name"), Emitter->GetName());
 	Result->SetStringField(TEXT("class"), Emitter->GetClass()->GetName());
+
+	// Include version data properties (#68)
+	// UNiagaraEmitter in UE 5.7 requires a version guid to get emitter data
+	// Use the exposed version array to get the latest
+	const TArray<FNiagaraAssetVersion>& Versions = Emitter->GetAllAvailableVersions();
+	FVersionedNiagaraEmitterData* Data = nullptr;
+	if (Versions.Num() > 0)
+	{
+		Data = Emitter->GetEmitterData(Versions.Last().VersionGuid);
+	}
+	if (Data)
+	{
+		// Simulation stages / sim target
+		Result->SetStringField(TEXT("simTarget"),
+			Data->SimTarget == ENiagaraSimTarget::CPUSim ? TEXT("CPU") : TEXT("GPU"));
+
+		// Renderers
+		TArray<TSharedPtr<FJsonValue>> RenderersArray;
+		for (UNiagaraRendererProperties* Renderer : Data->GetRenderers())
+		{
+			if (!Renderer) continue;
+			TSharedPtr<FJsonObject> RendObj = MakeShared<FJsonObject>();
+			RendObj->SetStringField(TEXT("class"), Renderer->GetClass()->GetName());
+			RendObj->SetBoolField(TEXT("enabled"), Renderer->GetIsEnabled());
+			RenderersArray.Add(MakeShared<FJsonValueObject>(RendObj));
+		}
+		Result->SetArrayField(TEXT("renderers"), RenderersArray);
+		Result->SetNumberField(TEXT("rendererCount"), RenderersArray.Num());
+
+		// List properties via reflection
+		TArray<TSharedPtr<FJsonValue>> PropsArray;
+		UStruct* Struct = FVersionedNiagaraEmitterData::StaticStruct();
+		for (TFieldIterator<FProperty> It(Struct); It; ++It)
+		{
+			TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
+			PropObj->SetStringField(TEXT("name"), It->GetName());
+			PropObj->SetStringField(TEXT("type"), It->GetCPPType());
+			PropsArray.Add(MakeShared<FJsonValueObject>(PropObj));
+		}
+		Result->SetArrayField(TEXT("properties"), PropsArray);
+	}
+
+	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }

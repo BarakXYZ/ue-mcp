@@ -56,6 +56,7 @@ void FMaterialHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("connect_material_expressions"), &ConnectMaterialExpressions);
 	Registry.RegisterHandler(TEXT("connect_to_material_property"), &ConnectToMaterialProperty);
 	Registry.RegisterHandler(TEXT("delete_material_expression"), &DeleteMaterialExpression);
+	Registry.RegisterHandler(TEXT("disconnect_material_property"), &DisconnectMaterialProperty);
 }
 
 UMaterial* FMaterialHandlers::LoadMaterialFromPath(const FString& AssetPath)
@@ -624,9 +625,13 @@ TSharedPtr<FJsonValue> FMaterialHandlers::AddMaterialExpression(const TSharedPtr
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Ensure expression type has the U prefix for class lookup
+	// Resolve short expression type names: "Multiply" → "UMaterialExpressionMultiply"
 	FString ClassName = ExpressionType;
-	if (!ClassName.StartsWith(TEXT("U")))
+	if (!ClassName.StartsWith(TEXT("MaterialExpression")) && !ClassName.StartsWith(TEXT("UMaterialExpression")))
+	{
+		ClassName = TEXT("UMaterialExpression") + ClassName;
+	}
+	else if (!ClassName.StartsWith(TEXT("U")))
 	{
 		ClassName = TEXT("U") + ClassName;
 	}
@@ -636,8 +641,18 @@ TSharedPtr<FJsonValue> FMaterialHandlers::AddMaterialExpression(const TSharedPtr
 	if (!ExpressionClass)
 	{
 		// Try with /Script/Engine prefix
-		FString FullPath = FString::Printf(TEXT("/Script/Engine.%s"), *ExpressionType);
+		FString FullPath = FString::Printf(TEXT("/Script/Engine.%s"), *ClassName.Mid(1)); // strip U prefix for path
 		ExpressionClass = FindObject<UClass>(nullptr, *FullPath);
+	}
+	if (!ExpressionClass)
+	{
+		// Try original name as-is (user may have passed the full class name)
+		ExpressionClass = FindFirstObject<UClass>(*ExpressionType, EFindFirstObjectOptions::ExactClass);
+		if (!ExpressionClass)
+		{
+			FString WithU = TEXT("U") + ExpressionType;
+			ExpressionClass = FindFirstObject<UClass>(*WithU, EFindFirstObjectOptions::ExactClass);
+		}
 	}
 
 	if (!ExpressionClass || !ExpressionClass->IsChildOf(UMaterialExpression::StaticClass()))
@@ -981,20 +996,57 @@ TSharedPtr<FJsonValue> FMaterialHandlers::SetMaterialParameter(const TSharedPtr<
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
+	// parameterType is optional — auto-detect if not provided (#71, #72)
 	FString ParameterType;
-	if (!Params->TryGetStringField(TEXT("parameterType"), ParameterType) || ParameterType.IsEmpty())
-	{
-		Result->SetStringField(TEXT("error"), TEXT("Missing or empty 'parameterType' parameter (scalar/vector/texture)"));
-		Result->SetBoolField(TEXT("success"), false);
-		return MakeShared<FJsonValueObject>(Result);
-	}
+	Params->TryGetStringField(TEXT("parameterType"), ParameterType);
 
 	UMaterialInstanceConstant* MaterialInstance = LoadMaterialInstanceFromPath(AssetPath);
 	if (!MaterialInstance)
 	{
-		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to load material instance at '%s'"), *AssetPath));
+		// Not a MaterialInstance — might be a base Material with expression nodes (#71)
+		// Redirect to set_expression_value logic
+		UMaterial* BaseMaterial = LoadMaterialFromPath(AssetPath);
+		if (BaseMaterial)
+		{
+			// Find the expression by parameter name
+			UMaterialExpression* Expr = FindExpressionByName(BaseMaterial, ParameterName);
+			if (Expr)
+			{
+				Result->SetStringField(TEXT("error"), FString::Printf(
+					TEXT("'%s' is a base Material, not a MaterialInstance. Use set_expression_value with expressionIndex to set values on expression nodes directly."),
+					*AssetPath));
+			}
+			else
+			{
+				Result->SetStringField(TEXT("error"), FString::Printf(
+					TEXT("'%s' is a base Material, not a MaterialInstance. Cannot set parameters. Create a MaterialInstance first."),
+					*AssetPath));
+			}
+		}
+		else
+		{
+			Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to load material or material instance at '%s'"), *AssetPath));
+		}
 		Result->SetBoolField(TEXT("success"), false);
 		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Auto-detect parameter type if not provided
+	if (ParameterType.IsEmpty())
+	{
+		// Check which parameter collections contain this name
+		FName ParamFName(*ParameterName);
+		float ScalarVal;
+		FLinearColor VectorVal;
+		UTexture* TextureVal;
+		if (MaterialInstance->GetScalarParameterValue(ParamFName, ScalarVal))
+			ParameterType = TEXT("scalar");
+		else if (MaterialInstance->GetVectorParameterValue(ParamFName, VectorVal))
+			ParameterType = TEXT("vector");
+		else if (MaterialInstance->GetTextureParameterValue(ParamFName, TextureVal))
+			ParameterType = TEXT("texture");
+		else
+			ParameterType = TEXT("scalar"); // default fallback
 	}
 
 	FString TypeLower = ParameterType.ToLower();
@@ -2337,6 +2389,93 @@ TSharedPtr<FJsonValue> FMaterialHandlers::DeleteMaterialExpression(const TShared
 	Result->SetStringField(TEXT("deletedExpression"), ExpressionName);
 	Result->SetStringField(TEXT("deletedClass"), DeletedClass);
 	Result->SetNumberField(TEXT("expressionCount"), Material->GetExpressions().Num());
+	Result->SetBoolField(TEXT("success"), true);
+
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// ---------------------------------------------------------------------------
+// disconnect_material_property — Clear a material property input (#43)
+// Params: materialPath, property (BaseColor, Normal, Roughness, etc.)
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FMaterialHandlers::DisconnectMaterialProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString MaterialPath;
+	if ((!Params->TryGetStringField(TEXT("materialPath"), MaterialPath) && !Params->TryGetStringField(TEXT("assetPath"), MaterialPath)) || MaterialPath.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'materialPath' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString PropertyName;
+	if (!Params->TryGetStringField(TEXT("property"), PropertyName) || PropertyName.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'property' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UMaterial* Material = LoadMaterialFromPath(MaterialPath);
+	if (!Material)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to load material at '%s'"), *MaterialPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UMaterialEditorOnlyData* EditorOnlyData = Material->GetEditorOnlyData();
+	if (!EditorOnlyData)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Material has no editor-only data"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Material->PreEditChange(nullptr);
+
+	auto ClearInput = [](FExpressionInput& Input)
+	{
+		Input.Expression = nullptr;
+		Input.OutputIndex = 0;
+	};
+
+	FString LowerProp = PropertyName.ToLower();
+	bool bFound = true;
+
+	if (LowerProp == TEXT("basecolor")) ClearInput(EditorOnlyData->BaseColor);
+	else if (LowerProp == TEXT("metallic")) ClearInput(EditorOnlyData->Metallic);
+	else if (LowerProp == TEXT("specular")) ClearInput(EditorOnlyData->Specular);
+	else if (LowerProp == TEXT("roughness")) ClearInput(EditorOnlyData->Roughness);
+	else if (LowerProp == TEXT("anisotropy")) ClearInput(EditorOnlyData->Anisotropy);
+	else if (LowerProp == TEXT("emissivecolor") || LowerProp == TEXT("emissive")) ClearInput(EditorOnlyData->EmissiveColor);
+	else if (LowerProp == TEXT("opacity")) ClearInput(EditorOnlyData->Opacity);
+	else if (LowerProp == TEXT("opacitymask")) ClearInput(EditorOnlyData->OpacityMask);
+	else if (LowerProp == TEXT("normal")) ClearInput(EditorOnlyData->Normal);
+	else if (LowerProp == TEXT("tangent")) ClearInput(EditorOnlyData->Tangent);
+	else if (LowerProp == TEXT("worldpositionoffset")) ClearInput(EditorOnlyData->WorldPositionOffset);
+	else if (LowerProp == TEXT("subsurfacecolor")) ClearInput(EditorOnlyData->SubsurfaceColor);
+	else if (LowerProp == TEXT("ambientocclusion")) ClearInput(EditorOnlyData->AmbientOcclusion);
+	else if (LowerProp == TEXT("refraction")) ClearInput(EditorOnlyData->Refraction);
+	else if (LowerProp == TEXT("pixeldepthoffset")) ClearInput(EditorOnlyData->PixelDepthOffset);
+	else bFound = false;
+
+	if (!bFound)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(
+			TEXT("Unknown property '%s'. Use: BaseColor, Metallic, Specular, Roughness, EmissiveColor, Opacity, OpacityMask, Normal, Tangent, WorldPositionOffset, SubsurfaceColor, AmbientOcclusion, Refraction, PixelDepthOffset"),
+			*PropertyName));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+
+	Result->SetStringField(TEXT("materialPath"), Material->GetPathName());
+	Result->SetStringField(TEXT("property"), PropertyName);
 	Result->SetBoolField(TEXT("success"), true);
 
 	return MakeShared<FJsonValueObject>(Result);

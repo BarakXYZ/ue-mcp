@@ -34,6 +34,7 @@ private:
 	static TSharedPtr<FJsonValue> ConnectMaterialExpressions(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ConnectToMaterialProperty(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> DeleteMaterialExpression(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> DisconnectMaterialProperty(const TSharedPtr<FJsonObject>& Params);
 
 	// Helper to load a UMaterial from an asset path
 	static UMaterial* LoadMaterialFromPath(const FString& AssetPath);

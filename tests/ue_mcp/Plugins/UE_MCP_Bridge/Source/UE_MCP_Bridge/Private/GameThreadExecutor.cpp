@@ -44,6 +44,15 @@ TSharedPtr<FJsonValue> FMCPGameThreadExecutor::ExecuteOnGameThread(FHandlerFunct
 	FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateLambda([&Result, &Handler, &Params, DoneEvent](float) -> bool
 		{
+			// Safety: verify GEditor and world are available before running handlers
+			if (!GEditor || !GEditor->GetEditorWorldContext(false).World())
+			{
+				TSharedPtr<FJsonObject> ErrorObject = MakeShared<FJsonObject>();
+				ErrorObject->SetStringField(TEXT("error"), TEXT("Editor world not ready yet. Retry in a moment."));
+				Result = MakeShared<FJsonValueObject>(ErrorObject);
+				DoneEvent->Trigger();
+				return false;
+			}
 			Result = Handler(Params);
 			DoneEvent->Trigger();
 			return false; // one-shot — do not re-tick

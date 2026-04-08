@@ -53,4 +53,5 @@ private:
 	static TSharedPtr<FJsonValue> AddSocket(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> RemoveSocket(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ListSockets(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReloadPackage(const TSharedPtr<FJsonObject>& Params);
 };

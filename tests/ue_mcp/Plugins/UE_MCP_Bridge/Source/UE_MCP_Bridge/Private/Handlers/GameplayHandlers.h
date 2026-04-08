@@ -49,6 +49,16 @@ private:
 	static TSharedPtr<FJsonValue> AddStateTreeComponent(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> AddSmartObjectComponent(const TSharedPtr<FJsonObject>& Params);
 
+	// IMC read/write (#57 / #60)
+	static TSharedPtr<FJsonValue> ReadImc(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddImcMapping(const TSharedPtr<FJsonObject>& Params);
+
+	// PIE inspection (#54 / #89 / #90)
+	static TSharedPtr<FJsonValue> InspectPie(const TSharedPtr<FJsonObject>& Params);
+
+	// PIE anim state (#26)
+	static TSharedPtr<FJsonValue> GetPieAnimState(const TSharedPtr<FJsonObject>& Params);
+
 	// Helper to create a blueprint with a given parent class
 	static TSharedPtr<FJsonValue> CreateBlueprintWithParent(const FString& Name, const FString& PackagePath, const FString& ParentClassPath, const FString& FriendlyTypeName);
 };

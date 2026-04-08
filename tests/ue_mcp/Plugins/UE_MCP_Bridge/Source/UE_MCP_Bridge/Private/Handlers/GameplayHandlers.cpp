@@ -59,6 +59,12 @@
 #include "EnvironmentQuery/EnvQuery.h"
 #include "EnvironmentQuery/EnvQueryManager.h"
 #include "EnvironmentQuery/EnvQueryInstanceBlueprintWrapper.h"
+#include "EnhancedActionKeyMapping.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimBlueprintGeneratedClass.h"
+#include "Animation/AnimNode_StateMachine.h"
 
 void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -103,6 +109,10 @@ void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("configure_ai_perception_sense"), &ConfigureAiPerceptionSense);
 	Registry.RegisterHandler(TEXT("add_state_tree_component"), &AddStateTreeComponent);
 	Registry.RegisterHandler(TEXT("add_smart_object_component"), &AddSmartObjectComponent);
+	Registry.RegisterHandler(TEXT("read_imc"), &ReadImc);
+	Registry.RegisterHandler(TEXT("add_imc_mapping"), &AddImcMapping);
+	Registry.RegisterHandler(TEXT("inspect_pie"), &InspectPie);
+	Registry.RegisterHandler(TEXT("get_pie_anim_state"), &GetPieAnimState);
 }
 
 TSharedPtr<FJsonValue> FGameplayHandlers::CreateSmartObjectDefinition(const TSharedPtr<FJsonObject>& Params)
@@ -2255,6 +2265,383 @@ TSharedPtr<FJsonValue> FGameplayHandlers::AddSmartObjectComponent(const TSharedP
 
 	Result->SetStringField(TEXT("blueprintPath"), BPPath);
 	Result->SetStringField(TEXT("component"), TEXT("SmartObjectComp"));
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #57 / #60  read_imc — Read InputMappingContext mappings
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::ReadImc(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ImcPath;
+	if (!Params->TryGetStringField(TEXT("imcPath"), ImcPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'imcPath' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UInputMappingContext* IMC = LoadObject<UInputMappingContext>(nullptr, *ImcPath);
+	if (!IMC)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("InputMappingContext not found: %s"), *ImcPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> MappingsArr;
+	const TArray<FEnhancedActionKeyMapping>& Mappings = IMC->GetMappings();
+	for (const FEnhancedActionKeyMapping& Mapping : Mappings)
+	{
+		TSharedPtr<FJsonObject> MObj = MakeShared<FJsonObject>();
+		MObj->SetStringField(TEXT("inputAction"), Mapping.Action ? Mapping.Action->GetPathName() : TEXT("None"));
+		MObj->SetStringField(TEXT("inputActionName"), Mapping.Action ? Mapping.Action->GetName() : TEXT("None"));
+		MObj->SetStringField(TEXT("key"), Mapping.Key.GetFName().ToString());
+
+		// Triggers
+		TArray<TSharedPtr<FJsonValue>> TriggersArr;
+		for (const TObjectPtr<UInputTrigger>& Trigger : Mapping.Triggers)
+		{
+			if (Trigger)
+			{
+				TriggersArr.Add(MakeShared<FJsonValueString>(Trigger->GetClass()->GetName()));
+			}
+		}
+		MObj->SetArrayField(TEXT("triggers"), TriggersArr);
+
+		// Modifiers
+		TArray<TSharedPtr<FJsonValue>> ModifiersArr;
+		for (const TObjectPtr<UInputModifier>& Modifier : Mapping.Modifiers)
+		{
+			if (Modifier)
+			{
+				ModifiersArr.Add(MakeShared<FJsonValueString>(Modifier->GetClass()->GetName()));
+			}
+		}
+		MObj->SetArrayField(TEXT("modifiers"), ModifiersArr);
+
+		MappingsArr.Add(MakeShared<FJsonValueObject>(MObj));
+	}
+
+	Result->SetStringField(TEXT("imcPath"), IMC->GetPathName());
+	Result->SetStringField(TEXT("imcName"), IMC->GetName());
+	Result->SetArrayField(TEXT("mappings"), MappingsArr);
+	Result->SetNumberField(TEXT("count"), MappingsArr.Num());
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #57 / #60  add_imc_mapping — Add key mapping to an IMC
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::AddImcMapping(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ImcPath;
+	if (!Params->TryGetStringField(TEXT("imcPath"), ImcPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'imcPath' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString InputActionPath;
+	if (!Params->TryGetStringField(TEXT("inputActionPath"), InputActionPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'inputActionPath' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString KeyName;
+	if (!Params->TryGetStringField(TEXT("key"), KeyName))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'key' parameter (e.g. \"W\", \"SpaceBar\", \"LeftMouseButton\")"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UInputMappingContext* IMC = LoadObject<UInputMappingContext>(nullptr, *ImcPath);
+	if (!IMC)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("InputMappingContext not found: %s"), *ImcPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UInputAction* InputAction = LoadObject<UInputAction>(nullptr, *InputActionPath);
+	if (!InputAction)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("InputAction not found: %s"), *InputActionPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FKey Key(*KeyName);
+	if (!Key.IsValid())
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Invalid key name: %s"), *KeyName));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Create the mapping and add it
+	FEnhancedActionKeyMapping NewMapping;
+	NewMapping.Action = InputAction;
+	NewMapping.Key = Key;
+
+	IMC->MapKey(InputAction, Key);
+
+	// Save the asset
+	UPackage* Pkg = IMC->GetOutermost();
+	if (Pkg)
+	{
+		Pkg->MarkPackageDirty();
+		FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+		FSavePackageArgs SaveArgs;
+		SaveArgs.TopLevelFlags = RF_Standalone;
+		UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
+	}
+
+	Result->SetStringField(TEXT("imcPath"), IMC->GetPathName());
+	Result->SetStringField(TEXT("inputAction"), InputAction->GetPathName());
+	Result->SetStringField(TEXT("key"), KeyName);
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #54 / #89 / #90  inspect_pie — PIE runtime actor inspection
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::InspectPie(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	// Get PIE world
+	FWorldContext* PIEContext = GEditor->GetPIEWorldContext();
+	if (!PIEContext || !PIEContext->World())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No PIE world available. Is Play-In-Editor running?"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UWorld* PIEWorld = PIEContext->World();
+
+	FString ActorLabel;
+	bool bHasLabel = Params->TryGetStringField(TEXT("actorLabel"), ActorLabel) && !ActorLabel.IsEmpty();
+
+	if (!bHasLabel)
+	{
+		// List all actors in PIE world
+		TArray<TSharedPtr<FJsonValue>> ActorsArr;
+		for (TActorIterator<AActor> It(PIEWorld); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (!Actor || !IsValid(Actor)) continue;
+
+			TSharedPtr<FJsonObject> AObj = MakeShared<FJsonObject>();
+			AObj->SetStringField(TEXT("name"), Actor->GetName());
+			AObj->SetStringField(TEXT("label"), Actor->GetActorLabel());
+			AObj->SetStringField(TEXT("class"), Actor->GetClass()->GetName());
+
+			FVector Loc = Actor->GetActorLocation();
+			TSharedPtr<FJsonObject> LocObj = MakeShared<FJsonObject>();
+			LocObj->SetNumberField(TEXT("x"), Loc.X);
+			LocObj->SetNumberField(TEXT("y"), Loc.Y);
+			LocObj->SetNumberField(TEXT("z"), Loc.Z);
+			AObj->SetObjectField(TEXT("location"), LocObj);
+
+			ActorsArr.Add(MakeShared<FJsonValueObject>(AObj));
+		}
+
+		Result->SetArrayField(TEXT("actors"), ActorsArr);
+		Result->SetNumberField(TEXT("count"), ActorsArr.Num());
+		Result->SetBoolField(TEXT("success"), true);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Find specific actor by label
+	AActor* FoundActor = nullptr;
+	for (TActorIterator<AActor> It(PIEWorld); It; ++It)
+	{
+		if ((*It)->GetActorLabel() == ActorLabel || (*It)->GetName() == ActorLabel)
+		{
+			FoundActor = *It;
+			break;
+		}
+	}
+
+	if (!FoundActor)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("name"), FoundActor->GetName());
+	Result->SetStringField(TEXT("label"), FoundActor->GetActorLabel());
+	Result->SetStringField(TEXT("class"), FoundActor->GetClass()->GetName());
+
+	FVector Loc = FoundActor->GetActorLocation();
+	TSharedPtr<FJsonObject> LocObj = MakeShared<FJsonObject>();
+	LocObj->SetNumberField(TEXT("x"), Loc.X);
+	LocObj->SetNumberField(TEXT("y"), Loc.Y);
+	LocObj->SetNumberField(TEXT("z"), Loc.Z);
+	Result->SetObjectField(TEXT("location"), LocObj);
+
+	// Components
+	TArray<TSharedPtr<FJsonValue>> CompsArr;
+	TArray<UActorComponent*> Components;
+	FoundActor->GetComponents(Components);
+	for (UActorComponent* Comp : Components)
+	{
+		if (!Comp) continue;
+
+		TSharedPtr<FJsonObject> CObj = MakeShared<FJsonObject>();
+		CObj->SetStringField(TEXT("name"), Comp->GetName());
+		CObj->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
+		CObj->SetBoolField(TEXT("active"), Comp->IsActive());
+
+		// For scene components, include transform
+		if (USceneComponent* SceneComp = Cast<USceneComponent>(Comp))
+		{
+			FVector CLoc = SceneComp->GetComponentLocation();
+			TSharedPtr<FJsonObject> CLocObj = MakeShared<FJsonObject>();
+			CLocObj->SetNumberField(TEXT("x"), CLoc.X);
+			CLocObj->SetNumberField(TEXT("y"), CLoc.Y);
+			CLocObj->SetNumberField(TEXT("z"), CLoc.Z);
+			CObj->SetObjectField(TEXT("worldLocation"), CLocObj);
+		}
+
+		// For primitive components, include physics/collision info
+		if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Comp))
+		{
+			CObj->SetBoolField(TEXT("simulatingPhysics"), PrimComp->IsSimulatingPhysics());
+			CObj->SetStringField(TEXT("collisionProfile"), PrimComp->GetCollisionProfileName().ToString());
+		}
+
+		CompsArr.Add(MakeShared<FJsonValueObject>(CObj));
+	}
+	Result->SetArrayField(TEXT("components"), CompsArr);
+
+	// Input bindings — check for EnhancedInputComponent
+	UEnhancedInputComponent* InputComp = FoundActor->FindComponentByClass<UEnhancedInputComponent>();
+	Result->SetBoolField(TEXT("hasEnhancedInput"), InputComp != nullptr);
+
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #26  get_pie_anim_state — PIE anim instance state
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::GetPieAnimState(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ActorLabel;
+	if (!Params->TryGetStringField(TEXT("actorLabel"), ActorLabel))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'actorLabel' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Get PIE world
+	FWorldContext* PIEContext = GEditor->GetPIEWorldContext();
+	if (!PIEContext || !PIEContext->World())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No PIE world available. Is Play-In-Editor running?"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UWorld* PIEWorld = PIEContext->World();
+
+	// Find actor
+	AActor* FoundActor = nullptr;
+	for (TActorIterator<AActor> It(PIEWorld); It; ++It)
+	{
+		if ((*It)->GetActorLabel() == ActorLabel || (*It)->GetName() == ActorLabel)
+		{
+			FoundActor = *It;
+			break;
+		}
+	}
+
+	if (!FoundActor)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Find SkeletalMeshComponent
+	USkeletalMeshComponent* SkelMesh = FoundActor->FindComponentByClass<USkeletalMeshComponent>();
+	if (!SkelMesh)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Actor does not have a SkeletalMeshComponent"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Get AnimInstance
+	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
+	if (!AnimInst)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No AnimInstance on the SkeletalMeshComponent"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetStringField(TEXT("actorName"), FoundActor->GetName());
+	Result->SetStringField(TEXT("animClass"), AnimInst->GetClass()->GetName());
+
+	// Current montage
+	UAnimMontage* CurrentMontage = AnimInst->GetCurrentActiveMontage();
+	Result->SetStringField(TEXT("currentMontage"), CurrentMontage ? CurrentMontage->GetName() : TEXT("None"));
+	if (CurrentMontage)
+	{
+		Result->SetNumberField(TEXT("montagePosition"), AnimInst->Montage_GetPosition(CurrentMontage));
+		Result->SetBoolField(TEXT("montageIsPlaying"), AnimInst->Montage_IsPlaying(CurrentMontage));
+	}
+
+	// State machine info — use the anim class interface to enumerate machines
+	TArray<TSharedPtr<FJsonValue>> StatesArr;
+	if (const IAnimClassInterface* AnimClassInterface = IAnimClassInterface::GetFromClass(AnimInst->GetClass()))
+	{
+		const TArray<FBakedAnimationStateMachine>& BakedMachines = AnimClassInterface->GetBakedStateMachines();
+		for (int32 MachineIdx = 0; MachineIdx < BakedMachines.Num(); ++MachineIdx)
+		{
+			const FBakedAnimationStateMachine& BakedMachine = BakedMachines[MachineIdx];
+			TSharedPtr<FJsonObject> SMObj = MakeShared<FJsonObject>();
+			SMObj->SetStringField(TEXT("machineName"), BakedMachine.MachineName.ToString());
+			SMObj->SetNumberField(TEXT("machineIndex"), MachineIdx);
+			SMObj->SetNumberField(TEXT("stateCount"), BakedMachine.States.Num());
+
+			// Try to get current state from the instance
+			const FAnimNode_StateMachine* SM = AnimInst->GetStateMachineInstance(MachineIdx);
+			if (SM)
+			{
+				int32 StateIdx = SM->GetCurrentState();
+				SMObj->SetNumberField(TEXT("currentStateIndex"), StateIdx);
+				if (BakedMachine.States.IsValidIndex(StateIdx))
+				{
+					SMObj->SetStringField(TEXT("currentStateName"), BakedMachine.States[StateIdx].StateName.ToString());
+				}
+			}
+
+			StatesArr.Add(MakeShared<FJsonValueObject>(SMObj));
+		}
+	}
+	Result->SetArrayField(TEXT("stateMachines"), StatesArr);
+
 	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }

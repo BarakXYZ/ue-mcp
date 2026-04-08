@@ -84,6 +84,7 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("add_socket"), &AddSocket);
 	Registry.RegisterHandler(TEXT("remove_socket"), &RemoveSocket);
 	Registry.RegisterHandler(TEXT("list_sockets"), &ListSockets);
+	Registry.RegisterHandler(TEXT("reload_package"), &ReloadPackage);
 
 	// Additional DataTable handlers
 	Registry.RegisterHandler(TEXT("create_datatable"), &CreateDataTable);
@@ -414,6 +415,15 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJso
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
+	// Helper lambda to export a property value as string (#48 — reads arrays, structs, sub-objects)
+	auto ExportPropertyValue = [](FProperty* Prop, const void* Container, UObject* Outer) -> FString
+	{
+		FString ValueStr;
+		const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Container);
+		Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, Outer, PPF_None);
+		return ValueStr;
+	};
+
 	FString PropertyName;
 	if (Params->TryGetStringField(TEXT("propertyName"), PropertyName) && !PropertyName.IsEmpty())
 	{
@@ -424,13 +434,17 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJso
 			Result->SetBoolField(TEXT("success"), false);
 			return MakeShared<FJsonValueObject>(Result);
 		}
-		// Basic serialization - extend as needed
 		Result->SetStringField(TEXT("path"), AssetPath);
 		Result->SetStringField(TEXT("propertyName"), PropertyName);
 		Result->SetStringField(TEXT("type"), Prop->GetCPPType());
+		Result->SetStringField(TEXT("value"), ExportPropertyValue(Prop, Asset, Asset));
 		Result->SetBoolField(TEXT("success"), true);
 		return MakeShared<FJsonValueObject>(Result);
 	}
+
+	// Return all properties with their values
+	bool bIncludeValues = false;
+	Params->TryGetBoolField(TEXT("includeValues"), bIncludeValues);
 
 	TArray<TSharedPtr<FJsonValue>> PropsArray;
 	for (TFieldIterator<FProperty> It(Asset->GetClass()); It; ++It)
@@ -438,6 +452,10 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJso
 		TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
 		P->SetStringField(TEXT("name"), (*It)->GetName());
 		P->SetStringField(TEXT("type"), (*It)->GetCPPType());
+		if (bIncludeValues)
+		{
+			P->SetStringField(TEXT("value"), ExportPropertyValue(*It, Asset, Asset));
+		}
 		PropsArray.Add(MakeShared<FJsonValueObject>(P));
 	}
 	Result->SetStringField(TEXT("path"), AssetPath);
@@ -2141,6 +2159,64 @@ TSharedPtr<FJsonValue> FAssetHandlers::ListSockets(const TSharedPtr<FJsonObject>
 	Result->SetNumberField(TEXT("socketCount"), SocketArray.Num());
 	Result->SetArrayField(TEXT("sockets"), SocketArray);
 	Result->SetBoolField(TEXT("success"), true);
+
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// ---------------------------------------------------------------------------
+// reload_package — Force reload an asset package from disk (#53)
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::ReloadPackage(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	if (!Params->TryGetStringField(TEXT("assetPath"), AssetPath) && !Params->TryGetStringField(TEXT("path"), AssetPath))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Missing 'assetPath' parameter"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Asset not found: %s"), *AssetPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UPackage* Package = Asset->GetOutermost();
+	if (!Package)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Could not get asset package"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Unload and reload the package
+	FString PackageName = Package->GetName();
+	FString PackageFileName;
+	bool bSuccess = false;
+	if (FPackageName::DoesPackageExist(PackageName, &PackageFileName))
+	{
+		// Reset loaders so we can reload
+		ResetLoaders(Package);
+
+		// Force garbage collection to release old references
+		CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+
+		// Reload
+		UObject* Reloaded = UEditorAssetLibrary::LoadAsset(AssetPath);
+		bSuccess = (Reloaded != nullptr);
+	}
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("packageName"), Package->GetName());
+	Result->SetBoolField(TEXT("success"), bSuccess);
+	if (!bSuccess)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Package reload failed"));
+	}
 
 	return MakeShared<FJsonValueObject>(Result);
 }

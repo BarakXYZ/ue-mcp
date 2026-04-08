@@ -26,18 +26,21 @@ void FUE_MCP_BridgeModule::StartupModule()
 		UE_LOG(LogMCPBridge, Warning, TEXT("[UE-MCP] Failed to start bridge server"));
 	}
 
-	// Defer the editor-ready signal until the engine is fully initialized.
-	// Use a one-shot ticker so we fire after all modules have loaded and
-	// the editor subsystems are available.
+	// Defer the editor-ready signal until GEditor and the editor world are available.
+	// Use a repeating ticker that checks each frame until ready.
 	FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateLambda([](float) -> bool
 		{
+			if (!GEditor || !GEditor->GetEditorWorldContext(false).World())
+			{
+				return true; // keep ticking — not ready yet
+			}
 			if (G_BridgeServer.IsValid())
 			{
 				G_BridgeServer->GetGameThreadExecutor().SetEditorReady();
 				UE_LOG(LogMCPBridge, Log, TEXT("[UE-MCP] Editor ready — accepting requests"));
 			}
-			return false; // one-shot
+			return false; // done
 		})
 	);
 }

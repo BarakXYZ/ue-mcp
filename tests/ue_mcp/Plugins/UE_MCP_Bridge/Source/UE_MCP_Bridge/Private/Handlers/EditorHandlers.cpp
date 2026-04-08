@@ -36,9 +36,15 @@
 #include "ILiveCodingModule.h"
 #include "LevelEditorSubsystem.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "DesktopPlatformModule.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/MonitoredProcess.h"
 
 void FEditorHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
+	// Install log capture ring buffer (#82)
+	FMCPLogCapture::Get().Install();
+
 	Registry.RegisterHandler(TEXT("execute_command"), &ExecuteCommand);
 	Registry.RegisterHandler(TEXT("execute_python"), &ExecutePython);
 	Registry.RegisterHandler(TEXT("set_property"), &SetProperty);
@@ -80,6 +86,10 @@ void FEditorHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("list_crashes"), &ListCrashes);
 	Registry.RegisterHandler(TEXT("get_crash_info"), &GetCrashInfo);
 	Registry.RegisterHandler(TEXT("check_for_crashes"), &CheckForCrashes);
+	// #14: Build project
+	Registry.RegisterHandler(TEXT("build_project"), &BuildProject);
+	// #49: Generate project files
+	Registry.RegisterHandler(TEXT("generate_project_files"), &GenerateProjectFiles);
 }
 
 TSharedPtr<FJsonValue> FEditorHandlers::ExecuteCommand(const TSharedPtr<FJsonObject>& Params)
@@ -211,38 +221,42 @@ TSharedPtr<FJsonValue> FEditorHandlers::SetProperty(const TSharedPtr<FJsonObject
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Set property value based on type
-	// TODO: Implement proper type conversion from JSON to property value
-	// For now, basic implementation
+	// Set property value — use ImportText_Direct for full UE text format support (#29)
+	// This handles nested struct arrays, FVector, FGameplayTag, TArray<>, etc.
 	void* PropertyValue = Property->ContainerPtrToValuePtr<void>(Asset);
-	if (FStrProperty* StrProp = CastField<FStrProperty>(Property))
+
+	FString ValueStr;
+	if (ValueJsonRef->Type == EJson::String)
 	{
-		if (ValueJsonRef->Type == EJson::String)
-		{
-			StrProp->SetPropertyValue(PropertyValue, ValueJsonRef->AsString());
-		}
+		ValueStr = ValueJsonRef->AsString();
 	}
-	else if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
+	else if (ValueJsonRef->Type == EJson::Boolean)
 	{
-		if (ValueJsonRef->Type == EJson::Boolean)
-		{
-			BoolProp->SetPropertyValue(PropertyValue, ValueJsonRef->AsBool());
-		}
+		ValueStr = ValueJsonRef->AsBool() ? TEXT("true") : TEXT("false");
 	}
-	else if (FIntProperty* IntProp = CastField<FIntProperty>(Property))
+	else if (ValueJsonRef->Type == EJson::Number)
 	{
-		if (ValueJsonRef->Type == EJson::Number)
-		{
-			IntProp->SetPropertyValue(PropertyValue, (int32)ValueJsonRef->AsNumber());
-		}
+		ValueStr = FString::SanitizeFloat(ValueJsonRef->AsNumber());
 	}
-	else if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Property))
+	else
 	{
-		if (ValueJsonRef->Type == EJson::Number)
-		{
-			FloatProp->SetPropertyValue(PropertyValue, (float)ValueJsonRef->AsNumber());
-		}
+		// For objects/arrays, serialize back to string for ImportText
+		// This lets callers pass UE text format as a string value
+		Result->SetStringField(TEXT("error"), TEXT("Value must be a string (UE text format), number, or boolean. For complex types, pass UE text format as a string (e.g. '((Key=1,Value=\"Hello\"))' for struct arrays)."));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
 	}
+
+	const TCHAR* ImportResult = Property->ImportText_Direct(*ValueStr, PropertyValue, Asset, PPF_None);
+	if (!ImportResult)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(
+			TEXT("ImportText failed for property '%s' with value '%s'. Check UE text format."), *PropertyName, *ValueStr));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Asset->MarkPackageDirty();
 
 	Result->SetStringField(TEXT("path"), AssetPath);
 	Result->SetStringField(TEXT("propertyName"), PropertyName);
@@ -432,17 +446,43 @@ TSharedPtr<FJsonValue> FEditorHandlers::GetOutputLog(const TSharedPtr<FJsonObjec
 {
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
-	// maxLines parameter with default of 100
 	int32 MaxLines = 100;
 	if (Params->HasField(TEXT("maxLines")))
 	{
 		MaxLines = static_cast<int32>(Params->GetNumberField(TEXT("maxLines")));
 	}
 
-	// Output log capture is not trivially available in C++ without a custom output device.
-	// Return success with an empty lines array as a baseline implementation.
+	FString Filter;
+	Params->TryGetStringField(TEXT("filter"), Filter);
+	FString Category;
+	Params->TryGetStringField(TEXT("category"), Category);
+
+	// Read from ring-buffer log capture (#82)
+	TArray<FMCPLogCapture::FMCPLogLine> RecentLines = FMCPLogCapture::Get().GetRecentLines(MaxLines * 2); // over-fetch for filtering
+
 	TArray<TSharedPtr<FJsonValue>> LinesArray;
+	for (const FMCPLogCapture::FMCPLogLine& Line : RecentLines)
+	{
+		if (!Filter.IsEmpty() && !Line.Message.Contains(Filter, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		if (!Category.IsEmpty() && !Line.Category.Contains(Category, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> LineObj = MakeShared<FJsonObject>();
+		LineObj->SetStringField(TEXT("message"), Line.Message);
+		LineObj->SetStringField(TEXT("category"), Line.Category);
+		LineObj->SetStringField(TEXT("verbosity"), Line.Verbosity);
+		LinesArray.Add(MakeShared<FJsonValueObject>(LineObj));
+
+		if (LinesArray.Num() >= MaxLines) break;
+	}
+
 	Result->SetArrayField(TEXT("lines"), LinesArray);
+	Result->SetNumberField(TEXT("lineCount"), LinesArray.Num());
 	Result->SetNumberField(TEXT("maxLines"), MaxLines);
 	Result->SetBoolField(TEXT("success"), true);
 
@@ -461,9 +501,27 @@ TSharedPtr<FJsonValue> FEditorHandlers::SearchLog(const TSharedPtr<FJsonObject>&
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Similar to GetOutputLog - return success with empty matches as baseline
+	int32 MaxResults = 100;
+	if (Params->HasField(TEXT("maxResults")))
+	{
+		MaxResults = static_cast<int32>(Params->GetNumberField(TEXT("maxResults")));
+	}
+
+	// Search ring-buffer log capture (#82)
+	TArray<FMCPLogCapture::FMCPLogLine> Matches = FMCPLogCapture::Get().Search(Query, MaxResults);
+
 	TArray<TSharedPtr<FJsonValue>> MatchesArray;
+	for (const FMCPLogCapture::FMCPLogLine& Line : Matches)
+	{
+		TSharedPtr<FJsonObject> MatchObj = MakeShared<FJsonObject>();
+		MatchObj->SetStringField(TEXT("message"), Line.Message);
+		MatchObj->SetStringField(TEXT("category"), Line.Category);
+		MatchObj->SetStringField(TEXT("verbosity"), Line.Verbosity);
+		MatchesArray.Add(MakeShared<FJsonValueObject>(MatchObj));
+	}
+
 	Result->SetArrayField(TEXT("matches"), MatchesArray);
+	Result->SetNumberField(TEXT("matchCount"), MatchesArray.Num());
 	Result->SetStringField(TEXT("query"), Query);
 	Result->SetBoolField(TEXT("success"), true);
 
@@ -577,9 +635,50 @@ TSharedPtr<FJsonValue> FEditorHandlers::CaptureScreenshot(const TSharedPtr<FJson
 		Filename += TEXT(".png");
 	}
 
-	FScreenshotRequest::RequestScreenshot(*Filename, false, false);
+	// #64: Force the active level viewport to render even if the editor window is not focused
+	if (!GEditor)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Editor not available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
 
-	Result->SetStringField(TEXT("filename"), Filename);
+	FLevelEditorViewportClient* ViewportClient = GCurrentLevelEditingViewportClient;
+	if (!ViewportClient)
+	{
+		const TArray<FLevelEditorViewportClient*>& ViewportClients = GEditor->GetLevelViewportClients();
+		if (ViewportClients.Num() > 0)
+		{
+			ViewportClient = ViewportClients[0];
+		}
+	}
+
+	if (!ViewportClient)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No level viewport available for screenshot"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Force a viewport redraw to ensure we capture current state
+	ViewportClient->Invalidate();
+
+	// Make the viewport's output path explicit so FScreenshotRequest picks it up
+	FString FullPath = Filename;
+	if (!FPaths::IsRelative(Filename))
+	{
+		// Already absolute
+	}
+	else
+	{
+		FullPath = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Screenshots"), Filename);
+	}
+
+	// Request the screenshot
+	FScreenshotRequest::RequestScreenshot(FullPath, false, false);
+
+	Result->SetStringField(TEXT("filename"), FullPath);
+	Result->SetStringField(TEXT("note"), TEXT("Screenshot queued. The file will be written asynchronously by the renderer."));
 	Result->SetBoolField(TEXT("success"), true);
 
 	return MakeShared<FJsonValueObject>(Result);
@@ -1691,5 +1790,170 @@ TSharedPtr<FJsonValue> FEditorHandlers::CheckForCrashes(const TSharedPtr<FJsonOb
 
 	Result->SetNumberField(TEXT("recentCrashCount"), RecentCrashes.Num());
 	Result->SetArrayField(TEXT("recentCrashes"), RecentCrashes);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// #14: Build project via UnrealBuildTool
+TSharedPtr<FJsonValue> FEditorHandlers::BuildProject(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	if (!GEditor)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Editor not available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	FString Configuration = TEXT("Development");
+	Params->TryGetStringField(TEXT("configuration"), Configuration);
+
+	FString Platform = TEXT("Win64");
+	Params->TryGetStringField(TEXT("platform"), Platform);
+
+	bool bClean = false;
+	Params->TryGetBoolField(TEXT("clean"), bClean);
+
+	// Build the project by invoking the engine's build tool
+	// Use the project path from the running editor
+	FString ProjectPath = FPaths::GetProjectFilePath();
+	if (ProjectPath.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No project file path available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Find UnrealBuildTool
+	FString EngineDir = FPaths::EngineDir();
+	FString UBTPath;
+
+#if PLATFORM_WINDOWS
+	UBTPath = FPaths::Combine(EngineDir, TEXT("Binaries"), TEXT("DotNET"), TEXT("UnrealBuildTool"), TEXT("UnrealBuildTool.exe"));
+	if (!FPaths::FileExists(UBTPath))
+	{
+		// Try legacy path
+		UBTPath = FPaths::Combine(EngineDir, TEXT("Binaries"), TEXT("DotNET"), TEXT("UnrealBuildTool.exe"));
+	}
+#else
+	UBTPath = FPaths::Combine(EngineDir, TEXT("Binaries"), TEXT("DotNET"), TEXT("UnrealBuildTool"), TEXT("UnrealBuildTool"));
+#endif
+
+	if (!FPaths::FileExists(UBTPath))
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("UnrealBuildTool not found at '%s'"), *UBTPath));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Build the command line
+	FString ProjectName = FPaths::GetBaseFilename(ProjectPath);
+	FString Args = FString::Printf(
+		TEXT("%sEditor %s %s -Project=\"%s\" -WaitMutex -FromMsBuild"),
+		*ProjectName, *Platform, *Configuration, *ProjectPath);
+
+	if (bClean)
+	{
+		Args += TEXT(" -Clean");
+	}
+
+	// Launch the process asynchronously
+	FProcHandle ProcHandle = FPlatformProcess::CreateProc(
+		*UBTPath, *Args, true, false, false, nullptr, 0, nullptr, nullptr);
+
+	if (!ProcHandle.IsValid())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Failed to launch UnrealBuildTool"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	Result->SetStringField(TEXT("ubtPath"), UBTPath);
+	Result->SetStringField(TEXT("args"), Args);
+	Result->SetStringField(TEXT("configuration"), Configuration);
+	Result->SetStringField(TEXT("platform"), Platform);
+	Result->SetStringField(TEXT("note"), TEXT("Build launched asynchronously. Check output log for progress."));
+	Result->SetBoolField(TEXT("success"), true);
+	return MakeShared<FJsonValueObject>(Result);
+}
+
+// #49: Generate VS project files
+TSharedPtr<FJsonValue> FEditorHandlers::GenerateProjectFiles(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ProjectPath = FPaths::GetProjectFilePath();
+	if (ProjectPath.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No project file path available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	// Find the GenerateProjectFiles script
+	FString EngineDir = FPaths::EngineDir();
+	FString ScriptPath;
+#if PLATFORM_WINDOWS
+	ScriptPath = FPaths::Combine(EngineDir, TEXT("Build"), TEXT("BatchFiles"), TEXT("GenerateProjectFiles.bat"));
+#elif PLATFORM_MAC
+	ScriptPath = FPaths::Combine(EngineDir, TEXT("Build"), TEXT("BatchFiles"), TEXT("Mac"), TEXT("GenerateProjectFiles.sh"));
+#else
+	ScriptPath = FPaths::Combine(EngineDir, TEXT("Build"), TEXT("BatchFiles"), TEXT("Linux"), TEXT("GenerateProjectFiles.sh"));
+#endif
+
+	if (!FPaths::FileExists(ScriptPath))
+	{
+		// Alternative: use UnrealBuildTool directly with -projectfiles flag
+		FString UBTPath;
+#if PLATFORM_WINDOWS
+		UBTPath = FPaths::Combine(EngineDir, TEXT("Binaries"), TEXT("DotNET"), TEXT("UnrealBuildTool"), TEXT("UnrealBuildTool.exe"));
+		if (!FPaths::FileExists(UBTPath))
+		{
+			UBTPath = FPaths::Combine(EngineDir, TEXT("Binaries"), TEXT("DotNET"), TEXT("UnrealBuildTool.exe"));
+		}
+#else
+		UBTPath = FPaths::Combine(EngineDir, TEXT("Binaries"), TEXT("DotNET"), TEXT("UnrealBuildTool"), TEXT("UnrealBuildTool"));
+#endif
+		if (!FPaths::FileExists(UBTPath))
+		{
+			Result->SetStringField(TEXT("error"), TEXT("Neither GenerateProjectFiles script nor UnrealBuildTool found"));
+			Result->SetBoolField(TEXT("success"), false);
+			return MakeShared<FJsonValueObject>(Result);
+		}
+
+		FString Args = FString::Printf(TEXT("-projectfiles -project=\"%s\" -game -rocket -progress"), *ProjectPath);
+		FProcHandle ProcHandle = FPlatformProcess::CreateProc(
+			*UBTPath, *Args, true, false, false, nullptr, 0, nullptr, nullptr);
+
+		if (!ProcHandle.IsValid())
+		{
+			Result->SetStringField(TEXT("error"), TEXT("Failed to launch UnrealBuildTool for project file generation"));
+			Result->SetBoolField(TEXT("success"), false);
+			return MakeShared<FJsonValueObject>(Result);
+		}
+
+		Result->SetStringField(TEXT("tool"), UBTPath);
+		Result->SetStringField(TEXT("args"), Args);
+	}
+	else
+	{
+		FString Args = FString::Printf(TEXT("-project=\"%s\" -game"), *ProjectPath);
+		FProcHandle ProcHandle = FPlatformProcess::CreateProc(
+			*ScriptPath, *Args, true, false, false, nullptr, 0, nullptr, nullptr);
+
+		if (!ProcHandle.IsValid())
+		{
+			Result->SetStringField(TEXT("error"), TEXT("Failed to launch GenerateProjectFiles"));
+			Result->SetBoolField(TEXT("success"), false);
+			return MakeShared<FJsonValueObject>(Result);
+		}
+
+		Result->SetStringField(TEXT("tool"), ScriptPath);
+		Result->SetStringField(TEXT("args"), Args);
+	}
+
+	Result->SetStringField(TEXT("projectPath"), ProjectPath);
+	Result->SetStringField(TEXT("note"), TEXT("Project file generation launched. Check output log for progress."));
+	Result->SetBoolField(TEXT("success"), true);
 	return MakeShared<FJsonValueObject>(Result);
 }
