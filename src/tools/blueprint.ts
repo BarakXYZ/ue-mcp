@@ -20,8 +20,12 @@ export const blueprintTool: ToolDef = categoryTool(
     set_node_property: bp("set_node_property", (p) => ({ path: p.assetPath, graphName: p.graphName, nodeName: p.nodeName, propertyName: p.propertyName, value: p.value })),
     connect_pins:      bp("connect_pins"),
     add_component:     bp("add_component", (p) => ({ path: p.assetPath, componentClass: p.componentClass, componentName: p.componentName ?? p.componentClass })),
+    remove_component:  bp("remove_component", (p) => ({ path: p.assetPath, componentName: p.componentName })),
     set_component_property: bp("set_blueprint_component_property", (p) => ({ path: p.assetPath, componentName: p.componentName, propertyName: p.propertyName, value: p.value })),
     set_class_default: bp("set_class_default", (p) => ({ path: p.assetPath, propertyName: p.propertyName, value: p.value })),
+    delete_variable:   bp("delete_variable", (p) => ({ path: p.assetPath, name: p.name })),
+    add_function_parameter: bp("add_function_parameter", (p) => ({ path: p.assetPath, functionName: p.functionName, parameterName: p.parameterName, parameterType: p.parameterType, isOutput: p.isOutput })),
+    set_variable_default: bp("set_variable_default", (p) => ({ path: p.assetPath, name: p.name, value: p.value })),
     compile:           bp("compile_blueprint", (p) => ({ path: p.assetPath })),
     list_node_types:   bp("list_node_types"),
     search_node_types: bp("search_node_types"),
@@ -46,8 +50,12 @@ export const blueprintTool: ToolDef = categoryTool(
 - set_node_property: Set node pin default or struct property (supports dot paths like "Node.IKBone.BoneName"). Params: assetPath, graphName, nodeName, propertyName, value
 - connect_pins: Wire nodes. Params: sourceNode, sourcePin, targetNode, targetPin, assetPath, graphName?
 - add_component: Add BP component. Params: assetPath, componentClass, componentName?
-- set_component_property: Set property on SCS component template (supports dot paths, asset paths for object refs). Params: assetPath, componentName, propertyName, value
-- set_class_default: Set UPROPERTY on Blueprint CDO (FName, object refs, soft refs, TArray, TMap via ImportText). Params: assetPath, propertyName, value
+- remove_component: Remove SCS component. Params: assetPath, componentName
+- set_component_property: Set property on SCS or inherited component template (supports dot paths, asset paths for object refs). Params: assetPath, componentName, propertyName, value
+- set_class_default: Set UPROPERTY on Blueprint CDO (FName, object refs, soft refs, TSubclassOf, TArray, TMap, FGameplayTagContainer via ImportText). Params: assetPath, propertyName, value
+- delete_variable: Delete a member variable. Params: assetPath, name
+- add_function_parameter: Add input or output parameter to a function. Params: assetPath, functionName, parameterName, parameterType?, isOutput?
+- set_variable_default: Set default value on a BP variable (bypasses CDO restrictions for class reference arrays etc.). Params: assetPath, name, value
 - compile: Compile Blueprint. Params: assetPath
 - list_node_types: List node types. Params: category?, includeFunctions?
 - search_node_types: Search nodes. Params: query
@@ -69,6 +77,8 @@ export const blueprintTool: ToolDef = categoryTool(
     sourceNode: z.string().optional(), sourcePin: z.string().optional(),
     targetNode: z.string().optional(), targetPin: z.string().optional(),
     componentClass: z.string().optional(), componentName: z.string().optional(),
+    parameterName: z.string().optional(), parameterType: z.string().optional(),
+    isOutput: z.boolean().optional(),
     query: z.string().optional(),
     includeFunctions: z.boolean().optional(),
     blueprintPath: z.string().optional(), interfacePath: z.string().optional(),
