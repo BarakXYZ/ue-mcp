@@ -389,6 +389,23 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::CreateBlueprint(const TSharedPtr<FJso
 	FString AssetName;
 	AssetPath.Split(TEXT("/"), &PackageName, &AssetName, ESearchCase::CaseSensitive, ESearchDir::FromEnd);
 
+	// Idempotent: if asset already exists, return it
+	UBlueprint* ExistingBP = LoadBlueprint(AssetPath);
+	if (ExistingBP)
+	{
+		FString ObjectPath = ExistingBP->GetPathName();
+		Result->SetStringField(TEXT("path"), AssetPath);
+		Result->SetStringField(TEXT("objectPath"), ObjectPath);
+		Result->SetStringField(TEXT("className"), ExistingBP->GetName());
+		if (ExistingBP->ParentClass)
+		{
+			Result->SetStringField(TEXT("parentClass"), ExistingBP->ParentClass->GetPathName());
+		}
+		Result->SetBoolField(TEXT("alreadyExisted"), true);
+		Result->SetBoolField(TEXT("success"), true);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
 	UBlueprintFactory* BlueprintFactory = NewObject<UBlueprintFactory>();
 	BlueprintFactory->ParentClass = ParentClass;
 	UBlueprint* NewBlueprint = Cast<UBlueprint>(AssetTools.CreateAsset(AssetName, PackageName, UBlueprint::StaticClass(), BlueprintFactory));
@@ -1613,7 +1630,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddEventDispatcher(const TSharedPtr<F
 	FName DispatcherFName(*DispatcherName);
 
 	// Create the delegate signature graph so the compiler has a function to reference.
-	// The convention is "<DispatcherName>__DelegateSignature"
+	// Convention: "<Name>__DelegateSignature"
 	FString SigGraphName = DispatcherName + TEXT("__DelegateSignature");
 	UEdGraph* SigGraph = FBlueprintEditorUtils::CreateNewGraph(
 		Blueprint, FName(*SigGraphName),
@@ -1622,13 +1639,8 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddEventDispatcher(const TSharedPtr<F
 	{
 		Blueprint->DelegateSignatureGraphs.AddUnique(SigGraph);
 		SigGraph->SetFlags(RF_Transactional);
-
-		// Add a function entry node — the compiler looks for this as the signature function
-		UK2Node_FunctionEntry* EntryNode = NewObject<UK2Node_FunctionEntry>(SigGraph);
-		SigGraph->AddNode(EntryNode, false, false);
-		EntryNode->CreateNewGuid();
-		EntryNode->PostPlacedNewNode();
-		EntryNode->AllocateDefaultPins();
+		// Schema creates the proper function entry node for us
+		SigGraph->GetSchema()->CreateDefaultNodesForGraph(*SigGraph);
 	}
 
 	FEdGraphPinType PinType;
