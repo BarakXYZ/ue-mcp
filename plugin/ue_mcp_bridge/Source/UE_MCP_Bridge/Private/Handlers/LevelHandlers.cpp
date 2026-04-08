@@ -188,15 +188,11 @@ TSharedPtr<FJsonValue> FLevelHandlers::PlaceActor(const TSharedPtr<FJsonObject>&
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Find actor class — try full path first, then broad short-name search
-	UClass* Class = FindObject<UClass>(nullptr, *ActorClass);
+	// Find actor class — silent short-name search first, then full path load
+	UClass* Class = FindClassByShortName(ActorClass);
 	if (!Class)
 	{
 		Class = LoadObject<UClass>(nullptr, *ActorClass);
-	}
-	if (!Class)
-	{
-		Class = FindClassByShortName(ActorClass);
 	}
 
 	if (!Class)

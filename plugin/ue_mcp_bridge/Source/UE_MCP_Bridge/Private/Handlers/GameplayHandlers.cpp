@@ -159,7 +159,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::CreateSmartObjectDefinition(const TSha
 		PackageName = PackagePath;
 		AssetName = Name;
 	}
-	PackageName = PackageName.LeftChop(1); // Remove trailing /
+	if (PackageName.EndsWith(TEXT("/"))) PackageName = PackageName.LeftChop(1);
 
 	UObject* NewAsset = AssetTools.CreateAsset(AssetName, PackageName, SmartObjectDefClass, nullptr);
 	if (!NewAsset)
