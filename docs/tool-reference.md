@@ -1,6 +1,6 @@
 # Tool Reference
 
-UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes an `action` parameter that selects the operation, plus action-specific parameters.
+UE-MCP exposes **19 category tools** covering **330+ actions**. Every tool takes an `action` parameter that selects the operation, plus action-specific parameters.
 
 !!! tip
     Start with `project(action="get_status")` to check the connection, then `level(action="get_outliner")` or `asset(action="list")` to explore.
@@ -22,6 +22,8 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `read_module` | Read C++ module structure and Build.cs | `moduleName` |
 | `list_modules` | List all C++ modules in Source/ | |
 | `search_cpp` | Search `.h`/`.cpp` files for text | `query`, `directory?` |
+| `build` | Launch UnrealBuildTool to build C++ | `configuration?`, `platform?`, `clean?` |
+| `generate_project_files` | Generate IDE project files (VS, Xcode) | |
 
 !!! note
     `read_config`, `read_cpp_header`, `list_modules`, and `search_cpp` work without the editor (filesystem only).
@@ -35,7 +37,7 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `list` | List assets in a directory | `directory?`, `typeFilter?`, `recursive?` |
 | `search` | Search by name/class/path (supports wildcards) | `query`, `directory?`, `maxResults?` |
 | `read` | Read asset via reflection | `assetPath` |
-| `read_properties` | Read specific properties of an asset | `assetPath`, `exportName?`, `propertyName?` |
+| `read_properties` | Read asset properties with values | `assetPath`, `propertyName?`, `includeValues?` |
 | `duplicate` | Duplicate an asset | `sourcePath`, `destinationPath` |
 | `rename` | Rename an asset | `assetPath`, `newName` |
 | `move` | Move an asset to a new path | `sourcePath`, `destinationPath` |
@@ -56,6 +58,7 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `add_socket` | Add socket to StaticMesh or SkeletalMesh | `assetPath`, `socketName`, `boneName?`, `relativeLocation?`, `relativeRotation?`, `relativeScale?` |
 | `remove_socket` | Remove socket by name | `assetPath`, `socketName` |
 | `list_sockets` | List sockets on a mesh | `assetPath` |
+| `reload_package` | Force reload an asset package from disk | `assetPath` |
 
 !!! note
     `search` auto-searches all configured content roots (see [Configuration](configuration.md)).
@@ -82,7 +85,12 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `set_node_property` | Set pin default or struct property (supports dot paths) | `assetPath`, `graphName`, `nodeName`, `propertyName`, `value` |
 | `connect_pins` | Wire two node pins together | `assetPath`, `sourceNode`, `sourcePin`, `targetNode`, `targetPin` |
 | `add_component` | Add a component to the BP | `assetPath`, `componentClass` |
-| `set_component_property` | Set property on SCS component template (dot paths, asset paths) | `assetPath`, `componentName`, `propertyName`, `value` |
+| `remove_component` | Remove an SCS component | `assetPath`, `componentName` |
+| `set_component_property` | Set property on SCS or inherited component template (dot paths, asset paths) | `assetPath`, `componentName`, `propertyName`, `value` |
+| `set_class_default` | Set UPROPERTY on CDO (TSubclassOf, object refs, TArray, FGameplayTagContainer via ImportText) | `assetPath`, `propertyName`, `value` |
+| `delete_variable` | Delete a member variable | `assetPath`, `name` |
+| `add_function_parameter` | Add input or output parameter to a function | `assetPath`, `functionName`, `parameterName`, `parameterType?`, `isOutput?` |
+| `set_variable_default` | Set default value on a BP variable (bypasses CDO restrictions) | `assetPath`, `name`, `value` |
 | `compile` | Compile the Blueprint | `assetPath` |
 | `list_node_types` | List available node types by category | `category?` |
 | `search_node_types` | Search for node types | `query` |
@@ -126,6 +134,8 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `spawn_light` | Place a light | `lightType`, `location?`, `intensity?`, `color?` |
 | `set_light_properties` | Edit light properties | `actorLabel`, `intensity?`, `color?`, `temperature?` |
 | `build_lighting` | Build lighting | `quality?` |
+| `get_world_settings` | Read WorldSettings (GameMode, KillZ, gravity) | |
+| `set_world_settings` | Set DefaultGameMode and other world settings | `gameModePath?`, `killZ?`, `globalGravityZ?` |
 | `get_spline_info` | Read spline component data | `actorLabel` |
 | `set_spline_points` | Set spline points | `actorLabel`, `points[]`, `closedLoop?` |
 
@@ -137,7 +147,9 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 |--------|-------------|------------|
 | `read` | Read material structure | `assetPath` |
 | `list_parameters` | List overridable parameters | `assetPath` |
-| `set_parameter` | Set scalar/vector/texture parameter | `assetPath`, `parameterName`, `value` |
+| `set_parameter` | Set scalar/vector/texture parameter on MaterialInstance | `assetPath`, `parameterName`, `parameterType?`, `value` |
+| `set_expression_value` | Set value on expression node (Constant, Constant3Vector, etc.) | `materialPath`, `expressionIndex`, `value` |
+| `disconnect_property` | Clear a material property input connection | `materialPath`, `property` |
 | `create_instance` | Create a material instance | `parentPath`, `name?` |
 | `create` | Create a new material | `name`, `packagePath?` |
 | `set_shading_model` | Set shading model | `assetPath`, `shadingModel` |
@@ -175,6 +187,13 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `get_bone_transforms` | Read reference pose transforms | `skeletonPath`, `boneNames?` |
 | `set_montage_sequence` | Replace animation in a montage (auto-updates duration) | `assetPath`, `animSequencePath`, `slotIndex?` |
 | `set_montage_properties` | Set montage duration, rate, and blending | `assetPath`, `sequenceLength?`, `rateScale?`, `blendIn?`, `blendOut?` |
+| `read_anim_graph` | Read AnimBP AnimGraph nodes with properties via reflection | `assetPath`, `graphName?` |
+| `add_curve` | Add float curve to AnimSequence | `assetPath`, `curveName` |
+| `set_montage_slot` | Set SlotAnimTrack slot name | `assetPath`, `slotName`, `trackIndex?` |
+| `add_montage_section` | Add composite section to montage | `assetPath`, `sectionName`, `startTime?` |
+| `create_ik_rig` | Create IKRigDefinition asset | `name`, `skeletalMeshPath`, `packagePath?` |
+| `read_ik_rig` | Read IK Rig chains and solvers | `assetPath` |
+| `list_control_rig_variables` | Read ControlRig blueprint variables and graphs | `assetPath` |
 
 !!! note
     Most animation tools need a skeleton path — use `list_skeletal_meshes` to find it.
@@ -311,7 +330,7 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `validate_assets` | Run data validation | |
 | `get_build_status` | Check build status | |
 | `cook_content` | Cook content for target platform | |
-| `get_log` | Get output log entries | `category?` |
+| `get_log` | Get output log entries (ring buffer, 4096 lines) | `maxLines?`, `filter?`, `category?` |
 | `search_log` | Search log entries | `query` |
 | `get_message_log` | Get message log | |
 | `set_dialog_policy` | Auto-respond to modal dialogs | `dialogTitle`, `response` |
@@ -356,8 +375,12 @@ UE-MCP exposes **19 category tools** covering **300+ actions**. Every tool takes
 | `get_navmesh_info` | Query navigation system info | |
 | `project_to_nav` | Project a point onto the navmesh | `location` |
 | `spawn_nav_modifier` | Place a nav modifier volume | `location`, `extent?`, `areaClass?` |
-| `create_input_action` | Create an Enhanced Input Action | `name`, `valueType?` |
+| `create_input_action` | Create an Enhanced Input Action | `name`, `valueType?` (Boolean/Axis1D/Axis2D/Axis3D) |
 | `create_input_mapping` | Create an Input Mapping Context | `name` |
+| `read_imc` | Read IMC mappings (keys, triggers, modifiers) | `imcPath` |
+| `add_imc_mapping` | Add key mapping to an IMC | `imcPath`, `inputActionPath`, `key` |
+| `inspect_pie` | Inspect PIE world actors and components at runtime | `actorLabel?` |
+| `get_pie_anim_state` | Read runtime AnimInstance state (montages, state machines) | `actorLabel` |
 | `list_input_assets` | List input-related assets | `directory?` |
 | `list_behavior_trees` | List Behavior Trees and Blackboards | `directory?` |
 | `get_behavior_tree_info` | Inspect a Behavior Tree | `assetPath` |
