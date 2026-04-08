@@ -300,20 +300,7 @@ TSharedPtr<FJsonValue> FReflectionHandlers::CreateGameplayTag(const TSharedPtr<F
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetStringField(TEXT("tag"), Tag);
 
-	// Try to add via GameplayTagsManager
-	UGameplayTagsManager& TagsManager = UGameplayTagsManager::Get();
-	FName TagName(*Tag);
-	TagsManager.AddNativeGameplayTag(TagName, Comment);
-	FGameplayTag NewTag = TagsManager.RequestGameplayTag(TagName, false);
-	bool bSuccess = NewTag.IsValid();
-	if (bSuccess)
-	{
-		Result->SetBoolField(TEXT("success"), true);
-		Result->SetStringField(TEXT("method"), TEXT("add_native_gameplay_tag"));
-		return MakeShared<FJsonValueObject>(Result);
-	}
-
-	// Fallback: append to DefaultGameplayTags.ini
+	// Add tag via DefaultGameplayTags.ini (not AddNativeGameplayTag which asserts after init)
 	FString ProjectDir = FPaths::ProjectDir();
 	FString TagFile = FPaths::Combine(ProjectDir, TEXT("Config"), TEXT("DefaultGameplayTags.ini"));
 	

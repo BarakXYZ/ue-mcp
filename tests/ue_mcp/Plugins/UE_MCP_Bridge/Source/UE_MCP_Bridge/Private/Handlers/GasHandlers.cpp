@@ -80,7 +80,7 @@ TSharedPtr<FJsonValue> FGasHandlers::CreateGameplayEffect(const TSharedPtr<FJson
 		PackageName = PackagePath;
 		AssetName = Name;
 	}
-	PackageName = PackageName.LeftChop(1); // Remove trailing /
+	if (PackageName.EndsWith(TEXT("/"))) PackageName = PackageName.LeftChop(1);
 
 	// Create asset path
 	FString FullAssetPath = PackagePath + TEXT("/") + Name;

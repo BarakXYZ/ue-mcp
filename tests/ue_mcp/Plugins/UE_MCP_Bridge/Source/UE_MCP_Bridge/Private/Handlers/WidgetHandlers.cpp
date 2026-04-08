@@ -1386,6 +1386,12 @@ TSharedPtr<FJsonValue> FWidgetHandlers::AddWidget(const TSharedPtr<FJsonObject>&
 		}
 	}
 
+	// Register widget GUID so the compiler doesn't assert
+	if (!WidgetBP->WidgetVariableNameToGuidMap.Contains(NewWidget->GetFName()))
+	{
+		WidgetBP->WidgetVariableNameToGuidMap.Add(NewWidget->GetFName(), FGuid::NewGuid());
+	}
+
 	// ── Save ──
 	WidgetBP->MarkPackageDirty();
 	FKismetEditorUtilities::CompileBlueprint(WidgetBP);

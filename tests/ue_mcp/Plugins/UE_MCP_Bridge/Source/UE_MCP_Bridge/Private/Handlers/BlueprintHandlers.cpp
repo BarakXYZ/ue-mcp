@@ -363,13 +363,13 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::CreateBlueprint(const TSharedPtr<FJso
 	// Find parent class — try multiple resolution strategies
 	UClass* ParentClass = nullptr;
 
-	// 1. Try as full class path (e.g. "/Script/Engine.Actor" or "/Script/MyModule.MyClass")
-	ParentClass = LoadObject<UClass>(nullptr, *ParentClassName);
+	// 1. Try silent short-name search first (handles "Actor", "AActor", "UAnimInstance" etc.)
+	ParentClass = FindClassByShortName(ParentClassName);
 
-	// 2. Try FindClassByShortName which handles "Actor", "AActor", "UAnimInstance" etc.
+	// 2. Try as full class path (e.g. "/Script/Engine.Actor" or "/Script/MyModule.MyClass")
 	if (!ParentClass)
 	{
-		ParentClass = FindClassByShortName(ParentClassName);
+		ParentClass = LoadObject<UClass>(nullptr, *ParentClassName);
 	}
 
 	if (!ParentClass)
@@ -1609,11 +1609,36 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddEventDispatcher(const TSharedPtr<F
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	// Add multicast delegate variable
+	// Add multicast delegate variable with a proper signature graph
+	FName DispatcherFName(*DispatcherName);
+
+	// Create the delegate signature graph so the compiler has a function to reference.
+	// The convention is "<DispatcherName>__DelegateSignature"
+	FString SigGraphName = DispatcherName + TEXT("__DelegateSignature");
+	UEdGraph* SigGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint, FName(*SigGraphName),
+		UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+	if (SigGraph)
+	{
+		Blueprint->DelegateSignatureGraphs.AddUnique(SigGraph);
+		SigGraph->SetFlags(RF_Transactional);
+
+		// Add a function entry node — the compiler looks for this as the signature function
+		UK2Node_FunctionEntry* EntryNode = NewObject<UK2Node_FunctionEntry>(SigGraph);
+		SigGraph->AddNode(EntryNode, false, false);
+		EntryNode->CreateNewGuid();
+		EntryNode->PostPlacedNewNode();
+		EntryNode->AllocateDefaultPins();
+	}
+
 	FEdGraphPinType PinType;
 	PinType.PinCategory = UEdGraphSchema_K2::PC_MCDelegate;
+	if (SigGraph)
+	{
+		PinType.PinSubCategoryMemberReference.MemberName = SigGraph->GetFName();
+		PinType.PinSubCategoryMemberReference.MemberGuid = SigGraph->GraphGuid;
+	}
 
-	FName DispatcherFName(*DispatcherName);
 	bool bSuccess = FBlueprintEditorUtils::AddMemberVariable(Blueprint, DispatcherFName, PinType);
 
 	if (bSuccess)
@@ -1805,7 +1830,6 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::CreateBlueprintInterface(const TShare
 	FString PackageName;
 	FString AssetName;
 	AssetPath.Split(TEXT("/"), &PackageName, &AssetName, ESearchCase::CaseSensitive, ESearchDir::FromEnd);
-	PackageName = PackageName.LeftChop(1); // Remove trailing /
 
 	UBlueprintFactory* BlueprintFactory = NewObject<UBlueprintFactory>();
 	BlueprintFactory->BlueprintType = BPTYPE_Interface;
