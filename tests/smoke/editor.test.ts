@@ -83,3 +83,23 @@ describe("editor — safe commands", () => {
     expect(r.ok, r.error).toBe(true);
   });
 });
+
+describe("editor — open_asset safety (#17)", () => {
+  it("open_asset returns success:false instead of crashing for missing asset", async () => {
+    const r = await callBridge(bridge, "open_asset", { assetPath: "/Game/DoesNotExist/SM_Nope" });
+    expect(r.ok, r.error).toBe(true);
+    const result = r.result as Record<string, unknown>;
+    expect(result.success).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it("open_asset does not crash on StaticMesh", async () => {
+    // Create a simple static mesh import target or use engine content
+    // Just verify the call returns without crashing the bridge
+    const r = await callBridge(bridge, "open_asset", { assetPath: "/Engine/BasicShapes/Cube" });
+    expect(r.ok, r.error).toBe(true);
+    const result = r.result as Record<string, unknown>;
+    // Should either succeed or fail gracefully — not crash
+    expect(typeof result.success).toBe("boolean");
+  });
+});

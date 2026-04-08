@@ -1444,11 +1444,30 @@ TSharedPtr<FJsonValue> FEditorHandlers::OpenAsset(const TSharedPtr<FJsonObject>&
 		return MakeShared<FJsonValueObject>(Result);
 	}
 
-	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Asset);
+	if (!GEditor)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("GEditor not available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("AssetEditorSubsystem not available"));
+		Result->SetBoolField(TEXT("success"), false);
+		return MakeShared<FJsonValueObject>(Result);
+	}
+
+	bool bOpened = AssetEditorSubsystem->OpenEditorForAsset(Asset);
 
 	Result->SetStringField(TEXT("assetPath"), AssetPath);
 	Result->SetStringField(TEXT("assetClass"), Asset->GetClass()->GetName());
-	Result->SetBoolField(TEXT("success"), true);
+	Result->SetBoolField(TEXT("success"), bOpened);
+	if (!bOpened)
+	{
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to open editor for '%s' (%s)"), *AssetPath, *Asset->GetClass()->GetName()));
+	}
 
 	return MakeShared<FJsonValueObject>(Result);
 }
