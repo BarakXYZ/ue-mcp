@@ -21,12 +21,14 @@ The server creates an `McpServer` instance (from `@modelcontextprotocol/sdk`), r
 | Module | Purpose |
 |--------|---------|
 | `index.ts` | Tool registration, MCP server lifecycle |
-| `bridge.ts` | `EditorBridge` — WebSocket client, JSON-RPC messaging, auto-reconnect |
+| `bridge.ts` | `EditorBridge` (implements `IBridge`) — WebSocket client, JSON-RPC messaging, auto-reconnect |
 | `project.ts` | `ProjectContext` — path resolution, INI parsing, C++ header parsing |
+| `types.ts` | `ToolDef`, `ActionSpec`, `categoryTool()` factory |
+| `schemas.ts` | Shared Zod schemas — `Vec3`, `Rotator`, `Color`, `Quat` |
+| `errors.ts` | `McpError` class with `ErrorCode` enum for structured error handling |
 | `deployer.ts` | First-run deployment: copy plugin, mutate `.uproject` |
 | `editor-control.ts` | Start/stop/restart the Unreal Editor process |
 | `instructions.ts` | AI-facing server instructions (embedded documentation) |
-| `types.ts` | `ToolDef`, `ActionSpec`, `categoryTool()` factory |
 | `github-app.ts` | GitHub App auth for agent feedback issue submission |
 
 ### Tool Registration Pattern
@@ -88,9 +90,10 @@ The plugin runs a raw WebSocket server on a dedicated thread, dispatches incomin
 
 | Class | Purpose |
 |-------|---------|
-| `FBridgeServer` | WebSocket server (raw platform sockets, no third-party libs) |
+| `FBridgeServer` | WebSocket server (raw platform sockets, Windows + Linux/Mac) |
 | `FHandlerRegistry` | Maps method names to C++ handler functions |
 | `FGameThreadExecutor` | Queues tasks to the game thread (required for UE API access) |
+| `HandlerUtils.h` | Shared utilities — `MCPError()`, `MCPSuccess()`, `RequireString()`, `FindClassByShortName()`, `LoadAssetByPath<T>()`, etc. |
 
 ### Handler Categories
 
@@ -127,7 +130,7 @@ The C++ plugin links against a wide range of UE modules:
 - **Core:** Core, CoreUObject, Engine, Json, JsonUtilities, GameplayTags
 - **Editor:** UnrealEd, AssetRegistry, BlueprintGraph, Kismet, KismetCompiler, PropertyEditor
 - **Systems:** Landscape, Niagara, PCG, Sequencer, UMG, GameplayAbilities, NavigationSystem, AIModule
-- **Tools:** LiveCoding, MaterialEditor, EditorScriptingUtilities, DataValidation
+- **Tools:** LiveCoding (Windows only), MaterialEditor, EditorScriptingUtilities, DataValidation
 
 ## Hybrid Architecture
 

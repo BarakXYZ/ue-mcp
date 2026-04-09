@@ -59,6 +59,7 @@ UE-MCP exposes **19 category tools** covering **330+ actions**. Every tool takes
 | `remove_socket` | Remove socket by name | `assetPath`, `socketName` |
 | `list_sockets` | List sockets on a mesh | `assetPath` |
 | `reload_package` | Force reload an asset package from disk | `assetPath` |
+| `export` | Export asset to disk file (Texture2D → PNG, StaticMesh → FBX, etc.) | `assetPath`, `outputPath` |
 
 !!! note
     `search` auto-searches all configured content roots (see [Configuration](configuration.md)).
@@ -379,6 +380,7 @@ UE-MCP exposes **19 category tools** covering **330+ actions**. Every tool takes
 | `create_input_mapping` | Create an Input Mapping Context | `name` |
 | `read_imc` | Read IMC mappings (keys, triggers, modifiers) | `imcPath` |
 | `add_imc_mapping` | Add key mapping to an IMC | `imcPath`, `inputActionPath`, `key` |
+| `set_mapping_modifiers` | Set modifiers/triggers on an IMC mapping (persists on save) | `imcPath`, `mappingIndex?`, `modifiers?`, `triggers?` |
 | `inspect_pie` | Inspect PIE world actors and components at runtime | `actorLabel?` |
 | `get_pie_anim_state` | Read runtime AnimInstance state (montages, state machines) | `actorLabel` |
 | `list_input_assets` | List input-related assets | `directory?` |
