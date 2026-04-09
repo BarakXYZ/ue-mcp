@@ -46,6 +46,9 @@ private:
 	static TSharedPtr<FJsonValue> SetTextureProperties(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ImportTexture(const TSharedPtr<FJsonObject>& Params);
 
+	// Export
+	static TSharedPtr<FJsonValue> ExportAsset(const TSharedPtr<FJsonObject>& Params);
+
 	// Reimport
 	static TSharedPtr<FJsonValue> ReimportAsset(const TSharedPtr<FJsonObject>& Params);
 

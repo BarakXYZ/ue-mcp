@@ -3,6 +3,8 @@
 #include "HandlerUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Exporters/Exporter.h"
+#include "AssetExportTask.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "EditorScriptingUtilities/Public/EditorAssetLibrary.h"
@@ -92,8 +94,9 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("read_datatable"), &ReadDataTable);
 	Registry.RegisterHandler(TEXT("reimport_datatable"), &ReimportDataTable);
 
-	// Generic reimport
+	// Generic reimport / export
 	Registry.RegisterHandler(TEXT("reimport_asset"), &ReimportAsset);
+	Registry.RegisterHandler(TEXT("export_asset"), &ExportAsset);
 }
 
 TSharedPtr<FJsonValue> FAssetHandlers::ListAssets(const TSharedPtr<FJsonObject>& Params)
@@ -1957,5 +1960,52 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReloadPackage(const TSharedPtr<FJsonObjec
 		Result->SetStringField(TEXT("error"), TEXT("Package reload failed"));
 	}
 
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// export_asset — Export an asset to disk (e.g. Texture2D → PNG, StaticMesh → FBX)
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::ExportAsset(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	FString OutputPath;
+	if (auto Err = RequireString(Params, TEXT("outputPath"), OutputPath)) return Err;
+
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		return MCPError(FString::Printf(TEXT("Asset not found: %s"), *AssetPath));
+	}
+
+	// Create parent directory if needed
+	FString OutputDir = FPaths::GetPath(OutputPath);
+	if (!OutputDir.IsEmpty())
+	{
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		PlatformFile.CreateDirectoryTree(*OutputDir);
+	}
+
+	// Use UE's AssetExportTask — same as unreal.AssetExportTask in Python
+	UAssetExportTask* ExportTask = NewObject<UAssetExportTask>();
+	ExportTask->Object = Asset;
+	ExportTask->Filename = OutputPath;
+	ExportTask->bAutomated = true;
+	ExportTask->bPrompt = false;
+	ExportTask->bReplaceIdentical = true;
+
+	bool bSuccess = UExporter::RunAssetExportTask(ExportTask);
+
+	if (!bSuccess)
+	{
+		return MCPError(FString::Printf(TEXT("Export failed for '%s' to '%s'. The asset type may not have a registered exporter."), *AssetPath, *OutputPath));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("outputPath"), OutputPath);
+	Result->SetStringField(TEXT("assetClass"), Asset->GetClass()->GetName());
 	return MCPResult(Result);
 }
