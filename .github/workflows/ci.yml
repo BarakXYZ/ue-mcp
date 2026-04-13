@@ -21,7 +21,7 @@ jobs:
           cache: "npm"
 
       - name: Install
-        run: npm ci
+        run: npm install --ignore-scripts
 
       - name: Build
         run: npx tsc
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install & Build
         if: steps.version.outputs.changed == 'true'
-        run: npm ci && npx tsc
+        run: npm install --ignore-scripts && npx tsc
 
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
