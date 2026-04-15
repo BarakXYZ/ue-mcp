@@ -51,6 +51,10 @@ export function createFlowTool(
       `- run: Execute a flow. Params: flowName, skip?, params?, rollback_on_failure?\n` +
       `- plan: Show execution plan without running. Params: flowName\n` +
       `- list: List available flows\n\n` +
+      `Step types supported in YAML flows: any MCP action (category.action), nested flows (flow:),\n` +
+      `and 'shell' for running shell/exec commands. Example shell step:\n` +
+      `  steps:\n` +
+      `    1: { task: shell, options: { command: "npm run up:build" } }\n\n` +
       `params: Runtime options merged into every step's options (highest priority). ` +
       `Use to override YAML-hardcoded values like levelPath, directory, configuration, etc.\n\n` +
       `rollback_on_failure: When true, rollback records from completed steps are invoked ` +
