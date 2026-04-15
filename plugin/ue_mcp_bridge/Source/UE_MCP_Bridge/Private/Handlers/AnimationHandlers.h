@@ -73,4 +73,9 @@ private:
 	static TSharedPtr<FJsonValue> RemoveVirtualBone(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateAnimComposite(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ListAnimModifiers(const TSharedPtr<FJsonObject>& Params);
+
+	// v0.7.11 — issue fixes
+	static TSharedPtr<FJsonValue> CreateIKRetargeter(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetAnimBlueprintSkeleton(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadBoneTrack(const TSharedPtr<FJsonObject>& Params);
 };

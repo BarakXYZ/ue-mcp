@@ -45,6 +45,7 @@
 
 // IK Rig (#93) — use subdirectory path for UE 5.7
 #include "Rig/IKRigDefinition.h"
+#include "RigEditor/IKRigController.h"
 
 // Control Rig (#11) — ControlRigBlueprint removed in UE 5.7, use reflection
 #include "ControlRig.h"
@@ -107,6 +108,11 @@ void FAnimationHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("remove_virtual_bone"), &RemoveVirtualBone);
 	Registry.RegisterHandler(TEXT("create_anim_composite"), &CreateAnimComposite);
 	Registry.RegisterHandler(TEXT("list_anim_modifiers"), &ListAnimModifiers);
+
+	// v0.7.11 — issue fixes
+	Registry.RegisterHandler(TEXT("create_ik_retargeter"), &CreateIKRetargeter);
+	Registry.RegisterHandler(TEXT("set_anim_blueprint_skeleton"), &SetAnimBlueprintSkeleton);
+	Registry.RegisterHandler(TEXT("read_bone_track"), &ReadBoneTrack);
 }
 
 TSharedPtr<FJsonValue> FAnimationHandlers::ListAnimAssets(const TSharedPtr<FJsonObject>& Params)
@@ -2354,8 +2360,59 @@ TSharedPtr<FJsonValue> FAnimationHandlers::CreateIKRig(const TSharedPtr<FJsonObj
 		return MCPError(TEXT("Failed to create IKRigDefinition asset"));
 	}
 
-	// Set the preview skeletal mesh (this also sets up the skeleton internally)
-	IKRig->SetPreviewMesh(SkelMesh, false);
+	// Prefer IKRigController to atomically configure the rig (#97, #103)
+	int32 ChainsAdded = 0;
+	TArray<FString> ChainErrors;
+	FString RetargetRoot;
+	Params->TryGetStringField(TEXT("retargetRoot"), RetargetRoot);
+
+	if (UIKRigController* Controller = UIKRigController::GetController(IKRig))
+	{
+		Controller->SetSkeletalMesh(SkelMesh);
+
+		if (!RetargetRoot.IsEmpty())
+		{
+			Controller->SetRetargetRoot(FName(*RetargetRoot));
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* ChainsArr = nullptr;
+		if (Params->TryGetArrayField(TEXT("chains"), ChainsArr))
+		{
+			for (const TSharedPtr<FJsonValue>& V : *ChainsArr)
+			{
+				if (!V.IsValid() || V->Type != EJson::Object) continue;
+				auto O = V->AsObject();
+				FString CName = O->GetStringField(TEXT("name"));
+				FString SBone = O->GetStringField(TEXT("startBone"));
+				FString EBone = O->GetStringField(TEXT("endBone"));
+				FString Goal;
+				O->TryGetStringField(TEXT("goal"), Goal);
+				if (CName.IsEmpty() || SBone.IsEmpty() || EBone.IsEmpty())
+				{
+					ChainErrors.Add(FString::Printf(TEXT("Chain missing name/startBone/endBone: %s"), *CName));
+					continue;
+				}
+				FName AddedName = Controller->AddRetargetChain(
+					FName(*CName),
+					FName(*SBone),
+					FName(*EBone),
+					Goal.IsEmpty() ? NAME_None : FName(*Goal));
+				if (AddedName != NAME_None)
+				{
+					ChainsAdded++;
+				}
+				else
+				{
+					ChainErrors.Add(FString::Printf(TEXT("Failed to add chain: %s"), *CName));
+				}
+			}
+		}
+	}
+	else
+	{
+		// Fallback if controller not available: basic preview mesh only
+		IKRig->SetPreviewMesh(SkelMesh, false);
+	}
 
 	IKRig->MarkPackageDirty();
 	UEditorAssetLibrary::SaveAsset(IKRig->GetPathName());
@@ -2365,6 +2422,14 @@ TSharedPtr<FJsonValue> FAnimationHandlers::CreateIKRig(const TSharedPtr<FJsonObj
 	Result->SetStringField(TEXT("assetPath"), IKRig->GetPathName());
 	Result->SetStringField(TEXT("name"), Name);
 	Result->SetStringField(TEXT("skeletalMeshPath"), SkeletalMeshPath);
+	if (!RetargetRoot.IsEmpty()) Result->SetStringField(TEXT("retargetRoot"), RetargetRoot);
+	Result->SetNumberField(TEXT("chainsAdded"), ChainsAdded);
+	if (ChainErrors.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> ErrArr;
+		for (const FString& E : ChainErrors) ErrArr.Add(MakeShared<FJsonValueString>(E));
+		Result->SetArrayField(TEXT("chainErrors"), ErrArr);
+	}
 	MCPSetDeleteAssetRollback(Result, IKRig->GetPathName());
 
 	return MCPResult(Result);
@@ -2682,5 +2747,162 @@ TSharedPtr<FJsonValue> FAnimationHandlers::ListAnimModifiers(const TSharedPtr<FJ
 	TSharedPtr<FJsonObject> Result = MCPSuccess();
 	Result->SetStringField(TEXT("assetPath"), AssetPath);
 	Result->SetArrayField(TEXT("modifiers"), Arr);
+	return MCPResult(Result);
+}
+
+// ─── #98 create_ik_retargeter ────────────────────────────────────────
+TSharedPtr<FJsonValue> FAnimationHandlers::CreateIKRetargeter(const TSharedPtr<FJsonObject>& Params)
+{
+	FString Name;
+	if (auto Err = RequireString(Params, TEXT("name"), Name)) return Err;
+	FString PackagePath = OptionalString(Params, TEXT("packagePath"), TEXT("/Game"));
+	FString SourceRigPath = OptionalString(Params, TEXT("sourceRig"));
+	FString TargetRigPath = OptionalString(Params, TEXT("targetRig"));
+	const FString OnConflict = OptionalString(Params, TEXT("onConflict"), TEXT("skip"));
+
+	if (auto Hit = MCPCheckAssetExists(PackagePath, Name, OnConflict, TEXT("IKRetargeter")))
+	{
+		return Hit;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	UClass* FactoryClass = FindObject<UClass>(nullptr, TEXT("/Script/IKRigEditor.IKRetargetFactory"));
+	if (!FactoryClass)
+	{
+		return MCPError(TEXT("IKRetargetFactory not found — is the IKRig plugin enabled?"));
+	}
+	UClass* RetargeterClass = FindObject<UClass>(nullptr, TEXT("/Script/IKRig.IKRetargeter"));
+	if (!RetargeterClass)
+	{
+		return MCPError(TEXT("IKRetargeter class not found"));
+	}
+	UFactory* Factory = NewObject<UFactory>(GetTransientPackage(), FactoryClass);
+	UObject* NewAsset = AssetTools.CreateAsset(Name, PackagePath, RetargeterClass, Factory);
+	if (!NewAsset)
+	{
+		return MCPError(TEXT("Failed to create IKRetargeter asset"));
+	}
+
+	// Optionally set source / target IK Rigs via reflection
+	auto SetRigProperty = [&](const FString& PropName, const FString& Path) -> FString
+	{
+		if (Path.IsEmpty()) return TEXT("");
+		UObject* Rig = LoadObject<UObject>(nullptr, *Path);
+		if (!Rig) return FString::Printf(TEXT("IKRig not found: %s"), *Path);
+		FProperty* Prop = NewAsset->GetClass()->FindPropertyByName(FName(*PropName));
+		if (!Prop) return FString::Printf(TEXT("Property not found: %s"), *PropName);
+		FString Export = Rig->GetPathName();
+		void* Addr = Prop->ContainerPtrToValuePtr<void>(NewAsset);
+		return Prop->ImportText_Direct(*Export, Addr, NewAsset, PPF_None) ? TEXT("") : FString::Printf(TEXT("Failed to set %s"), *PropName);
+	};
+
+	FString SrcErr = SetRigProperty(TEXT("SourceIKRigAsset"), SourceRigPath);
+	FString TgtErr = SetRigProperty(TEXT("TargetIKRigAsset"), TargetRigPath);
+
+	NewAsset->MarkPackageDirty();
+	UEditorAssetLibrary::SaveAsset(NewAsset->GetPathName());
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("assetPath"), NewAsset->GetPathName());
+	Result->SetStringField(TEXT("name"), Name);
+	if (!SrcErr.IsEmpty()) Result->SetStringField(TEXT("sourceRigWarning"), SrcErr);
+	if (!TgtErr.IsEmpty()) Result->SetStringField(TEXT("targetRigWarning"), TgtErr);
+	MCPSetDeleteAssetRollback(Result, NewAsset->GetPathName());
+	return MCPResult(Result);
+}
+
+// ─── #99 set_anim_blueprint_skeleton ──────────────────────────────────
+TSharedPtr<FJsonValue> FAnimationHandlers::SetAnimBlueprintSkeleton(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireString(Params, TEXT("assetPath"), AssetPath)) return Err;
+	FString SkeletonPath;
+	if (auto Err = RequireString(Params, TEXT("skeletonPath"), SkeletonPath)) return Err;
+
+	UAnimBlueprint* AnimBP = LoadObject<UAnimBlueprint>(nullptr, *AssetPath);
+	if (!AnimBP) return MCPError(FString::Printf(TEXT("AnimBlueprint not found: %s"), *AssetPath));
+	USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *SkeletonPath);
+	if (!Skeleton) return MCPError(FString::Printf(TEXT("Skeleton not found: %s"), *SkeletonPath));
+
+	AnimBP->TargetSkeleton = Skeleton;
+	AnimBP->MarkPackageDirty();
+	FKismetEditorUtilities::CompileBlueprint(AnimBP);
+	UEditorAssetLibrary::SaveAsset(AssetPath);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("skeletonPath"), SkeletonPath);
+	return MCPResult(Result);
+}
+
+// ─── #112 read_bone_track ─────────────────────────────────────────────
+TSharedPtr<FJsonValue> FAnimationHandlers::ReadBoneTrack(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireString(Params, TEXT("assetPath"), AssetPath)) return Err;
+	FString BoneName;
+	if (auto Err = RequireString(Params, TEXT("boneName"), BoneName)) return Err;
+
+	UAnimSequence* Seq = LoadObject<UAnimSequence>(nullptr, *AssetPath);
+	if (!Seq) return MCPError(FString::Printf(TEXT("AnimSequence not found: %s"), *AssetPath));
+
+	const IAnimationDataModel* DataModel = Seq->GetDataModel();
+	if (!DataModel) return MCPError(TEXT("Sequence has no data model"));
+
+	const int32 NumFrames = DataModel->GetNumberOfFrames();
+	const double FrameRate = DataModel->GetFrameRate().AsDecimal();
+
+	// Frame selection
+	TArray<int32> FramesToSample;
+	const TArray<TSharedPtr<FJsonValue>>* FramesArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("frames"), FramesArr))
+	{
+		for (const auto& V : *FramesArr)
+		{
+			double N = 0;
+			if (V.IsValid() && V->TryGetNumber(N))
+			{
+				FramesToSample.Add(FMath::Clamp((int32)N, 0, NumFrames));
+			}
+		}
+	}
+	else
+	{
+		FramesToSample.Add(0);
+		FramesToSample.Add(NumFrames / 2);
+		FramesToSample.Add(NumFrames);
+	}
+
+	FName BoneFName(*BoneName);
+
+	TArray<TSharedPtr<FJsonValue>> SamplesArr;
+	for (int32 Frame : FramesToSample)
+	{
+		FTransform Xf = DataModel->EvaluateBoneTrackTransform(BoneFName, DataModel->GetFrameRate().AsFrameTime((double)Frame / FrameRate), EAnimInterpolationType::Linear);
+		TSharedPtr<FJsonObject> S = MakeShared<FJsonObject>();
+		S->SetNumberField(TEXT("frame"), Frame);
+		FVector Loc = Xf.GetLocation();
+		TSharedPtr<FJsonObject> L = MakeShared<FJsonObject>();
+		L->SetNumberField(TEXT("x"), Loc.X); L->SetNumberField(TEXT("y"), Loc.Y); L->SetNumberField(TEXT("z"), Loc.Z);
+		S->SetObjectField(TEXT("location"), L);
+		FRotator R = Xf.Rotator();
+		TSharedPtr<FJsonObject> RO = MakeShared<FJsonObject>();
+		RO->SetNumberField(TEXT("pitch"), R.Pitch); RO->SetNumberField(TEXT("yaw"), R.Yaw); RO->SetNumberField(TEXT("roll"), R.Roll);
+		S->SetObjectField(TEXT("rotation"), RO);
+		FVector Sc = Xf.GetScale3D();
+		TSharedPtr<FJsonObject> SO = MakeShared<FJsonObject>();
+		SO->SetNumberField(TEXT("x"), Sc.X); SO->SetNumberField(TEXT("y"), Sc.Y); SO->SetNumberField(TEXT("z"), Sc.Z);
+		S->SetObjectField(TEXT("scale"), SO);
+		SamplesArr.Add(MakeShared<FJsonValueObject>(S));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("boneName"), BoneName);
+	Result->SetNumberField(TEXT("numFrames"), NumFrames);
+	Result->SetNumberField(TEXT("frameRate"), FrameRate);
+	Result->SetArrayField(TEXT("samples"), SamplesArr);
 	return MCPResult(Result);
 }
