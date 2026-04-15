@@ -1389,9 +1389,20 @@ TSharedPtr<FJsonValue> FWidgetHandlers::MoveWidget(const TSharedPtr<FJsonObject>
 		return MCPError(FString::Printf(TEXT("New parent '%s' (%s) is not a panel widget"), *NewParentName, *NewParentRaw->GetClass()->GetName()));
 	}
 
-	// Remove from current parent
+	// Idempotency: already child of the target parent?
 	UPanelWidget* OldParent = WidgetToMove->GetParent();
 	FString OldParentName = OldParent ? OldParent->GetName() : TEXT("(root)");
+	if (OldParent == NewParentPanel)
+	{
+		auto Noop = MCPSuccess();
+		MCPSetExisted(Noop);
+		Noop->SetStringField(TEXT("widgetName"), WidgetName);
+		Noop->SetStringField(TEXT("oldParent"), OldParentName);
+		Noop->SetStringField(TEXT("newParent"), NewParentName);
+		return MCPResult(Noop);
+	}
+
+	// Remove from current parent
 	if (OldParent)
 	{
 		OldParent->RemoveChild(WidgetToMove);
@@ -1411,9 +1422,20 @@ TSharedPtr<FJsonValue> FWidgetHandlers::MoveWidget(const TSharedPtr<FJsonObject>
 	UEditorAssetLibrary::SaveAsset(AssetPath);
 
 	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
 	Result->SetStringField(TEXT("widgetName"), WidgetName);
 	Result->SetStringField(TEXT("oldParent"), OldParentName);
 	Result->SetStringField(TEXT("newParent"), NewParentName);
+
+	// Rollback: move back to old parent if it was a panel
+	if (OldParent)
+	{
+		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("assetPath"), AssetPath);
+		Payload->SetStringField(TEXT("widgetName"), WidgetName);
+		Payload->SetStringField(TEXT("newParentWidgetName"), OldParentName);
+		MCPSetRollback(Result, TEXT("move_widget"), Payload);
+	}
 
 	return MCPResult(Result);
 }
