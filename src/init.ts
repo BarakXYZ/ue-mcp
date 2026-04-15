@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as readline from "node:readline";
 import { ProjectContext } from "./project.js";
 import { deploy } from "./deployer.js";
+import { installSkills } from "./skills.js";
 
 /* ------------------------------------------------------------------ */
 /*  Terminal helpers                                                    */
@@ -706,6 +707,15 @@ async function init() {
       installClaudeHooks(claudeSettingsPath);
       ok("Claude Code hooks installed");
       info(claudeSettingsPath);
+    }
+
+    // 9b. Claude Code skills — bundled workflow guides
+    const skillsResult = installSkills(project.projectDir!);
+    if (skillsResult.error) {
+      warn(`Skills install skipped: ${skillsResult.error}`);
+    } else if (skillsResult.installed.length > 0) {
+      ok(`Claude Code skills installed: ${skillsResult.installed.join(", ")}`);
+      info(skillsResult.skillsDir);
     }
   }
 

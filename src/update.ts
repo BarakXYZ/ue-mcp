@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ProjectContext } from "./project.js";
 import { deploy, deploySummary } from "./deployer.js";
+import { installSkills } from "./skills.js";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -60,6 +61,14 @@ async function update() {
 
   if (result.pythonPluginEnabled) ok("Enabled PythonScriptPlugin");
   if (result.cppPluginEnabled) ok("Enabled UE_MCP_Bridge");
+
+  // Refresh Claude Code skills if the project is already using them
+  if (fs.existsSync(path.join(project.projectDir!, ".claude"))) {
+    const skillsResult = installSkills(project.projectDir!);
+    if (!skillsResult.error && skillsResult.installed.length > 0) {
+      ok(`Skills refreshed: ${skillsResult.installed.join(", ")}`);
+    }
+  }
 
   console.log("");
   if (result.cppPluginDeployed) {
