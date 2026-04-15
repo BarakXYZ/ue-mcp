@@ -794,6 +794,19 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ReadBlueprint(const TSharedPtr<FJsonO
 	}
 	Result->SetArrayField(TEXT("components"), ComponentsArray);
 
+	// #116: expose actor tick settings from the CDO
+	if (Blueprint->GeneratedClass)
+	{
+		if (AActor* CDOActor = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject(false)))
+		{
+			TSharedPtr<FJsonObject> TickObj = MakeShared<FJsonObject>();
+			TickObj->SetBoolField(TEXT("bCanEverTick"), CDOActor->PrimaryActorTick.bCanEverTick);
+			TickObj->SetBoolField(TEXT("bStartWithTickEnabled"), CDOActor->PrimaryActorTick.bStartWithTickEnabled);
+			TickObj->SetNumberField(TEXT("TickInterval"), CDOActor->PrimaryActorTick.TickInterval);
+			Result->SetObjectField(TEXT("actorTick"), TickObj);
+		}
+	}
+
 	return MCPResult(Result);
 }
 
@@ -918,6 +931,9 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddComponent(const TSharedPtr<FJsonOb
 		return MCPError(FString::Printf(TEXT("Component class not found: %s"), *ComponentClass));
 	}
 
+	// #115: optional parentComponent — makes this component a child in the SCS hierarchy
+	const FString ParentComponent = OptionalString(Params, TEXT("parentComponent"));
+
 	// Try using SubobjectDataSubsystem (UE5 method)
 	bool bSuccess = false;
 	if (USubobjectDataSubsystem* Subsystem = GEngine->GetEngineSubsystem<USubobjectDataSubsystem>())
@@ -928,6 +944,25 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddComponent(const TSharedPtr<FJsonOb
 		if (Handles.Num() > 0)
 		{
 			FSubobjectDataHandle RootHandle = Handles[0];
+
+			// Resolve parentComponent to its handle if specified
+			if (!ParentComponent.IsEmpty())
+			{
+				for (const FSubobjectDataHandle& H : Handles)
+				{
+					if (const FSubobjectData* Data = H.GetData())
+					{
+						if (UObject* Obj = const_cast<UObject*>(Data->GetObject()))
+						{
+							if (Obj->GetName() == ParentComponent || Obj->GetName().StartsWith(ParentComponent))
+							{
+								RootHandle = H;
+								break;
+							}
+						}
+					}
+				}
+			}
 
 			FAddNewSubobjectParams AddParams;
 			AddParams.ParentHandle = RootHandle;
@@ -2697,6 +2732,36 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetComponentProperty(const TSharedPtr
 	}
 
 	UActorComponent* Template = TargetNode ? TargetNode->ComponentTemplate : nullptr;
+
+	// #100: If not found in this BP's SCS, walk the parent class chain looking for inherited SCS nodes.
+	if (!Template)
+	{
+		UClass* ParentClass = Blueprint->ParentClass;
+		while (ParentClass && !Template)
+		{
+			if (UBlueprint* ParentBP = Cast<UBlueprint>(ParentClass->ClassGeneratedBy))
+			{
+				if (USimpleConstructionScript* ParentSCS = ParentBP->SimpleConstructionScript)
+				{
+					for (USCS_Node* Node : ParentSCS->GetAllNodes())
+					{
+						if (Node && Node->ComponentTemplate &&
+							(Node->GetVariableName().ToString() == ComponentName ||
+							 Node->ComponentTemplate->GetName() == ComponentName))
+						{
+							Template = Node->ComponentTemplate;
+							break;
+						}
+					}
+				}
+				ParentClass = ParentBP->ParentClass;
+			}
+			else
+			{
+				break;
+			}
+		}
+	}
 
 	// If not found in SCS, search inherited components on the CDO
 	if (!Template && Blueprint->GeneratedClass)
