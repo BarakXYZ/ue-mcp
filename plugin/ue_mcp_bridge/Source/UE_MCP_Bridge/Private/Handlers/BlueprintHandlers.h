@@ -63,6 +63,10 @@ private:
 	// v0.7.12 — issue #128 — read single component property (inherited-aware)
 	static TSharedPtr<FJsonValue> GetComponentProperty(const TSharedPtr<FJsonObject>& Params);
 
+	// v0.7.17 issue #130: bulk graph node import via T3D copy/paste
+	static TSharedPtr<FJsonValue> ExportNodesT3D(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ImportNodesT3D(const TSharedPtr<FJsonObject>& Params);
+
 	// Helper functions
 	static class UBlueprint* LoadBlueprint(const FString& AssetPath);
 	static struct FEdGraphPinType MakePinType(const FString& TypeStr);

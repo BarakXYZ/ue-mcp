@@ -58,6 +58,7 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Logging/TokenizedMessage.h"
 #include "Kismet2/CompilerResultsLog.h"
+#include "EdGraphUtilities.h"
 
 void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -111,6 +112,10 @@ void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 
 	// v0.7.12 — issue #128 — single-property read (inherited-aware)
 	Registry.RegisterHandler(TEXT("get_blueprint_component_property"), &GetComponentProperty);
+
+	// v0.7.17 issue #130: bulk graph node import via T3D copy/paste
+	Registry.RegisterHandler(TEXT("export_nodes_t3d"), &ExportNodesT3D);
+	Registry.RegisterHandler(TEXT("import_nodes_t3d"), &ImportNodesT3D);
 }
 
 // ---------------------------------------------------------------------------
@@ -4152,5 +4157,202 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::GetComponentProperty(const TSharedPtr
 	Result->SetStringField(TEXT("value"), ValueStr);
 	Result->SetBoolField(TEXT("inherited"), bIsInherited);
 	Result->SetStringField(TEXT("templateClass"), Template->GetClass()->GetName());
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// v0.7.17 issue #130: bulk graph node import via T3D copy/paste.
+// Mirrors the editor's Ctrl+C / Ctrl+V flow (FBlueprintEditor::CopySelectedNodes
+// / PasteNodesHere) so callers can author whole subgraphs offline and import
+// them atomically rather than building one node at a time.
+// ---------------------------------------------------------------------------
+
+TSharedPtr<FJsonValue> FBlueprintHandlers::ExportNodesT3D(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+
+	FString GraphName = OptionalString(Params, TEXT("graphName"), TEXT("EventGraph"));
+
+	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
+	if (!Blueprint)
+	{
+		return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *AssetPath));
+	}
+
+	UEdGraph* TargetGraph = FindGraph(Blueprint, GraphName);
+	if (!TargetGraph)
+	{
+		return MCPError(FString::Printf(TEXT("Graph not found: %s"), *GraphName));
+	}
+
+	// Collect nodes to export. If nodeIds is omitted/empty, export all nodes
+	// in the graph (whole-subgraph round-trip).
+	TArray<UEdGraphNode*> SelectedNodes;
+	const TArray<TSharedPtr<FJsonValue>>* IdsArrayPtr = nullptr;
+	if (Params.IsValid() && Params->TryGetArrayField(TEXT("nodeIds"), IdsArrayPtr) && IdsArrayPtr && IdsArrayPtr->Num() > 0)
+	{
+		for (const TSharedPtr<FJsonValue>& Val : *IdsArrayPtr)
+		{
+			if (!Val.IsValid()) continue;
+			const FString NodeId = Val->AsString();
+			if (NodeId.IsEmpty()) continue;
+			UEdGraphNode* Node = FindNodeByGuidOrName(TargetGraph, NodeId);
+			if (!Node)
+			{
+				return MCPError(FString::Printf(TEXT("Node not found: %s"), *NodeId));
+			}
+			SelectedNodes.AddUnique(Node);
+		}
+	}
+	else
+	{
+		for (UEdGraphNode* Node : TargetGraph->Nodes)
+		{
+			if (Node) SelectedNodes.Add(Node);
+		}
+	}
+
+	if (SelectedNodes.Num() == 0)
+	{
+		return MCPError(TEXT("No nodes to export"));
+	}
+
+	// FEdGraphUtilities::ExportNodesToText only writes nodes that are flagged
+	// CanDuplicateNode == true; mirrors how the editor's Copy filters root
+	// entry/return nodes. Pre-filter so the count we report matches reality.
+	TSet<UObject*> NodeSet;
+	int32 SkippedCount = 0;
+	for (UEdGraphNode* Node : SelectedNodes)
+	{
+		if (Node && Node->CanDuplicateNode())
+		{
+			Node->PrepareForCopying();
+			NodeSet.Add(Node);
+		}
+		else
+		{
+			++SkippedCount;
+		}
+	}
+
+	if (NodeSet.Num() == 0)
+	{
+		return MCPError(TEXT("No nodes are duplicatable (entry/return nodes cannot be exported)"));
+	}
+
+	FString ExportedText;
+	FEdGraphUtilities::ExportNodesToText(NodeSet, ExportedText);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("graphName"), GraphName);
+	Result->SetStringField(TEXT("t3d"), ExportedText);
+	Result->SetNumberField(TEXT("count"), NodeSet.Num());
+	Result->SetNumberField(TEXT("skipped"), SkippedCount);
+	return MCPResult(Result);
+}
+
+TSharedPtr<FJsonValue> FBlueprintHandlers::ImportNodesT3D(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+
+	FString GraphName = OptionalString(Params, TEXT("graphName"), TEXT("EventGraph"));
+
+	FString T3D;
+	if (auto Err = RequireStringAlt(Params, TEXT("t3d"), TEXT("text"), T3D)) return Err;
+	if (T3D.IsEmpty())
+	{
+		return MCPError(TEXT("t3d text is empty"));
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
+	if (!Blueprint)
+	{
+		return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *AssetPath));
+	}
+
+	UEdGraph* TargetGraph = FindGraph(Blueprint, GraphName);
+	if (!TargetGraph)
+	{
+		return MCPError(FString::Printf(TEXT("Graph not found: %s"), *GraphName));
+	}
+
+	if (!FEdGraphUtilities::CanImportNodesFromText(TargetGraph, T3D))
+	{
+		return MCPError(TEXT("T3D text is not importable into this graph (schema mismatch or malformed)"));
+	}
+
+	TSet<UEdGraphNode*> PastedNodes;
+	FEdGraphUtilities::ImportNodesFromText(TargetGraph, T3D, /*out*/ PastedNodes);
+
+	if (PastedNodes.Num() == 0)
+	{
+		return MCPError(TEXT("ImportNodesFromText produced no nodes"));
+	}
+
+	// Re-center pasted nodes around an explicit (posX, posY) anchor when given,
+	// otherwise keep their exported positions. Mirrors PasteNodesHere.
+	const bool bRecenter = Params.IsValid() && Params->HasField(TEXT("posX")) && Params->HasField(TEXT("posY"));
+	double AnchorX = 0.0, AnchorY = 0.0;
+	if (bRecenter)
+	{
+		Params->TryGetNumberField(TEXT("posX"), AnchorX);
+		Params->TryGetNumberField(TEXT("posY"), AnchorY);
+
+		double AvgX = 0.0, AvgY = 0.0;
+		for (UEdGraphNode* Node : PastedNodes)
+		{
+			AvgX += Node->NodePosX;
+			AvgY += Node->NodePosY;
+		}
+		AvgX /= PastedNodes.Num();
+		AvgY /= PastedNodes.Num();
+
+		for (UEdGraphNode* Node : PastedNodes)
+		{
+			Node->NodePosX = (Node->NodePosX - AvgX) + AnchorX;
+			Node->NodePosY = (Node->NodePosY - AvgY) + AnchorY;
+		}
+	}
+
+	// Fresh GUIDs so the pasted nodes don't collide with the originals when
+	// pasting back into the same graph (e.g. round-trip duplicate).
+	TArray<TSharedPtr<FJsonValue>> NodeIds;
+	for (UEdGraphNode* Node : PastedNodes)
+	{
+		Node->CreateNewGuid();
+		Node->PostPasteNode();
+		if (UK2Node* K2 = Cast<UK2Node>(Node))
+		{
+			K2->ReconstructNode();
+		}
+		NodeIds.Add(MakeShared<FJsonValueString>(Node->NodeGuid.ToString()));
+	}
+
+	TargetGraph->NotifyGraphChanged();
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	// Compile and save
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+	UPackage* Package = Blueprint->GetOutermost();
+	if (Package)
+	{
+		Package->MarkPackageDirty();
+		FString PackageFileName = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+		FSavePackageArgs SaveArgs;
+		SaveArgs.TopLevelFlags = RF_Standalone;
+		UPackage::SavePackage(Package, nullptr, *PackageFileName, SaveArgs);
+	}
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("graphName"), GraphName);
+	Result->SetArrayField(TEXT("nodeIds"), NodeIds);
+	Result->SetNumberField(TEXT("count"), NodeIds.Num());
+	// No rollback: delete_node only deletes one node at a time and the bulk
+	// import has no natural key. Caller must clean up by node id if needed.
 	return MCPResult(Result);
 }

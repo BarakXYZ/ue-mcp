@@ -112,6 +112,8 @@ UE-MCP exposes **19 category tools** covering **360+ actions**. Every tool takes
 | `add_local_variable` | Add a function-scope local variable to a function's entry node. | `assetPath`, `functionName`, `name`, `varType?` |
 | `list_local_variables` | List local variables for a function. | `assetPath`, `functionName` |
 | `validate` | Compile without saving and collect compiler diagnostics (errors + warnings). | `assetPath` |
+| `export_nodes_t3d` | Export graph nodes as T3D text (Ctrl+C equivalent). Omit `nodeIds` to export the whole graph. Pair with `import_nodes_t3d` for bulk authoring (#130). | `assetPath`, `graphName?`, `nodeIds?` |
+| `import_nodes_t3d` | Paste a T3D node blob into a graph (Ctrl+V equivalent). Returns new node guids. Optional `posX`/`posY` re-centers pasted nodes (#130). | `assetPath`, `graphName?`, `t3d`, `posX?`, `posY?` |
 
 !!! tip "Agent-friendly introspection"
     Prefer `read_graph_summary` over `read_graph` for LLM use: the summary strips pin defaults, positions, and comments, keeping only what's needed to reason about structure. Use `get_execution_flow` to follow event-driven logic and `get_dependencies` (reverse) before renaming/deleting shared assets.

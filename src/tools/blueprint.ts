@@ -45,6 +45,8 @@ export const blueprintTool: ToolDef = categoryTool(
     read_node_property: bp("Read a node pin default OR a reflected node property for verification (#102). Params: assetPath, graphName?, nodeName, propertyName", "read_node_property", (p) => ({ path: p.assetPath, graphName: p.graphName, nodeName: p.nodeName, propertyName: p.propertyName })),
     reparent_component: bp("Reparent an SCS component under a new parent (#115). Params: assetPath, componentName, newParent", "reparent_component", (p) => ({ path: p.assetPath, componentName: p.componentName, newParent: p.newParent })),
     set_actor_tick_settings: bp("Set actor CDO tick settings (#116). Params: assetPath, bCanEverTick?, bStartWithTickEnabled?, TickInterval?", "set_actor_tick_settings", (p) => ({ path: p.assetPath, bCanEverTick: p.bCanEverTick, bStartWithTickEnabled: p.bStartWithTickEnabled, TickInterval: p.TickInterval })),
+    export_nodes_t3d:  bp("Export graph nodes as T3D text (Ctrl+C equivalent) for bulk round-trip (#130). Params: assetPath, graphName?, nodeIds? (omit = whole graph)", "export_nodes_t3d", (p) => ({ path: p.assetPath, graphName: p.graphName ?? "EventGraph", nodeIds: p.nodeIds })),
+    import_nodes_t3d:  bp("Paste a T3D node blob into a graph (Ctrl+V equivalent) for bulk authoring (#130). Params: assetPath, graphName?, t3d, posX?, posY?", "import_nodes_t3d", (p) => ({ path: p.assetPath, graphName: p.graphName ?? "EventGraph", t3d: p.t3d, posX: p.posX, posY: p.posY })),
   },
   undefined,
   {
@@ -75,5 +77,9 @@ export const blueprintTool: ToolDef = categoryTool(
     entryPoint: z.string().optional().describe("Event/function name to start exec-flow trace"),
     reverse: z.boolean().optional().describe("get_dependencies: true → referencers of this asset"),
     sourcePath: z.string().optional(), destinationPath: z.string().optional(),
+    nodeIds: z.array(z.string()).optional().describe("Node guids/names to export (omit = whole graph)"),
+    t3d: z.string().optional().describe("T3D blob from export_nodes_t3d (or copied from the BP graph editor)"),
+    posX: z.number().optional().describe("Re-center pasted nodes around this X (with posY)"),
+    posY: z.number().optional().describe("Re-center pasted nodes around this Y (with posX)"),
   },
 );

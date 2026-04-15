@@ -121,6 +121,30 @@ describe("blueprint — full lifecycle", () => {
     expect(r.ok, r.error).toBe(true);
   });
 
+  it("export_nodes_t3d / import_nodes_t3d round-trip (#130)", async () => {
+    const exportRes = await callBridge(bridge, "export_nodes_t3d", {
+      path: bpPath, graphName: "EventGraph",
+    });
+    expect(exportRes.ok, exportRes.error).toBe(true);
+    const t3d = (exportRes.result as { t3d: string }).t3d;
+    expect(typeof t3d).toBe("string");
+    expect(t3d.length).toBeGreaterThan(0);
+
+    const importRes = await callBridge(bridge, "import_nodes_t3d", {
+      path: bpPath, graphName: "EventGraph", t3d, posX: 800, posY: 200,
+    });
+    expect(importRes.ok, importRes.error).toBe(true);
+    const ids = (importRes.result as { nodeIds: string[]; count: number }).nodeIds;
+    expect(Array.isArray(ids)).toBe(true);
+    expect(ids.length).toBeGreaterThan(0);
+
+    for (const nodeId of ids) {
+      await callBridge(bridge, "delete_node", {
+        path: bpPath, graphName: "EventGraph", nodeName: nodeId,
+      }).catch(() => {});
+    }
+  });
+
   it("rename_function", async () => {
     const r = await callBridge(bridge, "rename_function", {
       path: bpPath, oldName: "TakeDamage", newName: "ApplyDamage",
