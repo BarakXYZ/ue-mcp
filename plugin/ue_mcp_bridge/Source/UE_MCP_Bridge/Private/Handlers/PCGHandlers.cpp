@@ -216,6 +216,10 @@ TSharedPtr<FJsonValue> FPCGHandlers::AddPCGNode(const TSharedPtr<FJsonObject>& P
 		NewNode->PositionY = (int32)PosY;
 	}
 
+	// Notify open editor tabs and mark package dirty so Ctrl+S / autosave picks it up (#108)
+	Graph->NotifyGraphChanged(EPCGChangeType::Structural);
+	if (UPackage* Pkg = Graph->GetOutermost()) { Pkg->MarkPackageDirty(); }
+
 	// Save the graph asset
 	UEditorAssetLibrary::SaveAsset(AssetPath);
 
@@ -349,6 +353,10 @@ TSharedPtr<FJsonValue> FPCGHandlers::ConnectPCGNodes(const TSharedPtr<FJsonObjec
 		return MCPError(TEXT("Failed to connect pins - connection may already exist or be incompatible"));
 	}
 
+	// Notify editor and mark dirty (#108)
+	Graph->NotifyGraphChanged(EPCGChangeType::Edge);
+	if (UPackage* Pkg = Graph->GetOutermost()) { Pkg->MarkPackageDirty(); }
+
 	// Save the graph asset
 	UEditorAssetLibrary::SaveAsset(AssetPath);
 
@@ -399,6 +407,10 @@ TSharedPtr<FJsonValue> FPCGHandlers::RemovePCGNode(const TSharedPtr<FJsonObject>
 
 	// Remove the node from the graph
 	Graph->RemoveNode(FoundNode);
+
+	// Notify editor and mark dirty (#108)
+	Graph->NotifyGraphChanged(EPCGChangeType::Structural);
+	if (UPackage* Pkg = Graph->GetOutermost()) { Pkg->MarkPackageDirty(); }
 
 	// Save the graph asset
 	UEditorAssetLibrary::SaveAsset(AssetPath);
@@ -523,6 +535,10 @@ TSharedPtr<FJsonValue> FPCGHandlers::SetPCGNodeSettings(const TSharedPtr<FJsonOb
 			SetResults->SetStringField(Prop.Key, Prop.Value);
 		}
 	}
+
+	// Notify editor and mark dirty (#108)
+	Graph->NotifyGraphChanged(EPCGChangeType::Node | EPCGChangeType::Settings);
+	if (UPackage* Pkg = Graph->GetOutermost()) { Pkg->MarkPackageDirty(); }
 
 	// Save the graph asset
 	UEditorAssetLibrary::SaveAsset(AssetPath);
