@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getBridge, disconnectBridge, callBridge, resultArray } from "../setup.js";
+import { getBridge, disconnectBridge, callBridge, resultArray, TEST_PREFIX } from "../setup.js";
 import type { EditorBridge } from "../../src/bridge.js";
 
 let bridge: EditorBridge;
 
 beforeAll(async () => { bridge = await getBridge(); });
-afterAll(() => disconnectBridge());
+afterAll(async () => {
+  await callBridge(bridge, "delete_asset", { assetPath: `${TEST_PREFIX}/PSDB_SmokeTest` });
+  disconnectBridge();
+});
 
 describe("animation — read / list", () => {
   it("list_anim_assets", async () => {
@@ -49,5 +52,55 @@ describe("animation — read specific (dynamic)", () => {
     if (!skelMeshPath) skip();
     const r = await callBridge(bridge, "get_physics_asset_info", { assetPath: skelMeshPath });
     expect(r.ok, r.error).toBe(true);
+  });
+});
+
+describe("animation — v0.7.15: PoseSearch (motion matching)", () => {
+  const DB_PATH = `${TEST_PREFIX}/PSDB_SmokeTest`;
+
+  it("create_pose_search_database", async () => {
+    const r = await callBridge(bridge, "create_pose_search_database", {
+      name: "PSDB_SmokeTest",
+      packagePath: TEST_PREFIX,
+    });
+    expect(r.ok, r.error).toBe(true);
+  });
+
+  it("read_pose_search_database returns schema + counts", async () => {
+    const r = await callBridge(bridge, "read_pose_search_database", { assetPath: DB_PATH });
+    expect(r.ok, r.error).toBe(true);
+    const res = r.result as Record<string, unknown>;
+    expect(typeof res.animationAssetCount).toBe("number");
+  });
+
+  it("set_pose_search_schema reports missing schema cleanly", async () => {
+    const r = await callBridge(bridge, "set_pose_search_schema", {
+      assetPath: DB_PATH,
+      schemaPath: "/Game/Nonexistent/Schema",
+    });
+    expect(r.ok, r.error).toBe(true);
+    const res = r.result as Record<string, unknown>;
+    expect(res.success).toBe(false);
+    expect(typeof res.error).toBe("string");
+  });
+
+  it("add_pose_search_sequence reports missing asset cleanly", async () => {
+    const r = await callBridge(bridge, "add_pose_search_sequence", {
+      assetPath: DB_PATH,
+      sequencePath: "/Game/Nonexistent/Sequence",
+    });
+    expect(r.ok, r.error).toBe(true);
+    const res = r.result as Record<string, unknown>;
+    expect(res.success).toBe(false);
+    expect(typeof res.error).toBe("string");
+  });
+
+  it("build_pose_search_index reports missing schema cleanly", async () => {
+    const r = await callBridge(bridge, "build_pose_search_index", { assetPath: DB_PATH });
+    expect(r.ok, r.error).toBe(true);
+    const res = r.result as Record<string, unknown>;
+    // Empty DB with no schema — handler must return success=false, not crash
+    expect(res.success).toBe(false);
+    expect(typeof res.error).toBe("string");
   });
 });

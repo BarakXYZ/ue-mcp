@@ -58,6 +58,10 @@
 		{
 			"Name": "ControlRig",
 			"Enabled": true
+		},
+		{
+			"Name": "PoseSearch",
+			"Enabled": true
 		}
 	]
 }

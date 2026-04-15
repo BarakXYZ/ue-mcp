@@ -45,6 +45,11 @@ export const animationTool: ToolDef = categoryTool(
     create_ik_retargeter: bp("Create IKRetargeter asset. Params: name, packagePath?, sourceRig?, targetRig?", "create_ik_retargeter"),
     set_anim_blueprint_skeleton: bp("Set target skeleton on AnimBP. Params: assetPath, skeletonPath", "set_anim_blueprint_skeleton"),
     read_bone_track:    bp("Read bone transform samples from AnimSequence. Params: assetPath, boneName, frames?: [int]", "read_bone_track"),
+    create_pose_search_database: bp("Create a PoseSearchDatabase asset (motion matching). Params: name, packagePath?, schemaPath?", "create_pose_search_database"),
+    set_pose_search_schema:      bp("Set the Schema on an existing PoseSearchDatabase. Params: assetPath, schemaPath", "set_pose_search_schema", (p) => ({ assetPath: p.assetPath, schemaPath: p.schemaPath })),
+    add_pose_search_sequence:    bp("Append an AnimSequence/AnimComposite/AnimMontage/BlendSpace to a PoseSearchDatabase. Params: assetPath, sequencePath", "add_pose_search_sequence", (p) => ({ assetPath: p.assetPath, sequencePath: p.sequencePath })),
+    build_pose_search_index:     bp("Build (or rebuild) the search index. Params: assetPath, wait? (default true)", "build_pose_search_index", (p) => ({ assetPath: p.assetPath, wait: p.wait })),
+    read_pose_search_database:   bp("Inspect a PoseSearchDatabase: schema, animation entries, cost biases, tags. Params: assetPath", "read_pose_search_database", (p) => ({ assetPath: p.assetPath })),
   },
   undefined,
   {
@@ -113,5 +118,9 @@ export const animationTool: ToolDef = categoryTool(
       rotation: Quat.optional(),
       scale: Vec3.optional(),
     })).optional(),
+    // PoseSearch (v0.7.15)
+    schemaPath: z.string().optional().describe("Path to a UPoseSearchSchema asset"),
+    sequencePath: z.string().optional().describe("Animation asset path to add to a PoseSearchDatabase"),
+    wait: z.boolean().optional().describe("build_pose_search_index: block until the async build resolves (default true)"),
   },
 );

@@ -78,4 +78,11 @@ private:
 	static TSharedPtr<FJsonValue> CreateIKRetargeter(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetAnimBlueprintSkeleton(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ReadBoneTrack(const TSharedPtr<FJsonObject>& Params);
+
+	// v0.7.15 — PoseSearch (motion matching)
+	static TSharedPtr<FJsonValue> CreatePoseSearchDatabase(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetPoseSearchSchema(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddPoseSearchSequence(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> BuildPoseSearchIndex(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadPoseSearchDatabase(const TSharedPtr<FJsonObject>& Params);
 };

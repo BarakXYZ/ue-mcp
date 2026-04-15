@@ -11,6 +11,9 @@
 #include "Animation/AnimBlueprint.h"
 #include "Animation/BlendSpace.h"
 #include "Animation/AnimComposite.h"
+#include "PoseSearch/PoseSearchDatabase.h"
+#include "PoseSearch/PoseSearchSchema.h"
+#include "PoseSearch/PoseSearchDerivedData.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "PhysicsEngine/PhysicsAsset.h"
@@ -113,6 +116,13 @@ void FAnimationHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("create_ik_retargeter"), &CreateIKRetargeter);
 	Registry.RegisterHandler(TEXT("set_anim_blueprint_skeleton"), &SetAnimBlueprintSkeleton);
 	Registry.RegisterHandler(TEXT("read_bone_track"), &ReadBoneTrack);
+
+	// v0.7.15 — PoseSearch (motion matching)
+	Registry.RegisterHandler(TEXT("create_pose_search_database"), &CreatePoseSearchDatabase);
+	Registry.RegisterHandler(TEXT("set_pose_search_schema"), &SetPoseSearchSchema);
+	Registry.RegisterHandler(TEXT("add_pose_search_sequence"), &AddPoseSearchSequence);
+	Registry.RegisterHandler(TEXT("build_pose_search_index"), &BuildPoseSearchIndex);
+	Registry.RegisterHandler(TEXT("read_pose_search_database"), &ReadPoseSearchDatabase);
 }
 
 TSharedPtr<FJsonValue> FAnimationHandlers::ListAnimAssets(const TSharedPtr<FJsonObject>& Params)
@@ -2905,4 +2915,219 @@ TSharedPtr<FJsonValue> FAnimationHandlers::ReadBoneTrack(const TSharedPtr<FJsonO
 	Result->SetNumberField(TEXT("frameRate"), FrameRate);
 	Result->SetArrayField(TEXT("samples"), SamplesArr);
 	return MCPResult(Result);
+}
+
+// ===========================================================================
+// v0.7.15 — PoseSearch (motion matching)
+// ===========================================================================
+
+TSharedPtr<FJsonValue> FAnimationHandlers::CreatePoseSearchDatabase(const TSharedPtr<FJsonObject>& Params)
+{
+	FString Name;
+	if (auto Err = RequireString(Params, TEXT("name"), Name)) return Err;
+	const FString PackagePath = OptionalString(Params, TEXT("packagePath"), TEXT("/Game/MotionMatching"));
+	const FString SchemaPath = OptionalString(Params, TEXT("schemaPath"), TEXT(""));
+
+	if (auto Hit = MCPCheckAssetExists(PackagePath, Name, OptionalString(Params, TEXT("onConflict"), TEXT("skip")), TEXT("PoseSearchDatabase")))
+	{
+		return Hit;
+	}
+
+	const FString PkgName = PackagePath + TEXT("/") + Name;
+	UPackage* Package = CreatePackage(*PkgName);
+	UPoseSearchDatabase* Database = NewObject<UPoseSearchDatabase>(Package, UPoseSearchDatabase::StaticClass(), *Name, RF_Public | RF_Standalone);
+	if (!Database) return MCPError(TEXT("Failed to create PoseSearchDatabase"));
+
+	if (!SchemaPath.IsEmpty())
+	{
+		UPoseSearchSchema* Schema = Cast<UPoseSearchSchema>(UEditorAssetLibrary::LoadAsset(SchemaPath));
+		if (!Schema) return MCPError(FString::Printf(TEXT("Schema not found: %s"), *SchemaPath));
+		Database->Schema = Schema;
+	}
+
+	FAssetRegistryModule::AssetCreated(Database);
+	Database->MarkPackageDirty();
+	Package->SetDirtyFlag(true);
+	UEditorAssetLibrary::SaveLoadedAsset(Database);
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	MCPSetCreated(Res);
+	Res->SetStringField(TEXT("path"), Database->GetPathName());
+	Res->SetStringField(TEXT("name"), Name);
+	Res->SetStringField(TEXT("packagePath"), PackagePath);
+	Res->SetStringField(TEXT("schemaPath"), SchemaPath);
+	MCPSetDeleteAssetRollback(Res, Database->GetPathName());
+	return MCPResult(Res);
+}
+
+TSharedPtr<FJsonValue> FAnimationHandlers::SetPoseSearchSchema(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+	FString SchemaPath;
+	if (auto Err = RequireString(Params, TEXT("schemaPath"), SchemaPath)) return Err;
+
+	UPoseSearchDatabase* Database = Cast<UPoseSearchDatabase>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!Database) return MCPError(FString::Printf(TEXT("PoseSearchDatabase not found: %s"), *AssetPath));
+
+	UPoseSearchSchema* Schema = Cast<UPoseSearchSchema>(UEditorAssetLibrary::LoadAsset(SchemaPath));
+	if (!Schema) return MCPError(FString::Printf(TEXT("Schema not found: %s"), *SchemaPath));
+
+	const FString PrevSchemaPath = Database->Schema ? Database->Schema->GetPathName() : FString();
+	Database->Modify();
+	Database->Schema = Schema;
+	Database->PostEditChange();
+	UEditorAssetLibrary::SaveLoadedAsset(Database);
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	MCPSetUpdated(Res);
+	Res->SetStringField(TEXT("path"), AssetPath);
+	Res->SetStringField(TEXT("schemaPath"), SchemaPath);
+	Res->SetStringField(TEXT("previousSchemaPath"), PrevSchemaPath);
+
+	TSharedPtr<FJsonObject> RbPayload = MakeShared<FJsonObject>();
+	RbPayload->SetStringField(TEXT("assetPath"), AssetPath);
+	RbPayload->SetStringField(TEXT("schemaPath"), PrevSchemaPath);
+	if (!PrevSchemaPath.IsEmpty()) MCPSetRollback(Res, TEXT("set_pose_search_schema"), RbPayload);
+	return MCPResult(Res);
+}
+
+TSharedPtr<FJsonValue> FAnimationHandlers::AddPoseSearchSequence(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+	FString SequencePath;
+	if (auto Err = RequireString(Params, TEXT("sequencePath"), SequencePath)) return Err;
+
+	UPoseSearchDatabase* Database = Cast<UPoseSearchDatabase>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!Database) return MCPError(FString::Printf(TEXT("PoseSearchDatabase not found: %s"), *AssetPath));
+
+	UObject* AnimAsset = UEditorAssetLibrary::LoadAsset(SequencePath);
+	if (!AnimAsset) return MCPError(FString::Printf(TEXT("Animation asset not found: %s"), *SequencePath));
+
+	// PoseSearch accepts AnimSequence, AnimComposite, AnimMontage, BlendSpace, MultiAnimAsset.
+	if (!AnimAsset->IsA<UAnimSequenceBase>() && !AnimAsset->IsA<UBlendSpace>())
+	{
+		return MCPError(FString::Printf(TEXT("Animation asset type not supported by PoseSearch: %s"), *AnimAsset->GetClass()->GetName()));
+	}
+
+	const int32 PrevCount = Database->GetNumAnimationAssets();
+	FPoseSearchDatabaseAnimationAsset NewEntry;
+	NewEntry.AnimAsset = AnimAsset;
+	Database->Modify();
+	Database->AddAnimationAsset(NewEntry);
+	Database->PostEditChange();
+	UEditorAssetLibrary::SaveLoadedAsset(Database);
+
+	const int32 NewCount = Database->GetNumAnimationAssets();
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	MCPSetUpdated(Res);
+	Res->SetStringField(TEXT("path"), AssetPath);
+	Res->SetStringField(TEXT("sequencePath"), SequencePath);
+	Res->SetNumberField(TEXT("previousCount"), PrevCount);
+	Res->SetNumberField(TEXT("newCount"), NewCount);
+	Res->SetNumberField(TEXT("addedIndex"), NewCount - 1);
+	return MCPResult(Res);
+}
+
+TSharedPtr<FJsonValue> FAnimationHandlers::BuildPoseSearchIndex(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+	const bool bWait = OptionalBool(Params, TEXT("wait"), true);
+
+	UPoseSearchDatabase* Database = Cast<UPoseSearchDatabase>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!Database) return MCPError(FString::Printf(TEXT("PoseSearchDatabase not found: %s"), *AssetPath));
+	if (!Database->Schema) return MCPError(TEXT("Database has no Schema set — call set_pose_search_schema first"));
+	if (Database->GetNumAnimationAssets() == 0) return MCPError(TEXT("Database has no animation assets — call add_pose_search_sequence first"));
+
+	using namespace UE::PoseSearch;
+	const ERequestAsyncBuildFlag Flag = bWait
+		? (ERequestAsyncBuildFlag::NewRequest | ERequestAsyncBuildFlag::WaitForCompletion)
+		: ERequestAsyncBuildFlag::NewRequest;
+	const EAsyncBuildIndexResult Result = FAsyncPoseSearchDatabasesManagement::RequestAsyncBuildIndex(Database, Flag);
+
+	FString ResultStr;
+	bool bSuccess = false;
+	switch (Result)
+	{
+		case EAsyncBuildIndexResult::Success:    ResultStr = TEXT("Success"); bSuccess = true; break;
+		case EAsyncBuildIndexResult::InProgress: ResultStr = TEXT("InProgress"); bSuccess = true; break;
+		case EAsyncBuildIndexResult::Failed:     ResultStr = TEXT("Failed"); break;
+	}
+
+	UEditorAssetLibrary::SaveLoadedAsset(Database);
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	if (bSuccess) MCPSetUpdated(Res);
+	Res->SetBoolField(TEXT("success"), bSuccess);
+	Res->SetStringField(TEXT("path"), AssetPath);
+	Res->SetStringField(TEXT("result"), ResultStr);
+	Res->SetBoolField(TEXT("waitedForCompletion"), bWait);
+	Res->SetNumberField(TEXT("animationAssetCount"), Database->GetNumAnimationAssets());
+	return MCPResult(Res);
+}
+
+TSharedPtr<FJsonValue> FAnimationHandlers::ReadPoseSearchDatabase(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+
+	UPoseSearchDatabase* Database = Cast<UPoseSearchDatabase>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!Database) return MCPError(FString::Printf(TEXT("PoseSearchDatabase not found: %s"), *AssetPath));
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	Res->SetStringField(TEXT("path"), AssetPath);
+	Res->SetStringField(TEXT("name"), Database->GetName());
+	Res->SetStringField(TEXT("schemaPath"), Database->Schema ? Database->Schema->GetPathName() : FString());
+	Res->SetNumberField(TEXT("continuingPoseCostBias"), Database->ContinuingPoseCostBias);
+	Res->SetNumberField(TEXT("baseCostBias"), Database->BaseCostBias);
+	Res->SetNumberField(TEXT("loopingCostBias"), Database->LoopingCostBias);
+	Res->SetNumberField(TEXT("kdTreeQueryNumNeighbors"), Database->KDTreeQueryNumNeighbors);
+
+	const int32 AssetCount = Database->GetNumAnimationAssets();
+	Res->SetNumberField(TEXT("animationAssetCount"), AssetCount);
+
+	TArray<TSharedPtr<FJsonValue>> Animations;
+	for (int32 i = 0; i < AssetCount; ++i)
+	{
+		const FPoseSearchDatabaseAnimationAsset* Entry = Database->GetDatabaseAnimationAsset(i);
+		if (!Entry) continue;
+		TSharedPtr<FJsonObject> A = MakeShared<FJsonObject>();
+		A->SetNumberField(TEXT("index"), i);
+		A->SetStringField(TEXT("assetPath"), Entry->AnimAsset ? Entry->AnimAsset->GetPathName() : FString());
+		A->SetStringField(TEXT("assetClass"), Entry->AnimAsset ? Entry->AnimAsset->GetClass()->GetName() : FString());
+		A->SetBoolField(TEXT("isLooping"), Entry->IsLooping());
+		A->SetBoolField(TEXT("isRootMotionEnabled"), Entry->IsRootMotionEnabled());
+		Animations.Add(MakeShared<FJsonValueObject>(A));
+	}
+	Res->SetArrayField(TEXT("animationAssets"), Animations);
+
+	TArray<TSharedPtr<FJsonValue>> Tags;
+	for (const FName& T : Database->Tags) Tags.Add(MakeShared<FJsonValueString>(T.ToString()));
+	Res->SetArrayField(TEXT("tags"), Tags);
+
+	if (Database->Schema)
+	{
+		TSharedPtr<FJsonObject> SchemaObj = MakeShared<FJsonObject>();
+		SchemaObj->SetStringField(TEXT("path"), Database->Schema->GetPathName());
+		SchemaObj->SetNumberField(TEXT("sampleRate"), Database->Schema->SampleRate);
+		// Channels/Skeletons are private members; use the public GetChannels() accessor
+		// (returns the finalized channel set) and fall back to reflection for Skeletons.
+		SchemaObj->SetNumberField(TEXT("channelCount"), Database->Schema->GetChannels().Num());
+		int32 SkeletonCount = 0;
+		if (FProperty* SkelProp = Database->Schema->GetClass()->FindPropertyByName(TEXT("Skeletons")))
+		{
+			if (FArrayProperty* ArrProp = CastField<FArrayProperty>(SkelProp))
+			{
+				FScriptArrayHelper Helper(ArrProp, ArrProp->ContainerPtrToValuePtr<void>(Database->Schema));
+				SkeletonCount = Helper.Num();
+			}
+		}
+		SchemaObj->SetNumberField(TEXT("skeletonCount"), SkeletonCount);
+		Res->SetObjectField(TEXT("schema"), SchemaObj);
+	}
+
+	return MCPResult(Res);
 }
