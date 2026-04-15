@@ -547,6 +547,30 @@ TSharedPtr<FJsonValue> FWidgetHandlers::GetWidgetProperties(const TSharedPtr<FJs
 		PropsObj->SetStringField(TEXT("parentClass"), ParentWidget->GetClass()->GetName());
 	}
 
+	// #107: dump Slot layout properties (anchors, position, padding, alignment, etc.) via reflection
+	if (UPanelSlot* Slot = FoundWidget->Slot)
+	{
+		TSharedPtr<FJsonObject> SlotObj = MakeShared<FJsonObject>();
+		SlotObj->SetStringField(TEXT("class"), Slot->GetClass()->GetName());
+
+		TSharedPtr<FJsonObject> SlotProps = MakeShared<FJsonObject>();
+		for (TFieldIterator<FProperty> It(Slot->GetClass()); It; ++It)
+		{
+			FProperty* Prop = *It;
+			if (!Prop) continue;
+			// Skip CPF_Edit check - include all reflected slot properties
+			FString ValueStr;
+			const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Slot);
+			Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, Slot, PPF_None);
+			if (!ValueStr.IsEmpty())
+			{
+				SlotProps->SetStringField(Prop->GetName(), ValueStr);
+			}
+		}
+		SlotObj->SetObjectField(TEXT("properties"), SlotProps);
+		PropsObj->SetObjectField(TEXT("slot"), SlotObj);
+	}
+
 	auto Result = MCPSuccess();
 	Result->SetObjectField(TEXT("properties"), PropsObj);
 
