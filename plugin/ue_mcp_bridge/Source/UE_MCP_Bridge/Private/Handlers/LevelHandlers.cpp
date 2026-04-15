@@ -312,28 +312,50 @@ TSharedPtr<FJsonValue> FLevelHandlers::DeleteActor(const TSharedPtr<FJsonObject>
 TSharedPtr<FJsonValue> FLevelHandlers::GetActorDetails(const TSharedPtr<FJsonObject>& Params)
 {
 	FString ActorLabel;
-	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+	FString ActorPath;
+	bool bHasLabel = Params->TryGetStringField(TEXT("actorLabel"), ActorLabel);
+	bool bHasPath = Params->TryGetStringField(TEXT("actorPath"), ActorPath);
+	if (!bHasLabel && !bHasPath)
+	{
+		return MCPError(TEXT("Missing 'actorLabel' or 'actorPath' parameter"));
+	}
 
-	REQUIRE_EDITOR_WORLD(World);
+	// World selection: "editor" (default) or "pie" (#111)
+	FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = nullptr;
+	if (WorldScope.Equals(TEXT("pie"), ESearchCase::IgnoreCase) || WorldScope.Equals(TEXT("game"), ESearchCase::IgnoreCase))
+	{
+		for (const FWorldContext& Ctx : GEngine->GetWorldContexts())
+		{
+			if (Ctx.WorldType == EWorldType::PIE || Ctx.WorldType == EWorldType::Game)
+			{
+				World = Ctx.World();
+				break;
+			}
+		}
+		if (!World) return MCPError(TEXT("No PIE/Game world active"));
+	}
+	else
+	{
+		World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+		if (!World) return MCPError(TEXT("No editor world available"));
+	}
 
-	// Find actor by label
 	AActor* Actor = nullptr;
 	for (TActorIterator<AActor> ActorIt(World); ActorIt; ++ActorIt)
 	{
-		if ((*ActorIt)->GetActorLabel() == ActorLabel)
-		{
-			Actor = *ActorIt;
-			break;
-		}
+		if (bHasPath && (*ActorIt)->GetPathName() == ActorPath) { Actor = *ActorIt; break; }
+		if (bHasLabel && (*ActorIt)->GetActorLabel() == ActorLabel) { Actor = *ActorIt; break; }
 	}
 
 	if (!Actor)
 	{
-		return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+		return MCPError(FString::Printf(TEXT("Actor not found: %s"), bHasPath ? *ActorPath : *ActorLabel));
 	}
 
 	auto Result = MCPSuccess();
 	Result->SetStringField(TEXT("label"), Actor->GetActorLabel());
+	Result->SetStringField(TEXT("name"), Actor->GetName());
 	Result->SetStringField(TEXT("class"), Actor->GetClass()->GetName());
 	Result->SetStringField(TEXT("path"), Actor->GetPathName());
 
@@ -343,6 +365,64 @@ TSharedPtr<FJsonValue> FLevelHandlers::GetActorDetails(const TSharedPtr<FJsonObj
 	LocationObj->SetNumberField(TEXT("y"), Location.Y);
 	LocationObj->SetNumberField(TEXT("z"), Location.Z);
 	Result->SetObjectField(TEXT("location"), LocationObj);
+
+	FRotator Rot = Actor->GetActorRotation();
+	TSharedPtr<FJsonObject> RotObj = MakeShared<FJsonObject>();
+	RotObj->SetNumberField(TEXT("pitch"), Rot.Pitch);
+	RotObj->SetNumberField(TEXT("yaw"), Rot.Yaw);
+	RotObj->SetNumberField(TEXT("roll"), Rot.Roll);
+	Result->SetObjectField(TEXT("rotation"), RotObj);
+
+	FVector Scale = Actor->GetActorScale3D();
+	TSharedPtr<FJsonObject> ScaleObj = MakeShared<FJsonObject>();
+	ScaleObj->SetNumberField(TEXT("x"), Scale.X);
+	ScaleObj->SetNumberField(TEXT("y"), Scale.Y);
+	ScaleObj->SetNumberField(TEXT("z"), Scale.Z);
+	Result->SetObjectField(TEXT("scale"), ScaleObj);
+
+	if (AActor* Parent = Actor->GetAttachParentActor())
+	{
+		Result->SetStringField(TEXT("attachParent"), Parent->GetActorLabel());
+	}
+
+	// Components (always on) — name + class
+	TArray<UActorComponent*> Components;
+	Actor->GetComponents(Components);
+	TArray<TSharedPtr<FJsonValue>> CompArr;
+	for (UActorComponent* Comp : Components)
+	{
+		if (!Comp) continue;
+		TSharedPtr<FJsonObject> C = MakeShared<FJsonObject>();
+		C->SetStringField(TEXT("name"), Comp->GetName());
+		C->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
+		CompArr.Add(MakeShared<FJsonValueObject>(C));
+	}
+	Result->SetArrayField(TEXT("components"), CompArr);
+
+	// #125: optional includeProperties=true dumps UPROPERTY name/type/value
+	if (OptionalBool(Params, TEXT("includeProperties")))
+	{
+		FString PropFilter = OptionalString(Params, TEXT("propertyName"));
+		TArray<TSharedPtr<FJsonValue>> PropsArr;
+		for (TFieldIterator<FProperty> It(Actor->GetClass()); It; ++It)
+		{
+			FProperty* Prop = *It;
+			if (!Prop) continue;
+			if (!PropFilter.IsEmpty() && Prop->GetName() != PropFilter) continue;
+
+			TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+			P->SetStringField(TEXT("name"), Prop->GetName());
+			P->SetStringField(TEXT("type"), Prop->GetCPPType());
+
+			FString ValueStr;
+			const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Actor);
+			Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, Actor, PPF_None);
+			P->SetStringField(TEXT("value"), ValueStr);
+			PropsArr.Add(MakeShared<FJsonValueObject>(P));
+		}
+		Result->SetArrayField(TEXT("properties"), PropsArr);
+		Result->SetNumberField(TEXT("propertyCount"), PropsArr.Num());
+	}
 
 	return MCPResult(Result);
 }
