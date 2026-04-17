@@ -3,6 +3,7 @@
 #include "HandlerUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "BlueprintEditorLibrary.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
@@ -108,6 +109,7 @@ void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("read_component_properties"), &ReadComponentProperties);
 	Registry.RegisterHandler(TEXT("read_node_property"), &ReadNodeProperty);
 	Registry.RegisterHandler(TEXT("reparent_component"), &ReparentComponent);
+	Registry.RegisterHandler(TEXT("reparent_blueprint"), &ReparentBlueprint);
 	Registry.RegisterHandler(TEXT("set_actor_tick_settings"), &SetActorTickSettings);
 
 	// v0.7.12 — issue #128 — single-property read (inherited-aware)
@@ -426,6 +428,77 @@ FEdGraphPinType FBlueprintHandlers::MakePinType(const FString& TypeStr)
 
 	FString LowerType = TypeStr.ToLower();
 
+	// (#140) Object-reference types: "Actor", "Actor*", "APawn*", full class paths
+	// like "/Script/Engine.Actor", and soft-ref variants "SoftActor" or "SoftClassPtr<Foo>".
+	// Previously these fell through to the struct resolver and ultimately defaulted to
+	// PC_Real (float), breaking any function parameter that takes an object-ref.
+	auto TryResolveObjectPin = [&PinType](const FString& Raw) -> bool
+	{
+		FString Trimmed = Raw;
+		Trimmed.TrimStartAndEndInline();
+		// Strip trailing asterisks (AActor*, AActor**)
+		while (Trimmed.EndsWith(TEXT("*"))) Trimmed = Trimmed.LeftChop(1);
+		Trimmed.TrimStartAndEndInline();
+
+		// SoftClassPtr<Foo> / TSubclassOf<Foo> / TSoftObjectPtr<Foo>
+		bool bIsSoftClass = false;
+		bool bIsClass = false;
+		bool bIsSoftObject = false;
+		auto UnwrapTemplate = [&](const TCHAR* Prefix) -> bool
+		{
+			if (Trimmed.StartsWith(Prefix, ESearchCase::IgnoreCase))
+			{
+				int32 Open = Trimmed.Find(TEXT("<"));
+				int32 Close = Trimmed.Find(TEXT(">"), ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+				if (Open != INDEX_NONE && Close != INDEX_NONE && Close > Open)
+				{
+					Trimmed = Trimmed.Mid(Open + 1, Close - Open - 1).TrimStartAndEnd();
+					return true;
+				}
+			}
+			return false;
+		};
+		if (UnwrapTemplate(TEXT("TSubclassOf"))) bIsClass = true;
+		else if (UnwrapTemplate(TEXT("TSoftClassPtr")) || UnwrapTemplate(TEXT("SoftClassPtr"))) bIsSoftClass = true;
+		else if (UnwrapTemplate(TEXT("TSoftObjectPtr")) || UnwrapTemplate(TEXT("SoftObjectPtr"))) bIsSoftObject = true;
+
+		UClass* Resolved = nullptr;
+		if (Trimmed.Contains(TEXT("/")) || Trimmed.Contains(TEXT(".")))
+		{
+			Resolved = LoadObject<UClass>(nullptr, *Trimmed);
+		}
+		if (!Resolved)
+		{
+			Resolved = FindClassByShortName(Trimmed);
+		}
+		if (!Resolved) return false;
+
+		if (bIsSoftClass)
+		{
+			PinType.PinCategory = UEdGraphSchema_K2::PC_SoftClass;
+		}
+		else if (bIsClass)
+		{
+			PinType.PinCategory = UEdGraphSchema_K2::PC_Class;
+		}
+		else if (bIsSoftObject)
+		{
+			PinType.PinCategory = UEdGraphSchema_K2::PC_SoftObject;
+		}
+		else
+		{
+			PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+		}
+		PinType.PinSubCategoryObject = Resolved;
+		return true;
+	};
+
+	// If the caller passed an asterisk or a class path, treat as object-ref first.
+	if (TypeStr.Contains(TEXT("*")) || TypeStr.Contains(TEXT("/")))
+	{
+		if (TryResolveObjectPin(TypeStr)) return PinType;
+	}
+
 	// Map type strings to pin categories
 	if (LowerType == TEXT("bool") || LowerType == TEXT("boolean"))
 	{
@@ -536,6 +609,10 @@ FEdGraphPinType FBlueprintHandlers::MakePinType(const FString& TypeStr)
 		{
 			PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
 			PinType.PinSubCategoryObject = Struct;
+		}
+		else if (TryResolveObjectPin(TypeStr))
+		{
+			// (#140) Last-ditch: treat as a bare class name (e.g. "Actor", "Pawn", "PlayerController").
 		}
 		else
 		{
@@ -960,16 +1037,27 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddComponent(const TSharedPtr<FJsonOb
 		}
 	}
 
-	// Find component class
-	UClass* CompClass = FindObject<UClass>(nullptr, *ComponentClass);
+	// Find component class: accept full paths, short names ("StaticMeshComponent"),
+	// short names with U prefix, and engine-module implicit resolution.
+	// (#136, #137) Previously only literal FindObject + "U"+name worked, so standard
+	// engine components like SceneComponent/SphereComponent/NiagaraComponent failed.
+	UClass* CompClass = nullptr;
+	if (ComponentClass.Contains(TEXT("/")) || ComponentClass.Contains(TEXT(".")))
+	{
+		CompClass = LoadObject<UClass>(nullptr, *ComponentClass);
+	}
 	if (!CompClass)
 	{
-		CompClass = FindObject<UClass>(nullptr, *(TEXT("U") + ComponentClass));
+		CompClass = FindClassByShortName(ComponentClass);
+	}
+	if (!CompClass)
+	{
+		CompClass = LoadObject<UClass>(nullptr, *(FString(TEXT("/Script/Engine.")) + ComponentClass));
 	}
 
 	if (!CompClass)
 	{
-		return MCPError(FString::Printf(TEXT("Component class not found: %s"), *ComponentClass));
+		return MCPError(FString::Printf(TEXT("Component class not found: %s. Try the short name (e.g. 'StaticMeshComponent') or the full path ('/Script/Engine.StaticMeshComponent')."), *ComponentClass));
 	}
 
 	// #115: optional parentComponent — makes this component a child in the SCS hierarchy
@@ -4047,6 +4135,83 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ReparentComponent(const TSharedPtr<FJ
 	MCPSetUpdated(Result);
 	Result->SetStringField(TEXT("componentName"), ComponentName);
 	Result->SetStringField(TEXT("newParent"), NewParent);
+	return MCPResult(Result);
+}
+
+// ─── #138 reparent_blueprint ────────────────────────────────────────
+// Changes a Blueprint's ParentClass (equivalent to
+// unreal.BlueprintEditorLibrary.reparent_blueprint + compile + save).
+TSharedPtr<FJsonValue> FBlueprintHandlers::ReparentBlueprint(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+	FString ParentClassName;
+	if (auto Err = RequireString(Params, TEXT("parentClass"), ParentClassName)) return Err;
+
+	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
+	if (!Blueprint) return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *AssetPath));
+
+	// Resolve parent class: full path > short name > engine-module implicit.
+	UClass* NewParent = nullptr;
+	if (ParentClassName.Contains(TEXT("/")) || ParentClassName.Contains(TEXT(".")))
+	{
+		NewParent = LoadObject<UClass>(nullptr, *ParentClassName);
+	}
+	if (!NewParent)
+	{
+		NewParent = FindClassByShortName(ParentClassName);
+	}
+	if (!NewParent)
+	{
+		return MCPError(FString::Printf(TEXT("Parent class not found: '%s'. Try the full path ('/Script/Engine.Actor') or the bare class name."), *ParentClassName));
+	}
+
+	// Reject invalid parents to avoid engine-side asserts
+	if (NewParent->HasAnyClassFlags(CLASS_Deprecated | CLASS_NewerVersionExists))
+	{
+		return MCPError(FString::Printf(TEXT("Parent class '%s' is deprecated or superseded"), *NewParent->GetPathName()));
+	}
+	if (Blueprint->GeneratedClass && NewParent == Blueprint->GeneratedClass)
+	{
+		return MCPError(TEXT("Cannot reparent a Blueprint to its own generated class"));
+	}
+	if (NewParent->IsChildOf(Blueprint->GeneratedClass))
+	{
+		return MCPError(TEXT("Cannot reparent to a subclass of this Blueprint (cycle)"));
+	}
+
+	UClass* OldParent = Blueprint->ParentClass;
+	if (OldParent == NewParent)
+	{
+		auto NoOp = MCPSuccess();
+		MCPSetExisted(NoOp);
+		NoOp->SetStringField(TEXT("path"), AssetPath);
+		NoOp->SetStringField(TEXT("parentClass"), NewParent->GetPathName());
+		return MCPResult(NoOp);
+	}
+
+	// Prefer the canonical UBlueprintEditorLibrary path (matches the Python API
+	// users have been falling back to in the workaround).
+	UBlueprintEditorLibrary::ReparentBlueprint(Blueprint, NewParent);
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	UPackage* Pkg = Blueprint->GetOutermost();
+	if (Pkg)
+	{
+		Pkg->MarkPackageDirty();
+		FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+		FSavePackageArgs SaveArgs; SaveArgs.TopLevelFlags = RF_Standalone;
+		UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
+	}
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("parentClass"), NewParent->GetPathName());
+	if (OldParent)
+	{
+		Result->SetStringField(TEXT("previousParent"), OldParent->GetPathName());
+	}
 	return MCPResult(Result);
 }
 

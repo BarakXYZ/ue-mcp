@@ -1069,15 +1069,24 @@ TSharedPtr<FJsonValue> FLevelHandlers::AddComponentToActor(const TSharedPtr<FJso
 		}
 	}
 
-	UClass* CompClass = FindObject<UClass>(nullptr, *ComponentClass);
+	// (#137) Robust class resolution: full path, short name, or engine-module implicit lookup.
+	UClass* CompClass = nullptr;
+	if (ComponentClass.Contains(TEXT("/")) || ComponentClass.Contains(TEXT(".")))
+	{
+		CompClass = LoadObject<UClass>(nullptr, *ComponentClass);
+	}
 	if (!CompClass)
 	{
-		CompClass = FindObject<UClass>(nullptr, *(TEXT("U") + ComponentClass));
+		CompClass = FindClassByShortName(ComponentClass);
+	}
+	if (!CompClass)
+	{
+		CompClass = LoadObject<UClass>(nullptr, *(FString(TEXT("/Script/Engine.")) + ComponentClass));
 	}
 
 	if (!CompClass)
 	{
-		return MCPError(FString::Printf(TEXT("Component class not found: %s"), *ComponentClass));
+		return MCPError(FString::Printf(TEXT("Component class not found: %s. Try the short name (e.g. 'StaticMeshComponent') or the full path ('/Script/Engine.StaticMeshComponent')."), *ComponentClass));
 	}
 
 	if (!CompClass->IsChildOf(UActorComponent::StaticClass()))

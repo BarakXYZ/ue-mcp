@@ -67,6 +67,9 @@ private:
 	static TSharedPtr<FJsonValue> ExportNodesT3D(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ImportNodesT3D(const TSharedPtr<FJsonObject>& Params);
 
+	// v0.7.18 issue #138: reparent a Blueprint to a new parent class.
+	static TSharedPtr<FJsonValue> ReparentBlueprint(const TSharedPtr<FJsonObject>& Params);
+
 	// Helper functions
 	static class UBlueprint* LoadBlueprint(const FString& AssetPath);
 	static struct FEdGraphPinType MakePinType(const FString& TypeStr);
