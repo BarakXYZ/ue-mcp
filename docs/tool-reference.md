@@ -114,6 +114,7 @@ UE-MCP exposes **19 category tools** covering **360+ actions**. Every tool takes
 | `validate` | Compile without saving and collect compiler diagnostics (errors + warnings). | `assetPath` |
 | `export_nodes_t3d` | Export graph nodes as T3D text (Ctrl+C equivalent). Omit `nodeIds` to export the whole graph. Pair with `import_nodes_t3d` for bulk authoring (#130). | `assetPath`, `graphName?`, `nodeIds?` |
 | `import_nodes_t3d` | Paste a T3D node blob into a graph (Ctrl+V equivalent). Returns new node guids. Optional `posX`/`posY` re-centers pasted nodes (#130). | `assetPath`, `graphName?`, `t3d`, `posX?`, `posY?` |
+| `reparent` | Change a Blueprint's `ParentClass` and recompile. Resolves short names, full paths, and engine-module short names (#138). | `assetPath`, `parentClass` |
 
 !!! tip "Agent-friendly introspection"
     Prefer `read_graph_summary` over `read_graph` for LLM use: the summary strips pin defaults, positions, and comments, keeping only what's needed to reason about structure. Use `get_execution_flow` to follow event-driven logic and `get_dependencies` (reverse) before renaming/deleting shared assets.
@@ -262,6 +263,7 @@ UE-MCP exposes **19 category tools** covering **360+ actions**. Every tool takes
 | `add_node` | Add a node to the graph | `assetPath`, `nodeType` |
 | `connect_nodes` | Wire two nodes | `assetPath`, `sourceNode`, `sourcePin`, `targetNode`, `targetPin` |
 | `set_node_settings` | Set node parameters | `assetPath`, `nodeName`, `settings` |
+| `set_static_mesh_spawner_meshes` | Populate weighted `MeshEntries` on a `PCGStaticMeshSpawner` node (auto-instantiates `UPCGMeshSelectorWeighted` when needed). Pass `replace=false` to append (#145). | `assetPath`, `nodeName`, `entries=[{mesh, weight?}]`, `replace?` |
 | `remove_node` | Remove a node | `assetPath`, `nodeName` |
 | `execute` | Regenerate PCG output | `actorLabel` |
 | `add_volume` | Place a PCG volume in the level | `graphPath`, `location?`, `extent?` |
@@ -347,6 +349,7 @@ UE-MCP exposes **19 category tools** covering **360+ actions**. Every tool takes
 |--------|-------------|------------|
 | `execute_command` | Run a console command | `command` |
 | `execute_python` | Run Python in the editor (escape hatch) | `code` |
+| `run_python_file` | Execute a Python file from disk with `__file__`/`__name__` populated. Append positional `args[]` to the script (#142). | `filePath`, `args?` |
 | `set_property` | Set a UObject property by path | `objectPath`, `propertyName`, `value` |
 | `play_in_editor` | PIE control | `pieAction` (start/stop/status) |
 | `get_runtime_value` | Read a PIE actor property value | `actorLabel`, `propertyName` |
@@ -422,6 +425,8 @@ UE-MCP exposes **19 category tools** covering **360+ actions**. Every tool takes
 | `set_mapping_modifiers` | Set modifiers/triggers on an IMC mapping (persists on save) | `imcPath`, `mappingIndex?`, `modifiers?`, `triggers?` |
 | `inspect_pie` | Inspect PIE world actors and components at runtime | `actorLabel?` |
 | `get_pie_anim_state` | Read runtime AnimInstance state (montages, state machines) | `actorLabel` |
+| `get_pie_anim_properties` | Read named UPROPERTY values on a PIE actor's AnimInstance (omit `propertyNames` to dump all) (#139). | `actorLabel`, `propertyNames?` |
+| `get_pie_subsystem_state` | Read UPROPERTY values on a running subsystem (`game`/`world`/`engine`/`localplayer` scope) (#139). | `subsystemClass`, `scope?`, `propertyNames?` |
 | `list_input_assets` | List input-related assets | `directory?` |
 | `list_behavior_trees` | List Behavior Trees and Blackboards | `directory?` |
 | `get_behavior_tree_info` | Inspect a Behavior Tree | `assetPath` |
