@@ -28,6 +28,7 @@ export const levelTool: ToolDef = categoryTool(
     set_fog_properties: bp("Edit ExponentialHeightFog. Params: actorLabel?, fogDensity?, fogHeightFalloff?, startDistance?, fogInscatteringColor?", "set_fog_properties"),
     get_actors_by_class: bp("List actors by class name. Params: className, world? (editor|pie)", "get_actors_by_class"),
     count_actors_by_class: bp("Histogram of actor classes in the level (sorted desc). Params: world? (editor|pie), topN? (#146)", "count_actors_by_class", (p) => ({ world: p.world, topN: p.topN })),
+    get_runtime_virtual_texture_summary: bp("List RuntimeVirtualTextureVolume actors + their bound VirtualTexture assets (#150)", "get_runtime_virtual_texture_summary"),
     build_lighting:     bp("Build lights. Params: quality?", "build_lighting"),
     get_spline_info:    bp("Read spline. Params: actorLabel", "get_spline_info"),
     set_spline_points:  bp("Set spline points. Params: actorLabel, points[], closedLoop?", "set_spline_points"),

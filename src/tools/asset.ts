@@ -109,6 +109,7 @@ export const assetTool: ToolDef = categoryTool(
     export:               bp("Export asset to disk file (Texture2D → PNG, StaticMesh → FBX, etc.). Params: assetPath, outputPath", "export_asset"),
     search_fts:           bp("Ranked asset search (token-scored over name/class/path). Params: query, maxResults?, classFilter?", "search_assets_fts", (p) => ({ query: p.query, maxResults: p.maxResults, classFilter: p.classFilter })),
     reindex_fts:          bp("Rebuild the SQLite FTS5 asset index. Params: directory?", "reindex_assets_fts", (p) => ({ directory: p.directory })),
+    get_referencers:      bp("Reverse dependency lookup. Params: packages[] OR packagePath (#150). Returns {referencersByPackage, totalReferencers}.", "get_asset_referencers", (p) => ({ packages: p.packages, packagePath: p.packagePath })),
   },
   undefined,
   {
@@ -148,5 +149,6 @@ export const assetTool: ToolDef = categoryTool(
     classFilter: z.string().optional().describe("Restrict search_fts to assets whose class name contains this substring"),
     className: z.string().optional().describe("UClass path (/Script/Module.ClassName) or loaded class name for create_data_asset"),
     properties: z.record(z.unknown()).optional().describe("Key/value property overrides for create_data_asset"),
+    packages: z.array(z.string()).optional().describe("Package paths for get_referencers"),
   },
 );

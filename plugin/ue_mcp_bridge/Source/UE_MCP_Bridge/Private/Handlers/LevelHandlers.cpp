@@ -74,6 +74,7 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("set_fog_properties"), &SetFogProperties);
 	Registry.RegisterHandler(TEXT("get_actors_by_class"), &GetActorsByClass);
 	Registry.RegisterHandler(TEXT("count_actors_by_class"), &CountActorsByClass);
+	Registry.RegisterHandler(TEXT("get_runtime_virtual_texture_summary"), &GetRVTSummary);
 }
 
 TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>& Params)
@@ -1811,5 +1812,75 @@ TSharedPtr<FJsonValue> FLevelHandlers::CountActorsByClass(const TSharedPtr<FJson
 	Result->SetArrayField(TEXT("classes"), Out);
 	Result->SetNumberField(TEXT("uniqueClasses"), Counts.Num());
 	Result->SetNumberField(TEXT("totalActors"), Total);
+	return MCPResult(Result);
+}
+
+// #150: compact RVT volume summary. Returns each RuntimeVirtualTextureVolume
+// actor with its RVT component's bound VirtualTexture asset path. Avoids the
+// Python workaround that ranged across 'virtual_texture' / 'VirtualTexture'
+// property-name variants and reflected get_editor_property by class name.
+TSharedPtr<FJsonValue> FLevelHandlers::GetRVTSummary(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = ResolveWorldScope(WorldScope);
+	if (!World) return MCPError(TEXT("World not available"));
+
+	TArray<TSharedPtr<FJsonValue>> VolumesArr;
+	TSet<FString> UniqueTextures;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* A = *It;
+		if (!A) continue;
+		const FString ClassName = A->GetClass()->GetName();
+		if (!ClassName.Contains(TEXT("RuntimeVirtualTexture"))) continue;
+
+		TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("label"), A->GetActorLabel());
+		Entry->SetStringField(TEXT("class"), ClassName);
+		Entry->SetStringField(TEXT("path"), A->GetPathName());
+
+		// Reflectively walk components for a RuntimeVirtualTextureComponent
+		TArray<UActorComponent*> Comps;
+		A->GetComponents(Comps);
+		TArray<TSharedPtr<FJsonValue>> CompArr;
+		for (UActorComponent* C : Comps)
+		{
+			if (!C) continue;
+			const FString CName = C->GetClass()->GetName();
+			if (!CName.Contains(TEXT("RuntimeVirtualTexture"))) continue;
+
+			TSharedPtr<FJsonObject> CObj = MakeShared<FJsonObject>();
+			CObj->SetStringField(TEXT("name"), C->GetName());
+			CObj->SetStringField(TEXT("class"), CName);
+			// Try both common property names — UE has renamed this across versions.
+			if (FObjectProperty* VT = CastField<FObjectProperty>(C->GetClass()->FindPropertyByName(TEXT("VirtualTexture"))))
+			{
+				if (UObject* Asset = VT->GetObjectPropertyValue_InContainer(C))
+				{
+					CObj->SetStringField(TEXT("virtualTexture"), Asset->GetPathName());
+					UniqueTextures.Add(Asset->GetPathName());
+				}
+			}
+			CompArr.Add(MakeShared<FJsonValueObject>(CObj));
+		}
+		Entry->SetArrayField(TEXT("components"), CompArr);
+
+		const FVector Loc = A->GetActorLocation();
+		TSharedPtr<FJsonObject> LocObj = MakeShared<FJsonObject>();
+		LocObj->SetNumberField(TEXT("x"), Loc.X);
+		LocObj->SetNumberField(TEXT("y"), Loc.Y);
+		LocObj->SetNumberField(TEXT("z"), Loc.Z);
+		Entry->SetObjectField(TEXT("location"), LocObj);
+
+		VolumesArr.Add(MakeShared<FJsonValueObject>(Entry));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> UniqueTexArr;
+	for (const FString& T : UniqueTextures) UniqueTexArr.Add(MakeShared<FJsonValueString>(T));
+
+	auto Result = MCPSuccess();
+	Result->SetArrayField(TEXT("volumes"), VolumesArr);
+	Result->SetNumberField(TEXT("volumeCount"), VolumesArr.Num());
+	Result->SetArrayField(TEXT("uniqueVirtualTextures"), UniqueTexArr);
 	return MCPResult(Result);
 }

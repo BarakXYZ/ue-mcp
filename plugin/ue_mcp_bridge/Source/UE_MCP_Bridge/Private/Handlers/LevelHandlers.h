@@ -39,4 +39,6 @@ private:
 	static TSharedPtr<FJsonValue> GetActorsByClass(const TSharedPtr<FJsonObject>& Params);
 	// v0.7.19 issue #146 — actor class histogram (counts by class name)
 	static TSharedPtr<FJsonValue> CountActorsByClass(const TSharedPtr<FJsonObject>& Params);
+	// v0.7.19 issue #150 — RuntimeVirtualTextureVolume / component summary
+	static TSharedPtr<FJsonValue> GetRVTSummary(const TSharedPtr<FJsonObject>& Params);
 };

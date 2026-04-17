@@ -15,6 +15,7 @@ export const landscapeTool: ToolDef = categoryTool(
     set_material:      bp("Set landscape material. Params: materialPath", "set_landscape_material"),
     add_layer_info:    bp("Register paint layer. Params: layerName", "add_landscape_layer_info"),
     import_heightmap:  bp("Import heightmap file. Params: filePath", "import_landscape_heightmap"),
+    get_material_usage_summary: bp("Per-proxy summary: landscape/hole material paths + component/grass/nanite counts (#150)", "get_landscape_material_usage_summary"),
   },
   undefined,
   {
