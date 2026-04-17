@@ -133,17 +133,36 @@ TSharedPtr<FJsonValue> FWidgetHandlers::CreateWidgetBlueprint(const TSharedPtr<F
 
 	FString PackagePath = OptionalString(Params, TEXT("packagePath"), TEXT("/Game/UI/Widgets"));
 	const FString OnConflict = OptionalString(Params, TEXT("onConflict"), TEXT("skip"));
+	FString ParentClassName = OptionalString(Params, TEXT("parentClass"), TEXT("UserWidget"));
 
 	if (auto Existing = MCPCheckAssetExists(PackagePath, Name, OnConflict, TEXT("WidgetBlueprint")))
 	{
 		return Existing;
 	}
 
+	// (#134) Resolve parentClass string — accept short names ("UserWidget"),
+	// short names with U prefix, and full class paths. Default to UUserWidget
+	// only when the caller didn't pass a parentClass.
+	UClass* ParentClass = nullptr;
+	ParentClass = FindClassByShortName(ParentClassName);
+	if (!ParentClass)
+	{
+		ParentClass = LoadObject<UClass>(nullptr, *ParentClassName);
+	}
+	if (!ParentClass)
+	{
+		ParentClass = UUserWidget::StaticClass();
+	}
+	if (!ParentClass->IsChildOf(UUserWidget::StaticClass()))
+	{
+		return MCPError(FString::Printf(TEXT("parentClass '%s' is not a UUserWidget subclass"), *ParentClassName));
+	}
+
 	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
 	IAssetTools& AssetTools = AssetToolsModule.Get();
 
 	UWidgetBlueprintFactory* WidgetFactory = NewObject<UWidgetBlueprintFactory>();
-	WidgetFactory->ParentClass = UUserWidget::StaticClass();
+	WidgetFactory->ParentClass = ParentClass;
 
 	UObject* NewAsset = AssetTools.CreateAsset(Name, PackagePath, UWidgetBlueprint::StaticClass(), WidgetFactory);
 	if (!NewAsset)
@@ -157,6 +176,7 @@ TSharedPtr<FJsonValue> FWidgetHandlers::CreateWidgetBlueprint(const TSharedPtr<F
 	MCPSetCreated(Result);
 	Result->SetStringField(TEXT("path"), NewAsset->GetPathName());
 	Result->SetStringField(TEXT("name"), Name);
+	Result->SetStringField(TEXT("parentClass"), ParentClass->GetPathName());
 	MCPSetDeleteAssetRollback(Result, NewAsset->GetPathName());
 
 	return MCPResult(Result);
@@ -699,6 +719,24 @@ TSharedPtr<FJsonValue> FWidgetHandlers::SetWidgetProperty(const TSharedPtr<FJson
 		{
 			EditableText->SetText(FText::FromString(PropertyValue));
 			bPropertySet = true;
+		}
+	}
+	// (#135) SizeBox overrides: UMG 5.1+ requires the Set*Override accessors so the
+	// paired bOverride_ flag is toggled on — ImportText on the raw property doesn't do this.
+	if (!bPropertySet)
+	{
+		if (USizeBox* SizeBox = Cast<USizeBox>(FoundWidget))
+		{
+			const float V = FCString::Atof(*PropertyValue);
+			const FString& N = PropertyName;
+			if (N == TEXT("WidthOverride") || N == TEXT("widthOverride"))       { SizeBox->SetWidthOverride(V);       bPropertySet = true; }
+			else if (N == TEXT("HeightOverride") || N == TEXT("heightOverride")) { SizeBox->SetHeightOverride(V);      bPropertySet = true; }
+			else if (N == TEXT("MinDesiredWidth") || N == TEXT("minDesiredWidth"))   { SizeBox->SetMinDesiredWidth(V);   bPropertySet = true; }
+			else if (N == TEXT("MinDesiredHeight") || N == TEXT("minDesiredHeight")) { SizeBox->SetMinDesiredHeight(V);  bPropertySet = true; }
+			else if (N == TEXT("MaxDesiredWidth") || N == TEXT("maxDesiredWidth"))   { SizeBox->SetMaxDesiredWidth(V);   bPropertySet = true; }
+			else if (N == TEXT("MaxDesiredHeight") || N == TEXT("maxDesiredHeight")) { SizeBox->SetMaxDesiredHeight(V);  bPropertySet = true; }
+			else if (N == TEXT("clearWidthOverride"))  { SizeBox->ClearWidthOverride();  bPropertySet = true; }
+			else if (N == TEXT("clearHeightOverride")) { SizeBox->ClearHeightOverride(); bPropertySet = true; }
 		}
 	}
 
