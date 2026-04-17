@@ -202,8 +202,11 @@ TSharedPtr<FJsonValue> FPCGHandlers::AddPCGNode(const TSharedPtr<FJsonObject>& P
 		return MCPError(FString::Printf(TEXT("PCG settings class not found or invalid: %s"), *NodeType));
 	}
 
-	// Create default settings object
-	UPCGSettings* DefaultSettings = NewObject<UPCGSettings>(GetTransientPackage(), SettingsClass);
+	// #147: outer settings in the graph (not transient) so they serialize with
+	// the package. The old code created settings under GetTransientPackage(),
+	// which meant the settings object was garbage-collected on editor restart
+	// — nodes came back referencing null and the executor never dispatched.
+	UPCGSettings* DefaultSettings = NewObject<UPCGSettings>(Graph, SettingsClass, NAME_None, RF_Transactional);
 	if (!DefaultSettings)
 	{
 		return MCPError(TEXT("Failed to create PCG settings instance"));
@@ -214,6 +217,19 @@ TSharedPtr<FJsonValue> FPCGHandlers::AddPCGNode(const TSharedPtr<FJsonObject>& P
 	if (!NewNode)
 	{
 		return MCPError(TEXT("Failed to add node to PCG graph"));
+	}
+
+	// #147: Ensure settings outer is the new node (matches the proven Python
+	// workaround `s.rename(None, n)`) so renaming/duplicating the graph keeps
+	// settings attached. AddNode may already do this; re-parenting is idempotent.
+	if (UPCGSettings* NodeSettings = const_cast<UPCGSettings*>(NewNode->GetSettings()))
+	{
+		UObject* Outer = NodeSettings->GetOuter();
+		if (Outer != NewNode && Outer != nullptr && !Outer->IsA<UPackage>())
+		{
+			NodeSettings->Rename(nullptr, NewNode, REN_DontCreateRedirectors | REN_DoNotDirty);
+		}
+		NodeSettings->PostEditChange();
 	}
 
 	// Set position if provided
@@ -227,6 +243,7 @@ TSharedPtr<FJsonValue> FPCGHandlers::AddPCGNode(const TSharedPtr<FJsonObject>& P
 	// Notify open editor tabs and mark package dirty so Ctrl+S / autosave picks it up (#108)
 	// UE 5.7: NotifyGraphChanged is private. MarkPackageDirty + SaveAsset
 	// still persist changes; open editor tabs may need a reopen to refresh.
+	NewNode->PostEditChange();
 	Graph->PostEditChange();
 	if (UPackage* Pkg = Graph->GetOutermost()) { Pkg->MarkPackageDirty(); }
 
