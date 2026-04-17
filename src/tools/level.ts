@@ -29,6 +29,7 @@ export const levelTool: ToolDef = categoryTool(
     get_actors_by_class: bp("List actors by class name. Params: className, world? (editor|pie)", "get_actors_by_class"),
     count_actors_by_class: bp("Histogram of actor classes in the level (sorted desc). Params: world? (editor|pie), topN? (#146)", "count_actors_by_class", (p) => ({ world: p.world, topN: p.topN })),
     get_runtime_virtual_texture_summary: bp("List RuntimeVirtualTextureVolume actors + their bound VirtualTexture assets (#150)", "get_runtime_virtual_texture_summary"),
+    set_water_body_property: bp("Set a property on an actor's WaterBodyComponent (ShapeDilation, WaterLevel, etc.). Params: actorLabel, propertyName, value. Requires Water plugin. For spline edits use level(set_spline_points) (#151)", "set_water_body_property", (p) => ({ actorLabel: p.actorLabel, propertyName: p.propertyName, value: p.value })),
     build_lighting:     bp("Build lights. Params: quality?", "build_lighting"),
     get_spline_info:    bp("Read spline. Params: actorLabel", "get_spline_info"),
     set_spline_points:  bp("Set spline points. Params: actorLabel, points[], closedLoop?", "set_spline_points"),

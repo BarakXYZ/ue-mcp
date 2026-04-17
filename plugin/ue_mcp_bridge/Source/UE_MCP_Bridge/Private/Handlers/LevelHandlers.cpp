@@ -75,6 +75,7 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("get_actors_by_class"), &GetActorsByClass);
 	Registry.RegisterHandler(TEXT("count_actors_by_class"), &CountActorsByClass);
 	Registry.RegisterHandler(TEXT("get_runtime_virtual_texture_summary"), &GetRVTSummary);
+	Registry.RegisterHandler(TEXT("set_water_body_property"), &SetWaterBodyProperty);
 }
 
 TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>& Params)
@@ -1882,5 +1883,75 @@ TSharedPtr<FJsonValue> FLevelHandlers::GetRVTSummary(const TSharedPtr<FJsonObjec
 	Result->SetArrayField(TEXT("volumes"), VolumesArr);
 	Result->SetNumberField(TEXT("volumeCount"), VolumesArr.Num());
 	Result->SetArrayField(TEXT("uniqueVirtualTextures"), UniqueTexArr);
+	return MCPResult(Result);
+}
+
+// ─── #151 set_water_body_property ───────────────────────────────────
+// Set a property on the first UWaterBodyComponent of an actor (ShapeDilation,
+// WaterLevel, etc.). Uses runtime class lookup so the Water plugin is not a
+// hard build dependency — if the plugin isn't loaded, the handler returns
+// a clear error rather than failing to link.
+TSharedPtr<FJsonValue> FLevelHandlers::SetWaterBodyProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+	FString PropertyName;
+	if (auto Err = RequireString(Params, TEXT("propertyName"), PropertyName)) return Err;
+
+	FString ValueStr;
+	bool bHaveValue = false;
+	TSharedPtr<FJsonValue> V = Params->TryGetField(TEXT("value"));
+	if (V.IsValid())
+	{
+		if (V->TryGetString(ValueStr)) bHaveValue = true;
+		else if (V->Type == EJson::Number) { ValueStr = FString::SanitizeFloat(V->AsNumber()); bHaveValue = true; }
+		else if (V->Type == EJson::Boolean) { ValueStr = V->AsBool() ? TEXT("true") : TEXT("false"); bHaveValue = true; }
+	}
+	if (!bHaveValue) return MCPError(TEXT("Missing or non-coerceable 'value' parameter"));
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	AActor* Actor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (*It && (*It)->GetActorLabel() == ActorLabel) { Actor = *It; break; }
+	}
+	if (!Actor) return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+
+	UClass* WBClass = LoadClass<UActorComponent>(nullptr, TEXT("/Script/Water.WaterBodyComponent"));
+	if (!WBClass)
+	{
+		return MCPError(TEXT("WaterBodyComponent class not available — enable the Water plugin"));
+	}
+
+	UActorComponent* WBComp = nullptr;
+	TArray<UActorComponent*> Comps;
+	Actor->GetComponents(Comps);
+	for (UActorComponent* C : Comps)
+	{
+		if (C && C->GetClass()->IsChildOf(WBClass)) { WBComp = C; break; }
+	}
+	if (!WBComp) return MCPError(FString::Printf(TEXT("Actor '%s' has no WaterBodyComponent"), *ActorLabel));
+
+	FProperty* Prop = WBComp->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!Prop) return MCPError(FString::Printf(TEXT("Property '%s' not found on %s"), *PropertyName, *WBComp->GetClass()->GetName()));
+
+	WBComp->Modify();
+	void* Addr = Prop->ContainerPtrToValuePtr<void>(WBComp);
+	const TCHAR* R = Prop->ImportText_Direct(*ValueStr, Addr, WBComp, PPF_None);
+	if (R == nullptr) return MCPError(FString::Printf(TEXT("ImportText failed for '%s'"), *ValueStr));
+
+	// Fire PostEditChangeProperty so the water body rebuilds / re-renders.
+	FPropertyChangedEvent Evt(Prop);
+	WBComp->PostEditChangeProperty(Evt);
+	Actor->MarkPackageDirty();
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetStringField(TEXT("componentName"), WBComp->GetName());
+	Result->SetStringField(TEXT("componentClass"), WBComp->GetClass()->GetName());
+	Result->SetStringField(TEXT("propertyName"), PropertyName);
+	Result->SetStringField(TEXT("value"), ValueStr);
 	return MCPResult(Result);
 }
