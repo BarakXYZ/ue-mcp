@@ -117,6 +117,10 @@ void FAnimationHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("set_anim_blueprint_skeleton"), &SetAnimBlueprintSkeleton);
 	Registry.RegisterHandler(TEXT("read_bone_track"), &ReadBoneTrack);
 
+	// v1.0.0-rc.2 — animation authoring gaps (#153, #154)
+	Registry.RegisterHandler(TEXT("set_sequence_properties"), &SetSequenceProperties);
+	Registry.RegisterHandler(TEXT("bake_root_motion_from_bone"), &BakeRootMotionFromBone);
+
 	// v0.7.15 — PoseSearch (motion matching)
 	Registry.RegisterHandler(TEXT("create_pose_search_database"), &CreatePoseSearchDatabase);
 	Registry.RegisterHandler(TEXT("set_pose_search_schema"), &SetPoseSearchSchema);
@@ -2914,6 +2918,253 @@ TSharedPtr<FJsonValue> FAnimationHandlers::ReadBoneTrack(const TSharedPtr<FJsonO
 	Result->SetNumberField(TEXT("numFrames"), NumFrames);
 	Result->SetNumberField(TEXT("frameRate"), FrameRate);
 	Result->SetArrayField(TEXT("samples"), SamplesArr);
+	return MCPResult(Result);
+}
+
+// ===========================================================================
+// v1.0.0-rc.2 — animation authoring gaps
+// ===========================================================================
+
+// #153: batch-set properties on AnimSequence assets, optionally resolving
+// montage inputs to their first underlying sequence. Saves each mutated
+// sequence; returns per-path results so callers can diagnose mixed outcomes.
+TSharedPtr<FJsonValue> FAnimationHandlers::SetSequenceProperties(const TSharedPtr<FJsonObject>& Params)
+{
+	const TArray<TSharedPtr<FJsonValue>>* PathsArr = nullptr;
+	if (!Params->TryGetArrayField(TEXT("assetPaths"), PathsArr))
+	{
+		return MCPError(TEXT("Missing 'assetPaths' array parameter"));
+	}
+
+	const TSharedPtr<FJsonObject>* PropsObj = nullptr;
+	if (!Params->TryGetObjectField(TEXT("properties"), PropsObj) || !PropsObj || !(*PropsObj).IsValid())
+	{
+		return MCPError(TEXT("Missing 'properties' object parameter"));
+	}
+	const TSharedPtr<FJsonObject>& Props = *PropsObj;
+
+	const bool bResolveMontages = OptionalBool(Params, TEXT("resolveFromMontages"), true);
+
+	TArray<TSharedPtr<FJsonValue>> Results;
+	int32 UpdatedCount = 0;
+	int32 SkippedCount = 0;
+
+	for (const TSharedPtr<FJsonValue>& PathVal : *PathsArr)
+	{
+		FString Path;
+		if (!PathVal.IsValid() || !PathVal->TryGetString(Path)) continue;
+
+		TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("assetPath"), Path);
+
+		UObject* Loaded = UEditorAssetLibrary::LoadAsset(Path);
+		UAnimSequence* Seq = Cast<UAnimSequence>(Loaded);
+		FString ResolvedPath = Path;
+		if (!Seq && bResolveMontages)
+		{
+			if (UAnimMontage* Montage = Cast<UAnimMontage>(Loaded))
+			{
+				UAnimSequenceBase* FirstRef = Montage->GetFirstAnimReference();
+				Seq = Cast<UAnimSequence>(FirstRef);
+				if (Seq)
+				{
+					ResolvedPath = Seq->GetPathName();
+					Entry->SetStringField(TEXT("resolvedFromMontage"), Path);
+					Entry->SetStringField(TEXT("assetPath"), ResolvedPath);
+				}
+			}
+		}
+
+		if (!Seq)
+		{
+			Entry->SetStringField(TEXT("status"), TEXT("skipped"));
+			Entry->SetStringField(TEXT("reason"), TEXT("not an AnimSequence (or no resolvable sequence from montage)"));
+			Results.Add(MakeShared<FJsonValueObject>(Entry));
+			++SkippedCount;
+			continue;
+		}
+
+		Seq->Modify();
+
+		bool EnableRootMotion;
+		if (Props->TryGetBoolField(TEXT("enableRootMotion"), EnableRootMotion))
+		{
+			Seq->bEnableRootMotion = EnableRootMotion;
+		}
+		bool ForceRootLock;
+		if (Props->TryGetBoolField(TEXT("forceRootLock"), ForceRootLock))
+		{
+			Seq->bForceRootLock = ForceRootLock;
+		}
+		bool UseNormalizedRootMotionScale;
+		if (Props->TryGetBoolField(TEXT("useNormalizedRootMotionScale"), UseNormalizedRootMotionScale))
+		{
+			Seq->bUseNormalizedRootMotionScale = UseNormalizedRootMotionScale;
+		}
+		FString RootMotionMode;
+		if (Props->TryGetStringField(TEXT("rootMotionRootLock"), RootMotionMode))
+		{
+			if      (RootMotionMode.Equals(TEXT("RefPose"),        ESearchCase::IgnoreCase)) Seq->RootMotionRootLock = ERootMotionRootLock::RefPose;
+			else if (RootMotionMode.Equals(TEXT("AnimFirstFrame"), ESearchCase::IgnoreCase)) Seq->RootMotionRootLock = ERootMotionRootLock::AnimFirstFrame;
+			else if (RootMotionMode.Equals(TEXT("Zero"),           ESearchCase::IgnoreCase)) Seq->RootMotionRootLock = ERootMotionRootLock::Zero;
+		}
+
+		Seq->PostEditChange();
+		UEditorAssetLibrary::SaveLoadedAsset(Seq, /*bOnlyIfIsDirty=*/false);
+
+		Entry->SetStringField(TEXT("status"), TEXT("updated"));
+		Entry->SetBoolField(TEXT("enableRootMotion"), Seq->bEnableRootMotion);
+		Entry->SetBoolField(TEXT("forceRootLock"), Seq->bForceRootLock);
+		Results.Add(MakeShared<FJsonValueObject>(Entry));
+		++UpdatedCount;
+	}
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetNumberField(TEXT("updated"), UpdatedCount);
+	Result->SetNumberField(TEXT("skipped"), SkippedCount);
+	Result->SetArrayField(TEXT("results"), Results);
+	return MCPResult(Result);
+}
+
+// #154: bake delta translation from a source bone (e.g. pelvis) onto the root
+// bone across the full sequence, compensating the source bone so world-space
+// position is unchanged. Default bakes X/Y (horizontal); Z is typically left
+// on the source bone for gravity. Linear interpolation from frame 0 delta.
+TSharedPtr<FJsonValue> FAnimationHandlers::BakeRootMotionFromBone(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	FString SourceBoneName;
+	if (auto Err = RequireString(Params, TEXT("sourceBone"), SourceBoneName)) return Err;
+
+	const FString RootBoneName = OptionalString(Params, TEXT("rootBone"), TEXT("root"));
+	const FString InterpMode = OptionalString(Params, TEXT("interpolation"), TEXT("linear"));
+
+	bool bBakeX = true, bBakeY = true, bBakeZ = false;
+	const TArray<TSharedPtr<FJsonValue>>* AxesArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("axes"), AxesArr))
+	{
+		bBakeX = bBakeY = bBakeZ = false;
+		for (const TSharedPtr<FJsonValue>& V : *AxesArr)
+		{
+			FString Ax; if (V.IsValid() && V->TryGetString(Ax))
+			{
+				Ax = Ax.ToLower();
+				if (Ax == TEXT("x")) bBakeX = true;
+				else if (Ax == TEXT("y")) bBakeY = true;
+				else if (Ax == TEXT("z")) bBakeZ = true;
+			}
+		}
+	}
+
+	UAnimSequence* Seq = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!Seq) return MCPError(FString::Printf(TEXT("AnimSequence not found: %s"), *AssetPath));
+
+	USkeleton* Skeleton = Seq->GetSkeleton();
+	if (!Skeleton) return MCPError(TEXT("AnimSequence has no Skeleton"));
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	const FName SourceFName(*SourceBoneName);
+	const FName RootFName(*RootBoneName);
+	if (RefSkeleton.FindBoneIndex(SourceFName) == INDEX_NONE)
+	{
+		return MCPError(FString::Printf(TEXT("Source bone '%s' not found in skeleton"), *SourceBoneName));
+	}
+	if (RefSkeleton.FindBoneIndex(RootFName) == INDEX_NONE)
+	{
+		return MCPError(FString::Printf(TEXT("Root bone '%s' not found in skeleton"), *RootBoneName));
+	}
+
+	IAnimationDataModel* DataModel = Seq->GetDataModel();
+	if (!DataModel) return MCPError(TEXT("Sequence has no data model"));
+
+	const int32 NumFrames = DataModel->GetNumberOfFrames();
+	const int32 NumKeys = NumFrames + 1;
+	if (NumKeys < 2) return MCPError(TEXT("Sequence must have at least 2 keys to bake root motion"));
+
+	const FFrameRate FrameRate = DataModel->GetFrameRate();
+
+	TArray<FVector> SourceLocIn, SourceLocOut, RootLocOut;
+	TArray<FQuat>   SourceRotIn, RootRotOut;
+	TArray<FVector> SourceSclIn, RootSclOut;
+	SourceLocIn.Reserve(NumKeys); SourceLocOut.Reserve(NumKeys); RootLocOut.Reserve(NumKeys);
+	SourceRotIn.Reserve(NumKeys); RootRotOut.Reserve(NumKeys);
+	SourceSclIn.Reserve(NumKeys); RootSclOut.Reserve(NumKeys);
+
+	for (int32 Key = 0; Key < NumKeys; ++Key)
+	{
+		const FFrameTime FT = FrameRate.AsFrameTime((double)Key / FrameRate.AsDecimal());
+		const FTransform Xf = DataModel->EvaluateBoneTrackTransform(SourceFName, FT, EAnimInterpolationType::Linear);
+		SourceLocIn.Add(Xf.GetLocation());
+		SourceRotIn.Add(Xf.GetRotation());
+		SourceSclIn.Add(Xf.GetScale3D());
+	}
+
+	const FVector StartLoc = SourceLocIn[0];
+	const FVector EndLoc = SourceLocIn.Last();
+	const FVector TotalDelta(
+		bBakeX ? (EndLoc.X - StartLoc.X) : 0.0,
+		bBakeY ? (EndLoc.Y - StartLoc.Y) : 0.0,
+		bBakeZ ? (EndLoc.Z - StartLoc.Z) : 0.0);
+
+	const bool bPerFrame = InterpMode.Equals(TEXT("per_frame"), ESearchCase::IgnoreCase);
+
+	for (int32 Key = 0; Key < NumKeys; ++Key)
+	{
+		FVector RootDelta = FVector::ZeroVector;
+		if (bPerFrame)
+		{
+			const FVector Cur = SourceLocIn[Key] - StartLoc;
+			RootDelta = FVector(bBakeX ? Cur.X : 0.0, bBakeY ? Cur.Y : 0.0, bBakeZ ? Cur.Z : 0.0);
+		}
+		else
+		{
+			const double T = (NumKeys > 1) ? ((double)Key / (double)(NumKeys - 1)) : 0.0;
+			RootDelta = TotalDelta * T;
+		}
+		RootLocOut.Add(RootDelta);
+		RootRotOut.Add(FQuat::Identity);
+		RootSclOut.Add(FVector::OneVector);
+
+		FVector SrcLoc = SourceLocIn[Key];
+		if (bBakeX) SrcLoc.X -= RootDelta.X;
+		if (bBakeY) SrcLoc.Y -= RootDelta.Y;
+		if (bBakeZ) SrcLoc.Z -= RootDelta.Z;
+		SourceLocOut.Add(SrcLoc);
+	}
+
+	IAnimationDataController& Controller = Seq->GetController();
+	Controller.OpenBracket(NSLOCTEXT("MCP", "BakeRootMotion", "Bake Root Motion From Bone"));
+
+	if (!DataModel->IsValidBoneTrackName(RootFName)) Controller.AddBoneCurve(RootFName);
+	if (!DataModel->IsValidBoneTrackName(SourceFName)) Controller.AddBoneCurve(SourceFName);
+
+	Controller.SetBoneTrackKeys(RootFName, RootLocOut, RootRotOut, RootSclOut);
+	Controller.SetBoneTrackKeys(SourceFName, SourceLocOut, SourceRotIn, SourceSclIn);
+
+	Controller.CloseBracket(false);
+
+	GEditor->ResetTransaction(NSLOCTEXT("MCP", "BakeRootMotionReset", "Bake Root Motion Complete"));
+
+	Seq->bEnableRootMotion = true;
+	Seq->PostEditChange();
+	Seq->MarkPackageDirty();
+	UEditorAssetLibrary::SaveLoadedAsset(Seq, /*bOnlyIfIsDirty=*/false);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("sourceBone"), SourceBoneName);
+	Result->SetStringField(TEXT("rootBone"), RootBoneName);
+	Result->SetNumberField(TEXT("keys"), NumKeys);
+	TSharedPtr<FJsonObject> Delta = MakeShared<FJsonObject>();
+	Delta->SetNumberField(TEXT("x"), TotalDelta.X);
+	Delta->SetNumberField(TEXT("y"), TotalDelta.Y);
+	Delta->SetNumberField(TEXT("z"), TotalDelta.Z);
+	Result->SetObjectField(TEXT("totalDelta"), Delta);
+	Result->SetStringField(TEXT("interpolation"), bPerFrame ? TEXT("per_frame") : TEXT("linear"));
 	return MCPResult(Result);
 }
 

@@ -50,6 +50,9 @@ export const animationTool: ToolDef = categoryTool(
     add_pose_search_sequence:    bp("Append an AnimSequence/AnimComposite/AnimMontage/BlendSpace to a PoseSearchDatabase. Params: assetPath, sequencePath", "add_pose_search_sequence", (p) => ({ assetPath: p.assetPath, sequencePath: p.sequencePath })),
     build_pose_search_index:     bp("Build (or rebuild) the search index. Params: assetPath, wait? (default true)", "build_pose_search_index", (p) => ({ assetPath: p.assetPath, wait: p.wait })),
     read_pose_search_database:   bp("Inspect a PoseSearchDatabase: schema, animation entries, cost biases, tags. Params: assetPath", "read_pose_search_database", (p) => ({ assetPath: p.assetPath })),
+    // v1.0.0-rc.2 — #153, #154 (animation authoring gaps)
+    set_sequence_properties: bp("Batch-set properties on AnimSequence assets. If a path is a Montage and resolveFromMontages is true (default), resolves to its first AnimSequence. Params: assetPaths[], properties{enableRootMotion?, forceRootLock?, useNormalizedRootMotionScale?, rootMotionRootLock?}, resolveFromMontages?", "set_sequence_properties"),
+    bake_root_motion_from_bone: bp("Bake delta translation from a source bone (e.g. pelvis) onto the root bone across the whole sequence; compensates the source bone so world-space position is unchanged. Params: assetPath, sourceBone, rootBone? (default 'root'), axes? (default ['x','y']), interpolation? ('linear'|'per_frame', default 'linear')", "bake_root_motion_from_bone"),
   },
   undefined,
   {
@@ -122,5 +125,12 @@ export const animationTool: ToolDef = categoryTool(
     schemaPath: z.string().optional().describe("Path to a UPoseSearchSchema asset"),
     sequencePath: z.string().optional().describe("Animation asset path to add to a PoseSearchDatabase"),
     wait: z.boolean().optional().describe("build_pose_search_index: block until the async build resolves (default true)"),
+    // #153 / #154
+    assetPaths: z.array(z.string()).optional().describe("Asset paths (batch) for set_sequence_properties"),
+    properties: z.record(z.any()).optional().describe("Property dict for set_sequence_properties"),
+    resolveFromMontages: z.boolean().optional().describe("Resolve AnimMontage inputs to first anim reference (default true)"),
+    rootBone: z.string().optional().describe("Root bone name for bake_root_motion_from_bone (default 'root')"),
+    axes: z.array(z.string()).optional().describe("Axes to bake ('x','y','z') for bake_root_motion_from_bone"),
+    interpolation: z.string().optional().describe("bake_root_motion_from_bone: 'linear' (default) or 'per_frame'"),
   },
 );

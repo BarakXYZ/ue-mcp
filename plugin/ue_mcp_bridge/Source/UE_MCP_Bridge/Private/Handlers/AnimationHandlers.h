@@ -79,6 +79,10 @@ private:
 	static TSharedPtr<FJsonValue> SetAnimBlueprintSkeleton(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ReadBoneTrack(const TSharedPtr<FJsonObject>& Params);
 
+	// v1.0.0-rc.2 — animation authoring gaps (#153, #154)
+	static TSharedPtr<FJsonValue> SetSequenceProperties(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> BakeRootMotionFromBone(const TSharedPtr<FJsonObject>& Params);
+
 	// v0.7.15 — PoseSearch (motion matching)
 	static TSharedPtr<FJsonValue> CreatePoseSearchDatabase(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetPoseSearchSchema(const TSharedPtr<FJsonObject>& Params);
