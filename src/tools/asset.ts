@@ -116,6 +116,7 @@ export const assetTool: ToolDef = categoryTool(
     get_mesh_bounds:      bp("Get StaticMesh bounding box. Params: assetPath. Returns min, max, boxExtent, boxCenter (#193)", "get_mesh_bounds"),
     get_mesh_collision:   bp("Inspect StaticMesh collision setup. Params: assetPath. Returns collisionTraceFlag, hasSimple/ComplexCollision, element counts (#177)", "get_mesh_collision"),
     move_folder:          bp("Move/rename entire content folder with redirector fixup in one transaction. Params: sourcePath, destinationPath (#192)", "move_folder"),
+    set_mesh_nav:         bp("Set StaticMesh nav contribution. Params: assetPath, bHasNavigationData?, clearNavCollision? (#167)", "set_mesh_nav"),
   },
   undefined,
   {
@@ -164,5 +165,7 @@ export const assetTool: ToolDef = categoryTool(
     })).optional().describe("Per-slot material assignments for set_sk_material_slots"),
     path: z.string().optional().describe("Content path for diagnose_registry (e.g. /Game/Foo)"),
     reconcile: z.boolean().optional().describe("diagnose_registry: force synchronous rescan (evicts pending-kill ghosts)"),
+    bHasNavigationData: z.boolean().optional().describe("Toggle nav data generation for set_mesh_nav"),
+    clearNavCollision: z.boolean().optional().describe("Remove NavCollision from mesh for set_mesh_nav"),
   },
 );

@@ -51,6 +51,7 @@
 
 // Collision / BodySetup
 #include "PhysicsEngine/BodySetup.h"
+#include "AI/Navigation/NavCollisionBase.h"
 
 void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -119,6 +120,7 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	// v1.0.0-rc.3 — #177, #192, #193
 	Registry.RegisterHandler(TEXT("get_mesh_bounds"), &GetMeshBounds);
 	Registry.RegisterHandler(TEXT("get_mesh_collision"), &GetMeshCollision);
+	Registry.RegisterHandler(TEXT("set_mesh_nav"), &SetMeshNav);
 	Registry.RegisterHandler(TEXT("move_folder"), &MoveFolder);
 }
 
@@ -2991,6 +2993,60 @@ TSharedPtr<FJsonValue> FAssetHandlers::GetMeshCollision(const TSharedPtr<FJsonOb
 	Result->SetNumberField(TEXT("numBoxElems"), NumBox);
 	Result->SetNumberField(TEXT("numSphereElems"), NumSphere);
 	Result->SetNumberField(TEXT("numSphylElems"), NumSphyl);
+
+	// NavCollision info (#167)
+	Result->SetBoolField(TEXT("bCanEverAffectNavigation"), Mesh->bHasNavigationData);
+	if (Mesh->GetNavCollision())
+	{
+		Result->SetBoolField(TEXT("hasNavCollision"), true);
+		Result->SetBoolField(TEXT("bIsDynamicObstacle"), Mesh->GetNavCollision()->IsDynamicObstacle());
+	}
+	else
+	{
+		Result->SetBoolField(TEXT("hasNavCollision"), false);
+	}
+
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// v1.0.0-rc.5 — #167 set_mesh_nav
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::SetMeshNav(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireString(Params, TEXT("assetPath"), AssetPath)) return Err;
+
+	REQUIRE_ASSET(UStaticMesh, Mesh, AssetPath);
+
+	bool bChanged = false;
+
+	bool bHasNavData = false;
+	if (Params->TryGetBoolField(TEXT("bHasNavigationData"), bHasNavData))
+	{
+		Mesh->bHasNavigationData = bHasNavData;
+		bChanged = true;
+	}
+
+	bool bClearNavCollision = false;
+	if (Params->TryGetBoolField(TEXT("clearNavCollision"), bClearNavCollision) && bClearNavCollision)
+	{
+		Mesh->SetNavCollision(nullptr);
+		bChanged = true;
+	}
+
+	if (!bChanged)
+	{
+		return MCPError(TEXT("No changes requested. Provide bHasNavigationData and/or clearNavCollision."));
+	}
+
+	Mesh->MarkPackageDirty();
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetBoolField(TEXT("bHasNavigationData"), Mesh->bHasNavigationData);
+	Result->SetBoolField(TEXT("hasNavCollision"), Mesh->GetNavCollision() != nullptr);
 	return MCPResult(Result);
 }
 
