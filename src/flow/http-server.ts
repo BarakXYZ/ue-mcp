@@ -1,5 +1,4 @@
 import * as http from "node:http";
-import type { FlowConfig } from "./schema.js";
 import type { createFlowTool } from "./flow-tool.js";
 import type { ToolContext } from "../types.js";
 
@@ -17,7 +16,6 @@ export interface HttpServerOptions {
 export function startFlowHttpServer(
   flowTool: FlowTool,
   ctx: ToolContext,
-  reloadConfig: () => FlowConfig,
   options: HttpServerOptions = {},
 ): { server: http.Server; port: number; host: string } {
   const host = options.host ?? "127.0.0.1";
@@ -78,9 +76,6 @@ export function startFlowHttpServer(
       res.end(JSON.stringify({ error: msg }));
     }
   });
-
-  // Silence "reloadConfig unused" — we pass it through for future /config routes.
-  void reloadConfig;
 
   server.listen(port, host, () => {
     console.error(`[ue-mcp] Flow HTTP server listening on http://${host}:${port}`);

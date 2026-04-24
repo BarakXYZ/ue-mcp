@@ -4,8 +4,6 @@ import { spawn, execSync } from "child_process";
 import * as net from "net";
 import type { ProjectContext } from "./project.js";
 
-let editorProcess: ReturnType<typeof spawn> | null = null;
-
 function findUEBuildTool(): string | null {
   const envPath = process.env.UE_BUILD_TOOL_PATH;
   if (envPath) return envPath;
@@ -120,7 +118,7 @@ export async function startEditor(project: ProjectContext): Promise<{ success: b
   }
 
   try {
-    editorProcess = spawn(editorExe, [project.projectPath], {
+    const editorProcess = spawn(editorExe, [project.projectPath], {
       stdio: "ignore",
       detached: true,
     });
@@ -156,7 +154,6 @@ export async function stopEditor(force = false): Promise<{ success: boolean; mes
   try {
     if (force) {
       execSync('taskkill /F /IM UnrealEditor.exe', { stdio: "pipe" });
-      editorProcess = null;
       return { success: true, message: "Editor force-killed" };
     }
 
@@ -167,7 +164,6 @@ export async function stopEditor(force = false): Promise<{ success: boolean; mes
     for (let i = 0; i < 10; i++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       if (!isEditorRunning()) {
-        editorProcess = null;
         return { success: true, message: "Editor closed successfully" };
       }
     }
@@ -175,7 +171,6 @@ export async function stopEditor(force = false): Promise<{ success: boolean; mes
     // Graceful close failed — force kill
     execSync('taskkill /F /IM UnrealEditor.exe', { stdio: "pipe" });
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    editorProcess = null;
 
     if (!isEditorRunning()) {
       return { success: true, message: "Editor force-killed after graceful close timed out" };

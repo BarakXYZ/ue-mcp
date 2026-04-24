@@ -176,7 +176,7 @@ async function main() {
   // Binds to 127.0.0.1 only — do NOT expose to the network without adding auth.
   if (project.config.http?.enabled) {
     try {
-      startFlowHttpServer(flowTool, ctx, reloadConfig, {
+      startFlowHttpServer(flowTool, ctx, {
         port: project.config.http.port,
         host: project.config.http.host,
       });

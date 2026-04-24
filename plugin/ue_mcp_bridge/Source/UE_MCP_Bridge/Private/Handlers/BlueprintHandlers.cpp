@@ -25,7 +25,6 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "Factories/BlueprintFactory.h"
-// BlueprintGraphDefinitions.h removed - not available in UE 5.7
 #include "EdGraph/EdGraph.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_Event.h"
