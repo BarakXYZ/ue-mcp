@@ -1389,7 +1389,10 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ListBlueprintVariables(const TSharedP
 		}
 
 		VarObj->SetBoolField(TEXT("instanceEditable"),
-			!Var.HasMetaData(FBlueprintMetadata::MD_Private) && Var.PropertyFlags & CPF_Edit);
+			!Var.HasMetaData(FBlueprintMetadata::MD_Private) && (Var.PropertyFlags & CPF_Edit) != 0);
+
+		VarObj->SetBoolField(TEXT("exposeOnSpawn"),
+			Var.HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn) || (Var.PropertyFlags & CPF_ExposeOnSpawn) != 0);
 
 		Variables.Add(MakeShared<FJsonValueObject>(VarObj));
 	}
@@ -1444,6 +1447,24 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetVariableProperties(const TSharedPt
 		PrevTooltip = FoundVar->GetMetaData(FBlueprintMetadata::MD_Tooltip);
 	}
 
+	// Set expose on spawn
+	bool bExposeOnSpawn = false;
+	const bool bHasExposeOnSpawn = Params->TryGetBoolField(TEXT("exposeOnSpawn"), bExposeOnSpawn);
+	const bool bPrevExposeOnSpawn = FoundVar->HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn);
+	if (bHasExposeOnSpawn)
+	{
+		if (bExposeOnSpawn)
+		{
+			FoundVar->SetMetaData(FBlueprintMetadata::MD_ExposeOnSpawn, TEXT("true"));
+			FoundVar->PropertyFlags |= CPF_ExposeOnSpawn;
+		}
+		else
+		{
+			FoundVar->RemoveMetaData(FBlueprintMetadata::MD_ExposeOnSpawn);
+			FoundVar->PropertyFlags &= ~CPF_ExposeOnSpawn;
+		}
+	}
+
 	// Set instance editable
 	bool bInstanceEditable = false;
 	const bool bHasInstanceEditable = Params->TryGetBoolField(TEXT("instanceEditable"), bInstanceEditable);
@@ -1478,6 +1499,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetVariableProperties(const TSharedPt
 
 	// Detect no-op: nothing requested OR every requested field already matches
 	const bool bAnyChanged =
+		(bHasExposeOnSpawn && bExposeOnSpawn != bPrevExposeOnSpawn) ||
 		(bHasInstanceEditable && bInstanceEditable != bPrevInstanceEditable) ||
 		(bHasCategory && CategoryStr != PrevCategory) ||
 		(bHasTooltip && TooltipStr != PrevTooltip);
@@ -1511,6 +1533,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetVariableProperties(const TSharedPt
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 	Payload->SetStringField(TEXT("path"), AssetPath);
 	Payload->SetStringField(TEXT("name"), VarName);
+	if (bHasExposeOnSpawn) Payload->SetBoolField(TEXT("exposeOnSpawn"), bPrevExposeOnSpawn);
 	if (bHasInstanceEditable) Payload->SetBoolField(TEXT("instanceEditable"), bPrevInstanceEditable);
 	if (bHasCategory) Payload->SetStringField(TEXT("category"), PrevCategory);
 	if (bHasTooltip) Payload->SetStringField(TEXT("tooltip"), PrevTooltip);
