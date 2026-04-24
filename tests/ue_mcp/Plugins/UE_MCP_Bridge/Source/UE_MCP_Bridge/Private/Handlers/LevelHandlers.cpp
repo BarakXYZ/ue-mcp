@@ -593,6 +593,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::MoveActor(const TSharedPtr<FJsonObject>& 
 	// Capture previous transform for rollback.
 	const FVector PreviousLocation = Actor->GetActorLocation();
 	const FRotator PreviousRotation = Actor->GetActorRotation();
+	const FVector PreviousScale = Actor->GetActorScale3D();
 
 	const TSharedPtr<FJsonObject>* LocObj = nullptr;
 	if (Params->TryGetObjectField(TEXT("location"), LocObj))
@@ -614,6 +615,16 @@ TSharedPtr<FJsonValue> FLevelHandlers::MoveActor(const TSharedPtr<FJsonObject>& 
 		Actor->SetActorRotation(Rotation);
 	}
 
+	const TSharedPtr<FJsonObject>* ScaleObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("scale"), ScaleObj))
+	{
+		FVector Scale = Actor->GetActorScale3D();
+		(*ScaleObj)->TryGetNumberField(TEXT("x"), Scale.X);
+		(*ScaleObj)->TryGetNumberField(TEXT("y"), Scale.Y);
+		(*ScaleObj)->TryGetNumberField(TEXT("z"), Scale.Z);
+		Actor->SetActorScale3D(Scale);
+	}
+
 	FVector NewLocation = Actor->GetActorLocation();
 	TSharedPtr<FJsonObject> NewLocationObj = MakeShared<FJsonObject>();
 	NewLocationObj->SetNumberField(TEXT("x"), NewLocation.X);
@@ -626,10 +637,17 @@ TSharedPtr<FJsonValue> FLevelHandlers::MoveActor(const TSharedPtr<FJsonObject>& 
 	NewRotationObj->SetNumberField(TEXT("yaw"), NewRotation.Yaw);
 	NewRotationObj->SetNumberField(TEXT("roll"), NewRotation.Roll);
 
+	FVector NewScale = Actor->GetActorScale3D();
+	TSharedPtr<FJsonObject> NewScaleObj = MakeShared<FJsonObject>();
+	NewScaleObj->SetNumberField(TEXT("x"), NewScale.X);
+	NewScaleObj->SetNumberField(TEXT("y"), NewScale.Y);
+	NewScaleObj->SetNumberField(TEXT("z"), NewScale.Z);
+
 	auto Result = MCPSuccess();
 	MCPSetUpdated(Result);
 	Result->SetObjectField(TEXT("location"), NewLocationObj);
 	Result->SetObjectField(TEXT("rotation"), NewRotationObj);
+	Result->SetObjectField(TEXT("scale"), NewScaleObj);
 	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
 
 	// Self-inverse: call move_actor with previous transform.
@@ -641,10 +659,15 @@ TSharedPtr<FJsonValue> FLevelHandlers::MoveActor(const TSharedPtr<FJsonObject>& 
 	PrevRot->SetNumberField(TEXT("pitch"), PreviousRotation.Pitch);
 	PrevRot->SetNumberField(TEXT("yaw"), PreviousRotation.Yaw);
 	PrevRot->SetNumberField(TEXT("roll"), PreviousRotation.Roll);
+	TSharedPtr<FJsonObject> PrevScale = MakeShared<FJsonObject>();
+	PrevScale->SetNumberField(TEXT("x"), PreviousScale.X);
+	PrevScale->SetNumberField(TEXT("y"), PreviousScale.Y);
+	PrevScale->SetNumberField(TEXT("z"), PreviousScale.Z);
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 	Payload->SetStringField(TEXT("actorLabel"), ActorLabel);
 	Payload->SetObjectField(TEXT("location"), PrevLoc);
 	Payload->SetObjectField(TEXT("rotation"), PrevRot);
+	Payload->SetObjectField(TEXT("scale"), PrevScale);
 	MCPSetRollback(Result, TEXT("move_actor"), Payload);
 
 	return MCPResult(Result);
