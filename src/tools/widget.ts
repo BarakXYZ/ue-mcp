@@ -21,6 +21,7 @@ export const widgetTool: ToolDef = categoryTool(
     list_classes:             bp("List available widget classes", "list_widget_classes"),
     list_runtime:             bp("(#160) List live UUserWidget instances in the PIE world. Params: classFilter?, namePrefix?, viewportOnly?", "list_runtime_widgets"),
     get_runtime:              bp("(#160) Inspect a live PIE widget tree with text/visibility/brush/percent values. Params: widgetName? | className?, childName?, maxDepth?", "get_runtime_widget"),
+    get_runtime_delegates:    bp("(#161) Read delegate binding state on a live PIE widget. Params: widgetName, className?. Returns array of {delegateName, isBound, numBindings}", "get_runtime_delegates"),
   },
   undefined,
   {

@@ -48,6 +48,9 @@ export const blueprintTool: ToolDef = categoryTool(
     set_actor_tick_settings: bp("Set actor CDO tick settings (#116). Params: assetPath, bCanEverTick?, bStartWithTickEnabled?, TickInterval?", "set_actor_tick_settings", (p) => ({ path: p.assetPath, bCanEverTick: p.bCanEverTick, bStartWithTickEnabled: p.bStartWithTickEnabled, TickInterval: p.TickInterval })),
     export_nodes_t3d:  bp("Export graph nodes as T3D text (Ctrl+C equivalent) for bulk round-trip (#130). Params: assetPath, graphName?, nodeIds? (omit = whole graph)", "export_nodes_t3d", (p) => ({ path: p.assetPath, graphName: p.graphName ?? "EventGraph", nodeIds: p.nodeIds })),
     import_nodes_t3d:  bp("Paste a T3D node blob into a graph (Ctrl+V equivalent) for bulk authoring (#130). Params: assetPath, graphName?, t3d, posX?, posY?", "import_nodes_t3d", (p) => ({ path: p.assetPath, graphName: p.graphName ?? "EventGraph", t3d: p.t3d, posX: p.posX, posY: p.posY })),
+    set_cdo_property:  bp("Set UPROPERTY on any C++ class CDO (not just Blueprints). Params: className, propertyName, value (#182/#183)", "set_cdo_property"),
+    get_cdo_properties: bp("Read UPROPERTY values from any C++ class CDO. Params: className, propertyNames? (#183)", "get_cdo_properties"),
+    run_construction_script: bp("Spawn temp actor, run construction script, return generated components and transforms. Params: assetPath, location? (#195)", "run_construction_script", (p) => ({ path: p.assetPath, location: p.location })),
   },
   undefined,
   {
@@ -81,6 +84,8 @@ export const blueprintTool: ToolDef = categoryTool(
     sourcePath: z.string().optional(), destinationPath: z.string().optional(),
     nodeIds: z.array(z.string()).optional().describe("Node guids/names to export (omit = whole graph)"),
     t3d: z.string().optional().describe("T3D blob from export_nodes_t3d (or copied from the BP graph editor)"),
+    className: z.string().optional().describe("C++ class name or path for set_cdo_property / get_cdo_properties"),
+    propertyNames: z.array(z.string()).optional().describe("Property names to read for get_cdo_properties (omit = all)"),
     posX: z.number().optional().describe("Re-center pasted nodes around this X (with posY)"),
     posY: z.number().optional().describe("Re-center pasted nodes around this Y (with posX)"),
   },

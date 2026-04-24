@@ -49,6 +49,8 @@ export const gameplayTool: ToolDef = categoryTool(
     create_hud:             bp("Create HUD BP. Params: name, packagePath?", "create_hud"),
     set_world_game_mode:    bp("Set level GameMode override. Params: gameModePath", "set_world_game_mode"),
     get_framework_info:     bp("Get level framework classes", "get_game_framework_info"),
+    get_navmesh_details:    bp("Read RecastNavMesh generation params (cellSize, agentHeight, maxStepHeight, etc.) (#163)", "get_navmesh_details"),
+    apply_damage_in_pie:    bp("Apply damage to PIE actor. Params: actorLabel, baseDamage?, damageTypeClass? (#186)", "apply_damage_in_pie"),
   },
   undefined,
   {
@@ -88,5 +90,7 @@ export const gameplayTool: ToolDef = categoryTool(
     propertyNames: z.array(z.string()).optional().describe("Property names to read for get_pie_anim_properties/get_pie_subsystem_state"),
     subsystemClass: z.string().optional().describe("Subsystem class path or short name for get_pie_subsystem_state"),
     scope: z.enum(["game", "world", "engine", "localplayer"]).optional().describe("Subsystem scope for get_pie_subsystem_state (default: game)"),
+    baseDamage: z.number().optional().describe("Damage amount for apply_damage_in_pie (default 10)"),
+    damageTypeClass: z.string().optional().describe("Damage type class for apply_damage_in_pie"),
   },
 );

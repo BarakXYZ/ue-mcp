@@ -1,4 +1,5 @@
 #include "JsonSerializer.h"
+#include "HandlerJsonProperty.h"
 #include "UObject/UnrealType.h"
 #include "UObject/PropertyPortFlags.h"
 #include "Dom/JsonObject.h"
@@ -158,6 +159,52 @@ TSharedPtr<FJsonValue> FMCPJsonSerializer::SerializePropertyValue(const void* Va
 		{
 			return SerializeLinearColor(*static_cast<const FLinearColor*>(Value));
 		}
+		else
+		{
+			// Generic struct: recursively serialize each field (#196, #199)
+			TSharedPtr<FJsonObject> StructJson = MakeShared<FJsonObject>();
+			for (TFieldIterator<FProperty> It(StructProp->Struct); It; ++It)
+			{
+				FProperty* FieldProp = *It;
+				const void* FieldValue = FieldProp->ContainerPtrToValuePtr<void>(Value);
+				TSharedPtr<FJsonValue> FieldJson = SerializePropertyValue(FieldValue, FieldProp);
+				if (FieldJson.IsValid())
+				{
+					StructJson->SetField(FieldProp->GetName(), FieldJson);
+				}
+			}
+			return MakeShared<FJsonValueObject>(StructJson);
+		}
+	}
+	else if (FObjectPropertyBase* ObjProp = CastField<FObjectPropertyBase>(Property))
+	{
+		UObject* ObjValue = ObjProp->GetObjectPropertyValue(Value);
+		if (ObjValue)
+		{
+			return MakeShared<FJsonValueString>(ObjValue->GetPathName());
+		}
+		return MakeShared<FJsonValueNull>();
+	}
+	else if (FSoftObjectProperty* SoftObjProp = CastField<FSoftObjectProperty>(Property))
+	{
+		const FSoftObjectPtr& SoftPtr = SoftObjProp->GetPropertyValue(Value);
+		return MakeShared<FJsonValueString>(SoftPtr.ToString());
+	}
+	else if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+	{
+		FString EnumStr;
+		EnumProp->ExportText_Direct(EnumStr, Value, Value, nullptr, PPF_None);
+		return MakeShared<FJsonValueString>(EnumStr);
+	}
+	else if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+	{
+		if (ByteProp->Enum)
+		{
+			FString EnumStr;
+			ByteProp->ExportText_Direct(EnumStr, Value, Value, nullptr, PPF_None);
+			return MakeShared<FJsonValueString>(EnumStr);
+		}
+		return MakeShared<FJsonValueNumber>(ByteProp->GetPropertyValue(Value));
 	}
 	else if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
 	{
@@ -175,7 +222,13 @@ TSharedPtr<FJsonValue> FMCPJsonSerializer::SerializePropertyValue(const void* Va
 		return MakeShared<FJsonValueArray>(JsonArray);
 	}
 
-	// Fallback: convert to string - use property name as fallback
-	FString StringValue = FString::Printf(TEXT("(%s)"), *Property->GetName());
+	// Fallback: use ExportText for any remaining property types
+	FString StringValue;
+	Property->ExportText_Direct(StringValue, Value, Value, nullptr, PPF_None);
 	return MakeShared<FJsonValueString>(StringValue);
+}
+
+bool FMCPJsonSerializer::DeserializeValue(FProperty* Property, void* ValueAddr, const TSharedPtr<FJsonValue>& JsonValue, FString& OutError)
+{
+	return MCPJsonProperty::SetJsonOnProperty(Property, ValueAddr, JsonValue, OutError);
 }

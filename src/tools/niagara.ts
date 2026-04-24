@@ -30,6 +30,7 @@ export const niagaraTool: ToolDef = categoryTool(
     list_static_switches: bp("List static switch inputs on a module. Params: systemPath, moduleName, emitterName?, emitterIndex?, stackContext?", "list_niagara_static_switches"),
     set_static_switch:   bp("Set static switch value on a module's function call node. Params: systemPath, moduleName, switchName, value, emitterName?, emitterIndex?, stackContext?", "set_niagara_static_switch"),
     create_module_from_hlsl: bp("Create a NiagaraScript module backed by a custom HLSL node. Params: name, hlsl, packagePath?, inputs?:[{name,type}], outputs?:[{name,type}]", "create_niagara_module_from_hlsl"),
+    create_scratch_module:  bp("Create empty Niagara scratch module. Params: name, packagePath?, inputs?:[{name,type}], outputs?:[{name,type}] (#185)", "create_scratch_module"),
     batch: {
       description: "Run a sequence of niagara operations against the bridge in order. Fails fast on the first error (returns results up to that point + error). Params: ops:[{action, params}] where action is any niagara subaction listed above.",
       handler: async (ctx, params) => {

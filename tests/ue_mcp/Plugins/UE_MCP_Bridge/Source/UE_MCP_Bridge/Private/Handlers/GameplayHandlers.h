@@ -72,4 +72,10 @@ private:
 
 	// v0.7.11 — BT graph traversal (#124)
 	static TSharedPtr<FJsonValue> ReadBehaviorTreeGraph(const TSharedPtr<FJsonObject>& Params);
+
+	// #163 — detailed navmesh configuration
+	static TSharedPtr<FJsonValue> GetNavmeshDetails(const TSharedPtr<FJsonObject>& Params);
+
+	// #186 — apply damage to PIE actor
+	static TSharedPtr<FJsonValue> ApplyDamageInPie(const TSharedPtr<FJsonObject>& Params);
 };

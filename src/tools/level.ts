@@ -36,6 +36,8 @@ export const levelTool: ToolDef = categoryTool(
     set_actor_material: bp("Set material on actor. Params: actorLabel, materialPath, slotIndex?", "set_actor_material"),
     get_world_settings: bp("Read world settings (GameMode, KillZ, gravity, etc.)", "get_world_settings"),
     set_world_settings: bp("Set world settings. Params: defaultGameMode?, killZ?, globalGravityZ?, enableWorldBoundsChecks?", "set_world_settings"),
+    get_actor_bounds:   bp("Get actor AABB. Params: actorLabel. Returns origin + extent (#188)", "get_actor_bounds"),
+    resolve_actor:      bp("Resolve internal/runtime actor name to editor label. Params: internalName (e.g. StaticMeshActor_141). Returns actorLabel, actorPath, className, location (#178)", "resolve_actor"),
   },
   undefined,  // actionDocs auto-generated from descriptions
   {
@@ -78,5 +80,6 @@ export const levelTool: ToolDef = categoryTool(
     killZ: z.number().optional(),
     globalGravityZ: z.number().optional(),
     enableWorldBoundsChecks: z.boolean().optional(),
+    internalName: z.string().optional().describe("Internal/runtime UObject name for resolve_actor (e.g. StaticMeshActor_141)"),
   },
 );

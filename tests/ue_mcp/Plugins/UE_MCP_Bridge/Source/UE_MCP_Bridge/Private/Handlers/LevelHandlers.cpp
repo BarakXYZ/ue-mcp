@@ -76,6 +76,8 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("count_actors_by_class"), &CountActorsByClass);
 	Registry.RegisterHandler(TEXT("get_runtime_virtual_texture_summary"), &GetRVTSummary);
 	Registry.RegisterHandler(TEXT("set_water_body_property"), &SetWaterBodyProperty);
+	Registry.RegisterHandler(TEXT("get_actor_bounds"), &GetActorBounds);
+	Registry.RegisterHandler(TEXT("resolve_actor"), &ResolveActor);
 }
 
 TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>& Params)
@@ -451,6 +453,13 @@ TSharedPtr<FJsonValue> FLevelHandlers::GetCurrentLevel(const TSharedPtr<FJsonObj
 	auto Result = MCPSuccess();
 	Result->SetStringField(TEXT("levelName"), World->GetName());
 	Result->SetStringField(TEXT("levelPath"), World->GetPathName());
+
+	// #166: Also return the map package path for tools that need the full asset reference
+	UPackage* MapPackage = World->GetOutermost();
+	if (MapPackage)
+	{
+		Result->SetStringField(TEXT("mapPackagePath"), MapPackage->GetName());
+	}
 
 	return MCPResult(Result);
 }
@@ -1976,5 +1985,90 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetWaterBodyProperty(const TSharedPtr<FJs
 	Result->SetStringField(TEXT("componentClass"), WBComp->GetClass()->GetName());
 	Result->SetStringField(TEXT("propertyName"), PropertyName);
 	Result->SetStringField(TEXT("value"), ValueStr);
+	return MCPResult(Result);
+}
+
+// ─── #188 get_actor_bounds ──────────────────────────────────────────
+// Returns the axis-aligned bounding box (origin + extent) for an actor
+// found by its editor label.
+TSharedPtr<FJsonValue> FLevelHandlers::GetActorBounds(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	AActor* Actor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if ((*It)->GetActorLabel() == ActorLabel)
+		{
+			Actor = *It;
+			break;
+		}
+	}
+
+	if (!Actor)
+	{
+		return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+	}
+
+	FVector Origin;
+	FVector Extent;
+	Actor->GetActorBounds(false, Origin, Extent);
+
+	TSharedPtr<FJsonObject> OriginObj = MakeShared<FJsonObject>();
+	OriginObj->SetNumberField(TEXT("x"), Origin.X);
+	OriginObj->SetNumberField(TEXT("y"), Origin.Y);
+	OriginObj->SetNumberField(TEXT("z"), Origin.Z);
+
+	TSharedPtr<FJsonObject> ExtentObj = MakeShared<FJsonObject>();
+	ExtentObj->SetNumberField(TEXT("x"), Extent.X);
+	ExtentObj->SetNumberField(TEXT("y"), Extent.Y);
+	ExtentObj->SetNumberField(TEXT("z"), Extent.Z);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetObjectField(TEXT("origin"), OriginObj);
+	Result->SetObjectField(TEXT("extent"), ExtentObj);
+	return MCPResult(Result);
+}
+
+// ─── #178 resolve_actor ─────────────────────────────────────────────
+// Resolves an actor by its internal/runtime UObject name (e.g.
+// "StaticMeshActor_141") and returns its label, path, class, and location.
+TSharedPtr<FJsonValue> FLevelHandlers::ResolveActor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InternalName;
+	if (auto Err = RequireString(Params, TEXT("internalName"), InternalName)) return Err;
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	AActor* Actor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if ((*It)->GetName() == InternalName)
+		{
+			Actor = *It;
+			break;
+		}
+	}
+
+	if (!Actor)
+	{
+		return MCPError(FString::Printf(TEXT("Actor not found by internal name: %s"), *InternalName));
+	}
+
+	TSharedPtr<FJsonObject> LocationObj = MakeShared<FJsonObject>();
+	FVector Location = Actor->GetActorLocation();
+	LocationObj->SetNumberField(TEXT("x"), Location.X);
+	LocationObj->SetNumberField(TEXT("y"), Location.Y);
+	LocationObj->SetNumberField(TEXT("z"), Location.Z);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("actorLabel"), Actor->GetActorLabel());
+	Result->SetStringField(TEXT("actorPath"), Actor->GetPathName());
+	Result->SetStringField(TEXT("className"), Actor->GetClass()->GetName());
+	Result->SetObjectField(TEXT("location"), LocationObj);
 	return MCPResult(Result);
 }
