@@ -1699,10 +1699,95 @@ TSharedPtr<FJsonValue> FMaterialHandlers::SetExpressionValue(const TSharedPtr<FJ
 		}
 	}
 
+	// #185: Generic UPROPERTY fallback — set arbitrary properties on any expression node
+	// by property name (e.g. Noise node Levels, Quality, NoiseFunction, etc.)
+	if (!bValueSet)
+	{
+		FString PropertyName;
+		if (Params->TryGetStringField(TEXT("propertyName"), PropertyName))
+		{
+			FProperty* Prop = Expression->GetClass()->FindPropertyByName(FName(*PropertyName));
+			if (Prop)
+			{
+				void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Expression);
+
+				// Determine the string value to import
+				FString ValueStr;
+				TSharedPtr<FJsonValue> ValueJsonRef = Params->TryGetField(TEXT("value"));
+				if (ValueJsonRef.IsValid())
+				{
+					if (ValueJsonRef->Type == EJson::String)
+					{
+						ValueStr = ValueJsonRef->AsString();
+					}
+					else if (ValueJsonRef->Type == EJson::Boolean)
+					{
+						ValueStr = ValueJsonRef->AsBool() ? TEXT("True") : TEXT("False");
+					}
+					else if (ValueJsonRef->Type == EJson::Number)
+					{
+						ValueStr = FString::SanitizeFloat(ValueJsonRef->AsNumber());
+					}
+					else
+					{
+						ValueStr = FString::SanitizeFloat(0.0);
+					}
+				}
+				else
+				{
+					// Try direct number/bool/string params as fallback
+					double NumVal = 0.0;
+					bool BoolVal = false;
+					if (Params->TryGetNumberField(TEXT("value"), NumVal))
+					{
+						ValueStr = FString::SanitizeFloat(NumVal);
+					}
+					else if (Params->TryGetBoolField(TEXT("value"), BoolVal))
+					{
+						ValueStr = BoolVal ? TEXT("True") : TEXT("False");
+					}
+					else if (!Params->TryGetStringField(TEXT("value"), ValueStr))
+					{
+						Material->PostEditChange();
+						return MCPError(FString::Printf(TEXT("Found property '%s' on expression '%s' but no 'value' parameter provided"), *PropertyName, *ExpressionClass));
+					}
+				}
+
+				const TCHAR* ImportResult = Prop->ImportText_Direct(*ValueStr, ValuePtr, Expression, PPF_None);
+				if (ImportResult)
+				{
+					bValueSet = true;
+					Result->SetStringField(TEXT("propertyName"), PropertyName);
+					Result->SetStringField(TEXT("importedValue"), ValueStr);
+				}
+				else
+				{
+					Material->PostEditChange();
+					return MCPError(FString::Printf(TEXT("ImportText failed for property '%s' on expression '%s' with value '%s'"), *PropertyName, *ExpressionClass, *ValueStr));
+				}
+			}
+			else
+			{
+				// List available properties on this expression for discoverability
+				TArray<FString> PropNames;
+				for (TFieldIterator<FProperty> PropIt(Expression->GetClass()); PropIt; ++PropIt)
+				{
+					if (PropIt->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible))
+					{
+						PropNames.Add(PropIt->GetName());
+					}
+				}
+				Material->PostEditChange();
+				return MCPError(FString::Printf(TEXT("Property '%s' not found on expression '%s'. Editable properties: [%s]"),
+					*PropertyName, *ExpressionClass, *FString::Join(PropNames, TEXT(", "))));
+			}
+		}
+	}
+
 	if (!bValueSet)
 	{
 		Material->PostEditChange();
-		return MCPError(FString::Printf(TEXT("Could not set value on expression of type '%s'. Provide appropriate value parameters for this expression type."), *ExpressionClass));
+		return MCPError(FString::Printf(TEXT("Could not set value on expression of type '%s'. For known types provide standard value params; for arbitrary expressions pass 'propertyName' + 'value'."), *ExpressionClass));
 	}
 
 	Material->PostEditChange();

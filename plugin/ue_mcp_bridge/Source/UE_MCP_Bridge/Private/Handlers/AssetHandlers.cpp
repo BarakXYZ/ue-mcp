@@ -1,6 +1,7 @@
 #include "AssetHandlers.h"
 #include "HandlerRegistry.h"
 #include "HandlerUtils.h"
+#include "HandlerJsonProperty.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Exporters/Exporter.h"
@@ -47,6 +48,10 @@
 
 // Reimport
 #include "EditorReimportHandler.h"
+
+// Collision / BodySetup
+#include "PhysicsEngine/BodySetup.h"
+#include "AI/Navigation/NavCollisionBase.h"
 
 void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -111,6 +116,12 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	// v1.0.0-rc.2 — #155 (asset gaps)
 	Registry.RegisterHandler(TEXT("set_sk_material_slots"), &SetSkeletalMeshMaterialSlots);
 	Registry.RegisterHandler(TEXT("diagnose_registry"), &DiagnoseRegistry);
+
+	// v1.0.0-rc.3 — #177, #192, #193
+	Registry.RegisterHandler(TEXT("get_mesh_bounds"), &GetMeshBounds);
+	Registry.RegisterHandler(TEXT("get_mesh_collision"), &GetMeshCollision);
+	Registry.RegisterHandler(TEXT("set_mesh_nav"), &SetMeshNav);
+	Registry.RegisterHandler(TEXT("move_folder"), &MoveFolder);
 }
 
 // ---------------------------------------------------------------------------
@@ -984,7 +995,8 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 		return MCPError(FString::Printf(TEXT("Failed to create DataAsset %s of class %s"), *Name, *DataClass->GetName()));
 	}
 
-	// Optional properties object — import via reflection (strings + json values)
+	// Optional properties object — use recursive JSON-to-property setter so that
+	// TArray<FStruct> with nested UObject refs, FGameplayTag, etc. all work (#196, #199).
 	const TSharedPtr<FJsonObject>* PropsObj = nullptr;
 	int32 SetCount = 0;
 	TArray<FString> PropErrors;
@@ -998,26 +1010,15 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 				PropErrors.Add(FString::Printf(TEXT("Property not found: %s"), *Pair.Key));
 				continue;
 			}
-			FString Val;
-			if (Pair.Value->Type == EJson::String) Val = Pair.Value->AsString();
-			else if (Pair.Value->Type == EJson::Number) Val = FString::SanitizeFloat(Pair.Value->AsNumber());
-			else if (Pair.Value->Type == EJson::Boolean) Val = Pair.Value->AsBool() ? TEXT("true") : TEXT("false");
-			else
-			{
-				// Serialize complex values to JSON text for ImportText
-				FString Serialized;
-				TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Serialized);
-				FJsonSerializer::Serialize(Pair.Value.ToSharedRef(), TEXT(""), Writer);
-				Val = Serialized;
-			}
 			void* Addr = Prop->ContainerPtrToValuePtr<void>(NewAsset);
-			if (Prop->ImportText_Direct(*Val, Addr, NewAsset, PPF_None))
+			FString SetErr;
+			if (MCPJsonProperty::SetJsonOnProperty(Prop, Addr, Pair.Value, SetErr))
 			{
 				SetCount++;
 			}
 			else
 			{
-				PropErrors.Add(FString::Printf(TEXT("Failed to set %s"), *Pair.Key));
+				PropErrors.Add(FString::Printf(TEXT("Failed to set %s: %s"), *Pair.Key, *SetErr));
 			}
 		}
 	}
@@ -2893,5 +2894,240 @@ TSharedPtr<FJsonValue> FAssetHandlers::DiagnoseRegistry(const TSharedPtr<FJsonOb
 	Result->SetNumberField(TEXT("inMemoryIncludedCount"), InMemoryIncluded.Num());
 	Result->SetNumberField(TEXT("ghostCount"), GhostArr.Num());
 	Result->SetArrayField(TEXT("ghostPaths"), GhostArr);
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// v1.0.0-rc.3 — #193 get_mesh_bounds
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::GetMeshBounds(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireString(Params, TEXT("assetPath"), AssetPath)) return Err;
+
+	REQUIRE_ASSET(UStaticMesh, Mesh, AssetPath);
+
+	FBox BoundingBox = Mesh->GetBoundingBox();
+
+	FVector Min = BoundingBox.Min;
+	FVector Max = BoundingBox.Max;
+	FVector Extent = BoundingBox.GetExtent();
+	FVector Center = BoundingBox.GetCenter();
+
+	TSharedPtr<FJsonObject> MinObj = MakeShared<FJsonObject>();
+	MinObj->SetNumberField(TEXT("x"), Min.X);
+	MinObj->SetNumberField(TEXT("y"), Min.Y);
+	MinObj->SetNumberField(TEXT("z"), Min.Z);
+
+	TSharedPtr<FJsonObject> MaxObj = MakeShared<FJsonObject>();
+	MaxObj->SetNumberField(TEXT("x"), Max.X);
+	MaxObj->SetNumberField(TEXT("y"), Max.Y);
+	MaxObj->SetNumberField(TEXT("z"), Max.Z);
+
+	TSharedPtr<FJsonObject> ExtentObj = MakeShared<FJsonObject>();
+	ExtentObj->SetNumberField(TEXT("x"), Extent.X);
+	ExtentObj->SetNumberField(TEXT("y"), Extent.Y);
+	ExtentObj->SetNumberField(TEXT("z"), Extent.Z);
+
+	TSharedPtr<FJsonObject> CenterObj = MakeShared<FJsonObject>();
+	CenterObj->SetNumberField(TEXT("x"), Center.X);
+	CenterObj->SetNumberField(TEXT("y"), Center.Y);
+	CenterObj->SetNumberField(TEXT("z"), Center.Z);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetObjectField(TEXT("min"), MinObj);
+	Result->SetObjectField(TEXT("max"), MaxObj);
+	Result->SetObjectField(TEXT("boxExtent"), ExtentObj);
+	Result->SetObjectField(TEXT("boxCenter"), CenterObj);
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// v1.0.0-rc.3 — #177 get_mesh_collision
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::GetMeshCollision(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireString(Params, TEXT("assetPath"), AssetPath)) return Err;
+
+	REQUIRE_ASSET(UStaticMesh, Mesh, AssetPath);
+
+	UBodySetup* BodySetup = Mesh->GetBodySetup();
+	if (!BodySetup)
+	{
+		return MCPError(FString::Printf(TEXT("No BodySetup found on mesh: %s"), *AssetPath));
+	}
+
+	// Collision trace flag as string
+	FString TraceFlag;
+	switch (BodySetup->CollisionTraceFlag)
+	{
+	case CTF_UseDefault:             TraceFlag = TEXT("CTF_UseDefault"); break;
+	case CTF_UseSimpleAndComplex:    TraceFlag = TEXT("CTF_UseSimpleAndComplex"); break;
+	case CTF_UseSimpleAsComplex:     TraceFlag = TEXT("CTF_UseSimpleAsComplex"); break;
+	case CTF_UseComplexAsSimple:     TraceFlag = TEXT("CTF_UseComplexAsSimple"); break;
+	default:                         TraceFlag = TEXT("Unknown"); break;
+	}
+
+	const FKAggregateGeom& AggGeom = BodySetup->AggGeom;
+
+	int32 NumConvex  = AggGeom.ConvexElems.Num();
+	int32 NumBox     = AggGeom.BoxElems.Num();
+	int32 NumSphere  = AggGeom.SphereElems.Num();
+	int32 NumSphyl   = AggGeom.SphylElems.Num();
+
+	bool bHasSimple = (NumConvex + NumBox + NumSphere + NumSphyl) > 0;
+
+	// Complex collision is available when the trace flag allows it
+	bool bHasComplex = (BodySetup->CollisionTraceFlag == CTF_UseDefault
+		|| BodySetup->CollisionTraceFlag == CTF_UseSimpleAndComplex
+		|| BodySetup->CollisionTraceFlag == CTF_UseComplexAsSimple);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("collisionTraceFlag"), TraceFlag);
+	Result->SetBoolField(TEXT("hasSimpleCollision"), bHasSimple);
+	Result->SetBoolField(TEXT("hasComplexCollision"), bHasComplex);
+	Result->SetNumberField(TEXT("numConvexElems"), NumConvex);
+	Result->SetNumberField(TEXT("numBoxElems"), NumBox);
+	Result->SetNumberField(TEXT("numSphereElems"), NumSphere);
+	Result->SetNumberField(TEXT("numSphylElems"), NumSphyl);
+
+	// NavCollision info (#167)
+	Result->SetBoolField(TEXT("bCanEverAffectNavigation"), Mesh->bHasNavigationData);
+	if (Mesh->GetNavCollision())
+	{
+		Result->SetBoolField(TEXT("hasNavCollision"), true);
+		Result->SetBoolField(TEXT("bIsDynamicObstacle"), Mesh->GetNavCollision()->IsDynamicObstacle());
+	}
+	else
+	{
+		Result->SetBoolField(TEXT("hasNavCollision"), false);
+	}
+
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// v1.0.0-rc.5 — #167 set_mesh_nav
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::SetMeshNav(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireString(Params, TEXT("assetPath"), AssetPath)) return Err;
+
+	REQUIRE_ASSET(UStaticMesh, Mesh, AssetPath);
+
+	bool bChanged = false;
+
+	bool bHasNavData = false;
+	if (Params->TryGetBoolField(TEXT("bHasNavigationData"), bHasNavData))
+	{
+		Mesh->bHasNavigationData = bHasNavData;
+		bChanged = true;
+	}
+
+	bool bClearNavCollision = false;
+	if (Params->TryGetBoolField(TEXT("clearNavCollision"), bClearNavCollision) && bClearNavCollision)
+	{
+		Mesh->SetNavCollision(nullptr);
+		bChanged = true;
+	}
+
+	if (!bChanged)
+	{
+		return MCPError(TEXT("No changes requested. Provide bHasNavigationData and/or clearNavCollision."));
+	}
+
+	Mesh->MarkPackageDirty();
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetBoolField(TEXT("bHasNavigationData"), Mesh->bHasNavigationData);
+	Result->SetBoolField(TEXT("hasNavCollision"), Mesh->GetNavCollision() != nullptr);
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// v1.0.0-rc.3 — #192 move_folder
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::MoveFolder(const TSharedPtr<FJsonObject>& Params)
+{
+	FString SourcePath;
+	if (auto Err = RequireString(Params, TEXT("sourcePath"), SourcePath)) return Err;
+
+	FString DestinationPath;
+	if (auto Err = RequireString(Params, TEXT("destinationPath"), DestinationPath)) return Err;
+
+	// Ensure paths don't have trailing slashes for consistent prefix replacement
+	SourcePath.RemoveFromEnd(TEXT("/"));
+	DestinationPath.RemoveFromEnd(TEXT("/"));
+
+	// Scan source path to discover all assets
+	IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	AR.ScanPathsSynchronous({ SourcePath }, /*bForceRescan=*/true);
+
+	FARFilter Filter;
+	Filter.PackagePaths.Add(FName(*SourcePath));
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> FoundAssets;
+	AR.GetAssets(Filter, FoundAssets);
+
+	if (FoundAssets.Num() == 0)
+	{
+		return MCPError(FString::Printf(TEXT("No assets found under '%s'"), *SourcePath));
+	}
+
+	// Build rename data: replace source prefix with destination prefix
+	TArray<FAssetRenameData> BatchRenames;
+	for (const FAssetData& AssetData : FoundAssets)
+	{
+		UObject* Asset = AssetData.GetAsset();
+		if (!Asset) continue;
+
+		FString OldPackagePath = FPaths::GetPath(AssetData.PackageName.ToString());
+		FString NewPackagePath = OldPackagePath;
+		// Replace source prefix with destination prefix
+		if (NewPackagePath.StartsWith(SourcePath))
+		{
+			NewPackagePath = DestinationPath + NewPackagePath.Mid(SourcePath.Len());
+		}
+
+		FString AssetName = AssetData.AssetName.ToString();
+		FAssetRenameData RenameData(Asset, NewPackagePath, AssetName);
+		BatchRenames.Add(RenameData);
+	}
+
+	if (BatchRenames.Num() == 0)
+	{
+		return MCPError(TEXT("Failed to load any assets for renaming"));
+	}
+
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	IAssetTools& AssetTools = AssetToolsModule.Get();
+
+	bool bOk = AssetTools.RenameAssets(BatchRenames);
+
+	// Count how many actually landed at the destination
+	int32 Succeeded = 0;
+	for (const FAssetRenameData& Data : BatchRenames)
+	{
+		const FString DestFullPath = FString::Printf(TEXT("%s/%s.%s"),
+			*Data.NewPackagePath, *Data.NewName, *Data.NewName);
+		if (UEditorAssetLibrary::DoesAssetExist(DestFullPath))
+		{
+			Succeeded++;
+		}
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("sourcePath"), SourcePath);
+	Result->SetStringField(TEXT("destinationPath"), DestinationPath);
+	Result->SetNumberField(TEXT("totalAssets"), FoundAssets.Num());
+	Result->SetNumberField(TEXT("renamedCount"), Succeeded);
+	Result->SetBoolField(TEXT("allSucceeded"), bOk && Succeeded == BatchRenames.Num());
 	return MCPResult(Result);
 }

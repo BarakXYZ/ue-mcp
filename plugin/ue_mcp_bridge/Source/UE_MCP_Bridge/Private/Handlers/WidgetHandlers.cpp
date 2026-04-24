@@ -77,6 +77,8 @@ void FWidgetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("list_widget_classes"), &ListWidgetClasses);
 	Registry.RegisterHandler(TEXT("list_runtime_widgets"), &ListRuntimeWidgets);
 	Registry.RegisterHandler(TEXT("get_runtime_widget"), &GetRuntimeWidget);
+	// #161: Runtime delegate inspection
+	Registry.RegisterHandler(TEXT("get_runtime_delegates"), &GetRuntimeDelegates);
 }
 
 UWidget* FWidgetHandlers::FindWidgetByNameRecursive(UWidget* Root, const FString& WidgetName)
@@ -1906,5 +1908,90 @@ TSharedPtr<FJsonValue> FWidgetHandlers::GetRuntimeWidget(const TSharedPtr<FJsonO
 		Result->SetStringField(TEXT("tree"), TEXT("empty"));
 	}
 
+	return MCPResult(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #161  Runtime delegate inspection — list FMulticastDelegateProperty fields on a live UUserWidget
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FWidgetHandlers::GetRuntimeDelegates(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace WidgetRuntime_Internal;
+
+	UWorld* World = ResolveRuntimeWorld();
+	if (!World)
+	{
+		return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
+	}
+
+	FString WidgetName;
+	Params->TryGetStringField(TEXT("widgetName"), WidgetName);
+	FString ClassFilter;
+	Params->TryGetStringField(TEXT("className"), ClassFilter);
+	if (WidgetName.IsEmpty() && ClassFilter.IsEmpty())
+	{
+		return MCPError(TEXT("Provide 'widgetName' (exact instance name) or 'className' (first match)."));
+	}
+
+	UUserWidget* Found = nullptr;
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* Widget = *It;
+		if (!IsValid(Widget) || Widget->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject)) continue;
+		if (Widget->GetWorld() != World) continue;
+
+		if (!WidgetName.IsEmpty() && Widget->GetName() != WidgetName) continue;
+		if (!ClassFilter.IsEmpty() && !Widget->GetClass()->GetName().Contains(ClassFilter)) continue;
+
+		Found = Widget;
+		break;
+	}
+
+	if (!Found)
+	{
+		return MCPError(TEXT("Runtime widget not found. Try list_runtime_widgets to see available instances."));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> DelegatesArr;
+	for (TFieldIterator<FMulticastDelegateProperty> It(Found->GetClass()); It; ++It)
+	{
+		FMulticastDelegateProperty* DelegateProp = *It;
+		if (!DelegateProp) continue;
+
+		const void* DelegateAddr = DelegateProp->ContainerPtrToValuePtr<void>(Found);
+		const FMulticastScriptDelegate* ScriptDelegate = DelegateProp->GetMulticastDelegate(DelegateAddr);
+
+		TSharedPtr<FJsonObject> DelegateObj = MakeShared<FJsonObject>();
+		DelegateObj->SetStringField(TEXT("delegateName"), DelegateProp->GetName());
+
+		bool bIsBound = false;
+		int32 NumBindings = 0;
+		if (ScriptDelegate)
+		{
+			bIsBound = ScriptDelegate->IsBound();
+			// Use export text to estimate the number of bindings
+			FString ExportedStr;
+			DelegateProp->ExportTextItem_Direct(ExportedStr, DelegateAddr, nullptr, Found, PPF_None);
+			if (!ExportedStr.IsEmpty() && bIsBound)
+			{
+				// Count comma-separated entries in the exported delegate text
+				NumBindings = 1;
+				for (const TCHAR& Ch : ExportedStr)
+				{
+					if (Ch == TEXT(',')) ++NumBindings;
+				}
+			}
+		}
+
+		DelegateObj->SetBoolField(TEXT("isBound"), bIsBound);
+		DelegateObj->SetNumberField(TEXT("numBindings"), NumBindings);
+		DelegatesArr.Add(MakeShared<FJsonValueObject>(DelegateObj));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("widgetName"), Found->GetName());
+	Result->SetStringField(TEXT("widgetClass"), Found->GetClass()->GetName());
+	Result->SetArrayField(TEXT("delegates"), DelegatesArr);
+	Result->SetNumberField(TEXT("delegateCount"), DelegatesArr.Num());
 	return MCPResult(Result);
 }

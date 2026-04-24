@@ -43,4 +43,8 @@ private:
 	static TSharedPtr<FJsonValue> GetRVTSummary(const TSharedPtr<FJsonObject>& Params);
 	// v0.7.19 issue #151 — set WaterBodyComponent property via runtime class lookup
 	static TSharedPtr<FJsonValue> SetWaterBodyProperty(const TSharedPtr<FJsonObject>& Params);
+	// #188: get actor origin + extent bounds
+	static TSharedPtr<FJsonValue> GetActorBounds(const TSharedPtr<FJsonObject>& Params);
+	// #178: resolve actor by internal/runtime UObject name
+	static TSharedPtr<FJsonValue> ResolveActor(const TSharedPtr<FJsonObject>& Params);
 };

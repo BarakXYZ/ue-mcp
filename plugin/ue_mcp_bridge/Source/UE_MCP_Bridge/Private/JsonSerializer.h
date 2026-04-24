@@ -36,6 +36,11 @@ public:
 	// Serialize UObject to JSON (basic properties)
 	static TSharedPtr<FJsonObject> SerializeObject(UObject* Object);
 
+	// Deserialize a JSON value into a UE property (recursive; handles TArray,
+	// nested structs, UObject refs, soft refs, FGameplayTag, etc.).
+	// Delegates to MCPJsonProperty::SetJsonOnProperty — see HandlerJsonProperty.h.
+	static bool DeserializeValue(FProperty* Property, void* ValueAddr, const TSharedPtr<FJsonValue>& JsonValue, FString& OutError);
+
 private:
 	// Helper to serialize property value
 	static TSharedPtr<FJsonValue> SerializePropertyValue(const void* Value, FProperty* Property);

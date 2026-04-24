@@ -39,4 +39,6 @@ private:
 	static TSharedPtr<FJsonValue> ListStaticSwitches(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetStaticSwitch(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateModuleFromHlsl(const TSharedPtr<FJsonObject>& Params);
+	// #185: Create an empty scratch-pad-style Niagara module
+	static TSharedPtr<FJsonValue> CreateScratchModule(const TSharedPtr<FJsonObject>& Params);
 };

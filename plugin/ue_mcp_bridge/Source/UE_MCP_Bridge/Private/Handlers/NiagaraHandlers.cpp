@@ -65,6 +65,8 @@ void FNiagaraHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("list_niagara_static_switches"), &ListStaticSwitches);
 	Registry.RegisterHandler(TEXT("set_niagara_static_switch"), &SetStaticSwitch);
 	Registry.RegisterHandler(TEXT("create_niagara_module_from_hlsl"), &CreateModuleFromHlsl);
+	// #185: Create an empty scratch-pad-style module
+	Registry.RegisterHandler(TEXT("create_scratch_module"), &CreateScratchModule);
 }
 
 TSharedPtr<FJsonValue> FNiagaraHandlers::ListNiagaraSystems(const TSharedPtr<FJsonObject>& Params)
@@ -1523,6 +1525,111 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::CreateModuleFromHlsl(const TSharedPtr<F
 	Res->SetNumberField(TEXT("requestedInputs"), InputsArr ? InputsArr->Num() : 0);
 	Res->SetNumberField(TEXT("requestedOutputs"), OutputsArr ? OutputsArr->Num() : 0);
 	Res->SetStringField(TEXT("note"), TEXT("Module scaffold created with embedded CustomHLSL node. Pins are auto-derived from the HLSL body — open the asset to confirm signatures."));
+	MCPSetDeleteAssetRollback(Res, Script->GetPathName());
+	return MCPResult(Res);
+}
+
+// ===========================================================================
+// #185 — Create an empty scratch-pad-style Niagara module (NiagaraScript asset)
+// ===========================================================================
+TSharedPtr<FJsonValue> FNiagaraHandlers::CreateScratchModule(const TSharedPtr<FJsonObject>& Params)
+{
+	FString Name;
+	if (auto Err = RequireString(Params, TEXT("name"), Name)) return Err;
+	FString PackagePath = OptionalString(Params, TEXT("packagePath"), TEXT("/Game/VFX"));
+
+	if (auto Hit = MCPCheckAssetExists(PackagePath, Name, OptionalString(Params, TEXT("onConflict"), TEXT("skip")), TEXT("NiagaraScript")))
+	{
+		return Hit;
+	}
+
+	// Use the stock Niagara module factory to create a baseline module script
+	UNiagaraModuleScriptFactory* Factory = NewObject<UNiagaraModuleScriptFactory>();
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	UObject* NewObj = AssetTools.CreateAsset(Name, PackagePath, UNiagaraScript::StaticClass(), Factory);
+	UNiagaraScript* Script = Cast<UNiagaraScript>(NewObj);
+	if (!Script)
+	{
+		return MCPError(TEXT("Failed to create NiagaraScript module. Ensure Niagara plugin is enabled."));
+	}
+
+	UNiagaraScriptSource* Source = Cast<UNiagaraScriptSource>(Script->GetLatestSource());
+	UNiagaraGraph* Graph = Source ? Source->NodeGraph : nullptr;
+
+	// Optionally add input/output pins on a CustomHLSL node stub so the module has declared parameters
+	const TArray<TSharedPtr<FJsonValue>>* InputsArr = nullptr;
+	Params->TryGetArrayField(TEXT("inputs"), InputsArr);
+	const TArray<TSharedPtr<FJsonValue>>* OutputsArr = nullptr;
+	Params->TryGetArrayField(TEXT("outputs"), OutputsArr);
+
+	int32 InputCount = InputsArr ? InputsArr->Num() : 0;
+	int32 OutputCount = OutputsArr ? OutputsArr->Num() : 0;
+
+	// If inputs/outputs were requested, inject a CustomHLSL node with a trivial pass-through body
+	// that declares the requested parameters so they appear in the module's stack overview.
+	if (Graph && (InputCount > 0 || OutputCount > 0))
+	{
+		// Build a simple HLSL body that declares inputs and maps them to outputs
+		FString HlslBody;
+		if (InputsArr)
+		{
+			for (const TSharedPtr<FJsonValue>& V : *InputsArr)
+			{
+				const TSharedPtr<FJsonObject>* Obj = nullptr;
+				if (!V->TryGetObject(Obj)) continue;
+				FString PinName, PinType;
+				(*Obj)->TryGetStringField(TEXT("name"), PinName);
+				(*Obj)->TryGetStringField(TEXT("type"), PinType);
+				if (PinType.IsEmpty()) PinType = TEXT("float");
+				// Declare as HLSL input: e.g. "float MyInput;"
+				HlslBody += FString::Printf(TEXT("%s %s;\n"), *PinType, *PinName);
+			}
+		}
+		if (OutputsArr)
+		{
+			for (const TSharedPtr<FJsonValue>& V : *OutputsArr)
+			{
+				const TSharedPtr<FJsonObject>* Obj = nullptr;
+				if (!V->TryGetObject(Obj)) continue;
+				FString PinName, PinType;
+				(*Obj)->TryGetStringField(TEXT("name"), PinName);
+				(*Obj)->TryGetStringField(TEXT("type"), PinType);
+				if (PinType.IsEmpty()) PinType = TEXT("float");
+				HlslBody += FString::Printf(TEXT("out %s %s;\n"), *PinType, *PinName);
+			}
+		}
+		if (HlslBody.IsEmpty())
+		{
+			HlslBody = TEXT("// Empty scratch module\n");
+		}
+
+		FGraphNodeCreator<UNiagaraNodeCustomHlsl> Creator(*Graph);
+		UNiagaraNodeCustomHlsl* Custom = Creator.CreateNode();
+		Creator.Finalize();
+
+		if (FProperty* HlslProp = Custom->GetClass()->FindPropertyByName(TEXT("CustomHlsl")))
+		{
+			if (FStrProperty* SP = CastField<FStrProperty>(HlslProp))
+			{
+				Custom->Modify();
+				SP->SetPropertyValue(SP->ContainerPtrToValuePtr<void>(Custom), HlslBody);
+			}
+		}
+		Custom->ReconstructNode();
+		Custom->PostEditChange();
+		Graph->NotifyGraphChanged();
+	}
+
+	Script->MarkPackageDirty();
+	UEditorAssetLibrary::SaveLoadedAsset(Script);
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	MCPSetCreated(Res);
+	Res->SetStringField(TEXT("path"), Script->GetPathName());
+	Res->SetStringField(TEXT("name"), Name);
+	Res->SetNumberField(TEXT("requestedInputs"), InputCount);
+	Res->SetNumberField(TEXT("requestedOutputs"), OutputCount);
+	Res->SetStringField(TEXT("note"), TEXT("Empty scratch module created. Open in Niagara editor to add logic, or use set_niagara_module_input to configure."));
 	MCPSetDeleteAssetRollback(Res, Script->GetPathName());
 	return MCPResult(Res);
 }

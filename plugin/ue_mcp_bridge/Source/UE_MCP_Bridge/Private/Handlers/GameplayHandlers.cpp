@@ -74,6 +74,9 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimNode_StateMachine.h"
+#include "NavMesh/RecastNavMesh.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/DamageType.h"
 
 void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -130,6 +133,8 @@ void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("get_pie_anim_state"), &GetPieAnimState);
 	Registry.RegisterHandler(TEXT("get_pie_anim_properties"), &GetPieAnimProperties);
 	Registry.RegisterHandler(TEXT("get_pie_subsystem_state"), &GetPieSubsystemState);
+	Registry.RegisterHandler(TEXT("get_navmesh_details"), &GetNavmeshDetails);
+	Registry.RegisterHandler(TEXT("apply_damage_in_pie"), &ApplyDamageInPie);
 }
 
 TSharedPtr<FJsonValue> FGameplayHandlers::CreateSmartObjectDefinition(const TSharedPtr<FJsonObject>& Params)
@@ -2220,15 +2225,11 @@ TSharedPtr<FJsonValue> FGameplayHandlers::AddImcMapping(const TSharedPtr<FJsonOb
 
 	IMC->MapKey(InputAction, Key);
 
-	// Save the asset
+	// Mark dirty — caller can use asset(save) to persist (#197 fix: SavePackage crash)
 	UPackage* Pkg = IMC->GetOutermost();
 	if (Pkg)
 	{
 		Pkg->MarkPackageDirty();
-		FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-		FSavePackageArgs SaveArgs;
-		SaveArgs.TopLevelFlags = RF_Standalone;
-		UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
 	}
 
 	auto Result = MCPSuccess();
@@ -2236,7 +2237,6 @@ TSharedPtr<FJsonValue> FGameplayHandlers::AddImcMapping(const TSharedPtr<FJsonOb
 	Result->SetStringField(TEXT("imcPath"), IMC->GetPathName());
 	Result->SetStringField(TEXT("inputAction"), InputAction->GetPathName());
 	Result->SetStringField(TEXT("key"), KeyName);
-	// No rollback: no paired remove_imc_mapping handler.
 
 	return MCPResult(Result);
 }
@@ -2279,15 +2279,29 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 			(*ModObj)->TryGetStringField(TEXT("type"), TypeName);
 			if (TypeName.IsEmpty()) continue;
 
-			// Resolve class: "DeadZone" → UInputModifierDeadZone
-			FString ClassName = TypeName;
-			if (!ClassName.StartsWith(TEXT("UInputModifier")))
+			// Resolve class: try multiple patterns (#169 fix)
+			// "DeadZone" → UInputModifierDeadZone, "Negate" → UInputModifierNegate, etc.
+			UClass* ModClass = nullptr;
 			{
-				ClassName = TEXT("UInputModifier") + ClassName;
+				TArray<FString> Candidates;
+				if (TypeName.StartsWith(TEXT("UInputModifier")) || TypeName.StartsWith(TEXT("InputModifier")))
+				{
+					Candidates.Add(TypeName);
+				}
+				else
+				{
+					Candidates.Add(TEXT("UInputModifier") + TypeName);
+					Candidates.Add(TEXT("InputModifier") + TypeName);
+					Candidates.Add(TypeName);
+				}
+				for (const FString& Cand : Candidates)
+				{
+					ModClass = FindClassByShortName(Cand);
+					if (ModClass && ModClass->IsChildOf(UInputModifier::StaticClass())) break;
+					ModClass = nullptr;
+				}
 			}
-
-			UClass* ModClass = FindClassByShortName(ClassName);
-			if (!ModClass || !ModClass->IsChildOf(UInputModifier::StaticClass()))
+			if (!ModClass)
 			{
 				continue; // skip unknown modifier types
 			}
@@ -2376,14 +2390,28 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 			(*TrigObj)->TryGetStringField(TEXT("type"), TypeName);
 			if (TypeName.IsEmpty()) continue;
 
-			FString ClassName = TypeName;
-			if (!ClassName.StartsWith(TEXT("UInputTrigger")))
+			// Resolve trigger class: try multiple patterns (#169 fix)
+			UClass* TrigClass = nullptr;
 			{
-				ClassName = TEXT("UInputTrigger") + ClassName;
+				TArray<FString> Candidates;
+				if (TypeName.StartsWith(TEXT("UInputTrigger")) || TypeName.StartsWith(TEXT("InputTrigger")))
+				{
+					Candidates.Add(TypeName);
+				}
+				else
+				{
+					Candidates.Add(TEXT("UInputTrigger") + TypeName);
+					Candidates.Add(TEXT("InputTrigger") + TypeName);
+					Candidates.Add(TypeName);
+				}
+				for (const FString& Cand : Candidates)
+				{
+					TrigClass = FindClassByShortName(Cand);
+					if (TrigClass && TrigClass->IsChildOf(UInputTrigger::StaticClass())) break;
+					TrigClass = nullptr;
+				}
 			}
-
-			UClass* TrigClass = FindClassByShortName(ClassName);
-			if (!TrigClass || !TrigClass->IsChildOf(UInputTrigger::StaticClass()))
+			if (!TrigClass)
 			{
 				continue;
 			}
@@ -2424,15 +2452,11 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 		}
 	}
 
-	// Save
+	// Mark dirty — caller can use asset(save) to persist (#197 fix)
 	UPackage* Pkg = IMC->GetOutermost();
 	if (Pkg)
 	{
 		Pkg->MarkPackageDirty();
-		FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-		FSavePackageArgs SaveArgs;
-		SaveArgs.TopLevelFlags = RF_Standalone;
-		UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
 	}
 
 	auto Result = MCPSuccess();
@@ -2493,11 +2517,9 @@ namespace ImcEdit_Internal
 	{
 		UPackage* Pkg = IMC->GetOutermost();
 		if (!Pkg) return false;
+		// Mark dirty only — caller can use asset(save) to persist (#197 fix)
 		Pkg->MarkPackageDirty();
-		const FString FileName = FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension());
-		FSavePackageArgs SaveArgs;
-		SaveArgs.TopLevelFlags = RF_Standalone;
-		return UPackage::SavePackage(Pkg, nullptr, *FileName, SaveArgs);
+		return true;
 	}
 }
 
@@ -3116,5 +3138,146 @@ TSharedPtr<FJsonValue> FGameplayHandlers::ReadBehaviorTreeGraph(const TSharedPtr
 		RootDecs.Add(MakeShared<FJsonValueObject>(DObj));
 	}
 	Result->SetArrayField(TEXT("rootDecorators"), RootDecs);
+	return MCPResult(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #163  get_navmesh_details — Detailed ARecastNavMesh configuration
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::GetNavmeshDetails(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+
+	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+	if (!NavSys)
+	{
+		return MCPError(TEXT("No navigation system found in editor world."));
+	}
+
+	// Find the first ARecastNavMesh in the nav data set
+	ARecastNavMesh* RecastNav = nullptr;
+	for (ANavigationData* NavData : NavSys->NavDataSet)
+	{
+		RecastNav = Cast<ARecastNavMesh>(NavData);
+		if (RecastNav) break;
+	}
+
+	// Fallback: iterate world actors
+	if (!RecastNav)
+	{
+		for (TActorIterator<ARecastNavMesh> It(World); It; ++It)
+		{
+			RecastNav = *It;
+			break;
+		}
+	}
+
+	if (!RecastNav)
+	{
+		return MCPError(TEXT("No ARecastNavMesh found. Add a NavMeshBoundsVolume and build navigation."));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("name"), RecastNav->GetName());
+	Result->SetStringField(TEXT("class"), RecastNav->GetClass()->GetName());
+
+	// Cell / voxelization
+	Result->SetNumberField(TEXT("cellSize"), RecastNav->CellSize);
+	Result->SetNumberField(TEXT("cellHeight"), RecastNav->CellHeight);
+
+	// Agent
+	Result->SetNumberField(TEXT("agentRadius"), RecastNav->AgentRadius);
+	Result->SetNumberField(TEXT("agentHeight"), RecastNav->AgentHeight);
+	Result->SetNumberField(TEXT("agentMaxSlope"), RecastNav->AgentMaxSlope);
+	Result->SetNumberField(TEXT("agentMaxStepHeight"), RecastNav->AgentMaxStepHeight);
+
+	// Tile / region
+	Result->SetNumberField(TEXT("tileSize"), static_cast<double>(RecastNav->TileSizeUU));
+	Result->SetNumberField(TEXT("minRegionArea"), RecastNav->MinRegionArea);
+	Result->SetNumberField(TEXT("mergingRegionSize"), RecastNav->MergeRegionSize);
+
+	// Additional useful fields
+	Result->SetNumberField(TEXT("maxSimplificationError"), RecastNav->MaxSimplificationError);
+	Result->SetBoolField(TEXT("fixedTilePoolSize"), RecastNav->bFixedTilePoolSize);
+	Result->SetNumberField(TEXT("tilePoolSize"), static_cast<double>(RecastNav->TilePoolSize));
+	Result->SetBoolField(TEXT("drawFilledPolys"), RecastNav->bDrawFilledPolys);
+
+	// Nav bounds volumes count
+	int32 BoundsCount = 0;
+	for (TActorIterator<ANavMeshBoundsVolume> It(World); It; ++It)
+	{
+		++BoundsCount;
+	}
+	Result->SetNumberField(TEXT("navMeshBoundsVolumeCount"), BoundsCount);
+
+	return MCPResult(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
+// #186  apply_damage_in_pie — Apply damage to a PIE actor via UGameplayStatics
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::ApplyDamageInPie(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+
+	double BaseDamage = OptionalNumber(Params, TEXT("baseDamage"), 10.0);
+	FString DamageTypeClassName = OptionalString(Params, TEXT("damageTypeClass"), TEXT(""));
+
+	// Get PIE world
+	FWorldContext* PIEContext = GEditor->GetPIEWorldContext();
+	if (!PIEContext || !PIEContext->World())
+	{
+		return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
+	}
+	UWorld* PIEWorld = PIEContext->World();
+
+	// Find actor by label or name
+	AActor* TargetActor = nullptr;
+	for (TActorIterator<AActor> It(PIEWorld); It; ++It)
+	{
+		if ((*It)->GetActorLabel() == ActorLabel || (*It)->GetName() == ActorLabel)
+		{
+			TargetActor = *It;
+			break;
+		}
+	}
+
+	if (!TargetActor)
+	{
+		return MCPError(FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
+	}
+
+	// Resolve damage type
+	TSubclassOf<UDamageType> DamageTypeClass = UDamageType::StaticClass();
+	if (!DamageTypeClassName.IsEmpty())
+	{
+		UClass* FoundClass = FindClassByShortName(DamageTypeClassName);
+		if (FoundClass && FoundClass->IsChildOf(UDamageType::StaticClass()))
+		{
+			DamageTypeClass = FoundClass;
+		}
+	}
+
+	// We need an instigator — use the first player controller as event instigator
+	APlayerController* PC = PIEWorld->GetFirstPlayerController();
+	AActor* DamageCauser = PC ? PC->GetPawn() : nullptr;
+	AController* InstigatorController = PC;
+
+	// Apply damage
+	float ActualDamage = UGameplayStatics::ApplyDamage(
+		TargetActor,
+		static_cast<float>(BaseDamage),
+		InstigatorController,
+		DamageCauser,
+		DamageTypeClass
+	);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetStringField(TEXT("actorClass"), TargetActor->GetClass()->GetName());
+	Result->SetNumberField(TEXT("baseDamage"), BaseDamage);
+	Result->SetNumberField(TEXT("actualDamage"), static_cast<double>(ActualDamage));
+	Result->SetStringField(TEXT("damageType"), DamageTypeClass->GetName());
 	return MCPResult(Result);
 }

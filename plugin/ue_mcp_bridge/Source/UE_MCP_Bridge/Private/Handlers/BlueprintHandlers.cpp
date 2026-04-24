@@ -37,6 +37,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_VariableSet.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_CallDelegate.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Misc/MessageDialog.h"
@@ -119,6 +120,13 @@ void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	// v0.7.17 issue #130: bulk graph node import via T3D copy/paste
 	Registry.RegisterHandler(TEXT("export_nodes_t3d"), &ExportNodesT3D);
 	Registry.RegisterHandler(TEXT("import_nodes_t3d"), &ImportNodesT3D);
+
+	// issues #182/#183: C++ class CDO property access
+	Registry.RegisterHandler(TEXT("set_cdo_property"), &SetCdoProperty);
+	Registry.RegisterHandler(TEXT("get_cdo_properties"), &GetCdoProperties);
+
+	// issue #195: run construction script and inspect resulting components
+	Registry.RegisterHandler(TEXT("run_construction_script"), &RunConstructionScript);
 }
 
 // ---------------------------------------------------------------------------
@@ -615,12 +623,7 @@ FEdGraphPinType FBlueprintHandlers::MakePinType(const FString& TypeStr)
 		{
 			// (#140) Last-ditch: treat as a bare class name (e.g. "Actor", "Pawn", "PlayerController").
 		}
-		else
-		{
-			// Default to real/float
-			PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
-			PinType.PinSubCategory = UEdGraphSchema_K2::PC_Double;
-		}
+		// else: PinCategory remains NAME_None — caller must check for unresolved type (#181)
 	}
 
 	return PinType;
@@ -965,6 +968,11 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddVariable(const TSharedPtr<FJsonObj
 	}
 
 	FEdGraphPinType PinType = MakePinType(VarType);
+
+	if (PinType.PinCategory == NAME_None)
+	{
+		return MCPError(FString::Printf(TEXT("Unrecognized variable type: '%s'. Use a known type (Bool, Int, Float, String, Name, Text, Byte, Object, Vector, Rotator, Transform, GameplayTag, etc.) or a full class/struct path."), *VarType));
+	}
 
 	bool bSuccess = FBlueprintEditorUtils::AddMemberVariable(Blueprint, VarNameFName, PinType);
 
@@ -1389,7 +1397,10 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ListBlueprintVariables(const TSharedP
 		}
 
 		VarObj->SetBoolField(TEXT("instanceEditable"),
-			!Var.HasMetaData(FBlueprintMetadata::MD_Private) && Var.PropertyFlags & CPF_Edit);
+			!Var.HasMetaData(FBlueprintMetadata::MD_Private) && (Var.PropertyFlags & CPF_Edit) != 0);
+
+		VarObj->SetBoolField(TEXT("exposeOnSpawn"),
+			Var.HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn) || (Var.PropertyFlags & CPF_ExposeOnSpawn) != 0);
 
 		Variables.Add(MakeShared<FJsonValueObject>(VarObj));
 	}
@@ -1444,6 +1455,24 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetVariableProperties(const TSharedPt
 		PrevTooltip = FoundVar->GetMetaData(FBlueprintMetadata::MD_Tooltip);
 	}
 
+	// Set expose on spawn
+	bool bExposeOnSpawn = false;
+	const bool bHasExposeOnSpawn = Params->TryGetBoolField(TEXT("exposeOnSpawn"), bExposeOnSpawn);
+	const bool bPrevExposeOnSpawn = FoundVar->HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn);
+	if (bHasExposeOnSpawn)
+	{
+		if (bExposeOnSpawn)
+		{
+			FoundVar->SetMetaData(FBlueprintMetadata::MD_ExposeOnSpawn, TEXT("true"));
+			FoundVar->PropertyFlags |= CPF_ExposeOnSpawn;
+		}
+		else
+		{
+			FoundVar->RemoveMetaData(FBlueprintMetadata::MD_ExposeOnSpawn);
+			FoundVar->PropertyFlags &= ~CPF_ExposeOnSpawn;
+		}
+	}
+
 	// Set instance editable
 	bool bInstanceEditable = false;
 	const bool bHasInstanceEditable = Params->TryGetBoolField(TEXT("instanceEditable"), bInstanceEditable);
@@ -1478,6 +1507,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetVariableProperties(const TSharedPt
 
 	// Detect no-op: nothing requested OR every requested field already matches
 	const bool bAnyChanged =
+		(bHasExposeOnSpawn && bExposeOnSpawn != bPrevExposeOnSpawn) ||
 		(bHasInstanceEditable && bInstanceEditable != bPrevInstanceEditable) ||
 		(bHasCategory && CategoryStr != PrevCategory) ||
 		(bHasTooltip && TooltipStr != PrevTooltip);
@@ -1511,6 +1541,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetVariableProperties(const TSharedPt
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 	Payload->SetStringField(TEXT("path"), AssetPath);
 	Payload->SetStringField(TEXT("name"), VarName);
+	if (bHasExposeOnSpawn) Payload->SetBoolField(TEXT("exposeOnSpawn"), bPrevExposeOnSpawn);
 	if (bHasInstanceEditable) Payload->SetBoolField(TEXT("instanceEditable"), bPrevInstanceEditable);
 	if (bHasCategory) Payload->SetStringField(TEXT("category"), PrevCategory);
 	if (bHasTooltip) Payload->SetStringField(TEXT("tooltip"), PrevTooltip);
@@ -1906,6 +1937,74 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddNode(const TSharedPtr<FJsonObject>
 				if (CastTargetClass)
 				{
 					CastNode->TargetType = CastTargetClass;
+				}
+			}
+		}
+	}
+
+	// #189: K2Node_CallDelegate — bind the DelegateReference so the node resolves
+	// its signature and generates correct pins for multicast delegate invocation.
+	else if (UK2Node_CallDelegate* DelegateNode = Cast<UK2Node_CallDelegate>(NewNode))
+	{
+		if (NodeParams)
+		{
+			FString DelegateName;
+			FString OwnerClass;
+
+			// Accept flat params: delegateName / functionName, ownerClass / targetClass
+			if (!(*NodeParams)->TryGetStringField(TEXT("delegateName"), DelegateName))
+			{
+				if (!(*NodeParams)->TryGetStringField(TEXT("functionName"), DelegateName))
+					(*NodeParams)->TryGetStringField(TEXT("memberName"), DelegateName);
+			}
+			if (!(*NodeParams)->TryGetStringField(TEXT("ownerClass"), OwnerClass))
+			{
+				if (!(*NodeParams)->TryGetStringField(TEXT("targetClass"), OwnerClass))
+					(*NodeParams)->TryGetStringField(TEXT("memberParent"), OwnerClass);
+			}
+
+			// Also accept nested: {"DelegateReference":{"MemberName":"X","MemberParent":"Y"}}
+			if (DelegateName.IsEmpty())
+			{
+				const TSharedPtr<FJsonObject>* DelRef = nullptr;
+				if ((*NodeParams)->TryGetObjectField(TEXT("DelegateReference"), DelRef))
+				{
+					(*DelRef)->TryGetStringField(TEXT("MemberName"), DelegateName);
+					if (OwnerClass.IsEmpty())
+						(*DelRef)->TryGetStringField(TEXT("MemberParent"), OwnerClass);
+				}
+			}
+
+			if (!DelegateName.IsEmpty())
+			{
+				if (!OwnerClass.IsEmpty())
+				{
+					UClass* Owner = LoadObject<UClass>(nullptr, *OwnerClass);
+					if (!Owner) Owner = FindClassByShortName(OwnerClass);
+					if (Owner)
+					{
+						// Check if the property is a multicast delegate on the owner class
+						FProperty* Prop = Owner->FindPropertyByName(FName(*DelegateName));
+						if (Prop)
+						{
+							bool bIsSelf = Blueprint->ParentClass && Blueprint->ParentClass->IsChildOf(Owner);
+							DelegateNode->SetFromProperty(Prop, bIsSelf, Owner);
+						}
+						else
+						{
+							// Fall back to setting the member reference directly
+							bool bIsSelf = Blueprint->ParentClass && Blueprint->ParentClass->IsChildOf(Owner);
+							if (bIsSelf)
+								DelegateNode->DelegateReference.SetSelfMember(FName(*DelegateName));
+							else
+								DelegateNode->DelegateReference.SetExternalMember(FName(*DelegateName), Owner);
+						}
+					}
+				}
+				else
+				{
+					// Self member — delegate belongs to the Blueprint's own class
+					DelegateNode->DelegateReference.SetSelfMember(FName(*DelegateName));
 				}
 			}
 		}
@@ -3178,8 +3277,14 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetClassDefault(const TSharedPtr<FJso
 	FString PropertyName;
 	if (auto Err = RequireString(Params, TEXT("propertyName"), PropertyName)) return Err;
 
-	FString Value;
-	if (auto Err = RequireString(Params, TEXT("value"), Value)) return Err;
+	// Accept value as any JSON type (string, number, bool, object, array).
+	// This enables setting TArray<FStruct> with nested UObject refs via JSON
+	// instead of requiring arcane ImportText format strings (#196, #199).
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
+	{
+		return MCPError(TEXT("Missing 'value' parameter"));
+	}
 
 	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
 	if (!Blueprint)
@@ -3243,63 +3348,25 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetClassDefault(const TSharedPtr<FJso
 	// Capture previous value for rollback and idempotency
 	FString PrevValue;
 	FinalProp->ExportText_Direct(PrevValue, ValuePtr, ValuePtr, nullptr, PPF_None);
-	if (PrevValue == Value)
+
+	CDO->Modify();
+	FString SetErr;
+	if (!MCPJsonProperty::SetJsonOnProperty(FinalProp, ValuePtr, ValueField, SetErr))
+	{
+		return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
+	}
+
+	// Re-export for rollback payload and no-op detection
+	FString NewValue;
+	FinalProp->ExportText_Direct(NewValue, ValuePtr, ValuePtr, nullptr, PPF_None);
+	if (NewValue == PrevValue)
 	{
 		auto Noop = MCPSuccess();
 		MCPSetExisted(Noop);
 		Noop->SetStringField(TEXT("path"), AssetPath);
 		Noop->SetStringField(TEXT("propertyName"), PropertyName);
-		Noop->SetStringField(TEXT("value"), Value);
+		Noop->SetStringField(TEXT("value"), NewValue);
 		return MCPResult(Noop);
-	}
-
-	if (FClassProperty* ClassProp = CastField<FClassProperty>(FinalProp))
-	{
-		// TSubclassOf<T> -- load the class by path or short name
-		UClass* ClassVal = LoadObject<UClass>(nullptr, *Value);
-		if (!ClassVal) ClassVal = FindClassByShortName(Value);
-		if (ClassVal)
-		{
-			ClassProp->SetObjectPropertyValue(ValuePtr, ClassVal);
-		}
-		else
-		{
-			return MCPError(FString::Printf(
-				TEXT("Could not find class '%s' for property '%s'"), *Value, *PropertyName));
-		}
-	}
-	else if (FSoftClassProperty* SoftClassProp = CastField<FSoftClassProperty>(FinalProp))
-	{
-		SoftClassProp->SetPropertyValue(ValuePtr, FSoftObjectPtr(FSoftObjectPath(Value)));
-	}
-	else if (FObjectPropertyBase* ObjProp = CastField<FObjectPropertyBase>(FinalProp))
-	{
-		UObject* LoadedObj = LoadObject<UObject>(nullptr, *Value);
-		if (LoadedObj)
-		{
-			ObjProp->SetObjectPropertyValue(ValuePtr, LoadedObj);
-		}
-		else
-		{
-			return MCPError(FString::Printf(
-				TEXT("Could not load object at '%s' for property '%s'"), *Value, *PropertyName));
-		}
-	}
-	else if (FSoftObjectProperty* SoftProp = CastField<FSoftObjectProperty>(FinalProp))
-	{
-		FSoftObjectPath SoftPath(Value);
-		SoftProp->SetPropertyValue(ValuePtr, FSoftObjectPtr(SoftPath));
-	}
-	else
-	{
-		// Generic: ImportText handles FName, int, float, bool, FVector, FGameplayTag,
-		// FGameplayTagContainer, TArray, TMap, etc.
-		const TCHAR* ImportResult = FinalProp->ImportText_Direct(*Value, ValuePtr, CDO, PPF_None);
-		if (!ImportResult)
-		{
-			return MCPError(FString::Printf(
-				TEXT("ImportText failed for property '%s' with value '%s'. Check UE text format."), *PropertyName, *Value));
-		}
 	}
 
 	CDO->PostEditChange();
@@ -3319,7 +3386,7 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetClassDefault(const TSharedPtr<FJso
 	MCPSetUpdated(Result);
 	Result->SetStringField(TEXT("path"), AssetPath);
 	Result->SetStringField(TEXT("propertyName"), PropertyName);
-	Result->SetStringField(TEXT("value"), Value);
+	Result->SetStringField(TEXT("value"), NewValue);
 
 	// Rollback: self-inverse with previous value
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -3597,6 +3664,11 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddFunctionParameter(const TSharedPtr
 
 	FEdGraphPinType PinType = MakePinType(ParamType);
 
+	if (PinType.PinCategory == NAME_None)
+	{
+		return MCPError(FString::Printf(TEXT("Unrecognized parameter type: '%s'. Use a known type (Bool, Int, Float, String, Name, Text, Byte, Object, Vector, Rotator, Transform, GameplayTag, etc.) or a full class/struct path."), *ParamType));
+	}
+
 	if (bIsOutput)
 	{
 		// For output parameters, find or create the function result node
@@ -3871,6 +3943,12 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddLocalVariable(const TSharedPtr<FJs
 	}
 
 	FEdGraphPinType PinType = MakePinType(TypeStr);
+
+	if (PinType.PinCategory == NAME_None)
+	{
+		return MCPError(FString::Printf(TEXT("Unrecognized variable type: '%s'. Use a known type (Bool, Int, Float, String, Name, Text, Byte, Object, Vector, Rotator, Transform, GameplayTag, etc.) or a full class/struct path."), *TypeStr));
+	}
+
 	FBPVariableDescription NewVar;
 	NewVar.VarName = VarFName;
 	NewVar.VarGuid = FGuid::NewGuid();
@@ -4516,5 +4594,306 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ImportNodesT3D(const TSharedPtr<FJson
 	Result->SetNumberField(TEXT("count"), NodeIds.Num());
 	// No rollback: delete_node only deletes one node at a time and the bulk
 	// import has no natural key. Caller must clean up by node id if needed.
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// set_cdo_property -- Set a property on any C++ class CDO (not Blueprint CDO)
+// Params: className (required), propertyName (required), value (required)
+// Issues #182/#183
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FBlueprintHandlers::SetCdoProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ClassName;
+	if (auto Err = RequireString(Params, TEXT("className"), ClassName)) return Err;
+
+	FString PropertyName;
+	if (auto Err = RequireString(Params, TEXT("propertyName"), PropertyName)) return Err;
+
+	// Accept value as any JSON type (string, number, bool, object, array).
+	// Enables setting TArray<FStruct> with nested UObject refs via JSON (#196, #199).
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
+	{
+		return MCPError(TEXT("Missing 'value' parameter"));
+	}
+
+	// Resolve UClass: try full path first (e.g. "/Script/Engine.Actor"), then short name
+	UClass* Class = LoadObject<UClass>(nullptr, *ClassName);
+	if (!Class)
+	{
+		Class = FindClassByShortName(ClassName);
+	}
+	if (!Class)
+	{
+		return MCPError(FString::Printf(TEXT("Class not found: %s"), *ClassName));
+	}
+
+	UObject* CDO = Class->GetDefaultObject();
+	if (!CDO)
+	{
+		return MCPError(FString::Printf(TEXT("Could not get CDO for class: %s"), *Class->GetName()));
+	}
+
+	// Navigate dotted property paths (e.g. "SomeStruct.Field")
+	TArray<FString> PathParts;
+	PropertyName.ParseIntoArray(PathParts, TEXT("."));
+
+	UStruct* CurrentStruct = Class;
+	void* CurrentContainer = CDO;
+	FProperty* FinalProp = nullptr;
+
+	for (int32 i = 0; i < PathParts.Num(); i++)
+	{
+		FProperty* Prop = CurrentStruct->FindPropertyByName(FName(*PathParts[i]));
+		if (!Prop) break;
+
+		if (i < PathParts.Num() - 1)
+		{
+			FStructProperty* StructProp = CastField<FStructProperty>(Prop);
+			if (!StructProp) break;
+			CurrentContainer = StructProp->ContainerPtrToValuePtr<void>(CurrentContainer);
+			CurrentStruct = StructProp->Struct;
+		}
+		else
+		{
+			FinalProp = Prop;
+		}
+	}
+
+	if (!FinalProp)
+	{
+		TArray<FString> PropNames;
+		for (TFieldIterator<FProperty> It(Class); It; ++It)
+		{
+			PropNames.Add(It->GetName());
+		}
+		return MCPError(FString::Printf(
+			TEXT("Property '%s' not found on %s. Properties: [%s]"),
+			*PropertyName, *Class->GetName(),
+			*FString::Join(PropNames, TEXT(", "))));
+	}
+
+	void* ValuePtr = FinalProp->ContainerPtrToValuePtr<void>(CurrentContainer);
+
+	// Capture previous value for rollback / idempotency
+	FString PrevValue;
+	FinalProp->ExportText_Direct(PrevValue, ValuePtr, ValuePtr, nullptr, PPF_None);
+
+	CDO->Modify();
+	FString SetErr;
+	if (!MCPJsonProperty::SetJsonOnProperty(FinalProp, ValuePtr, ValueField, SetErr))
+	{
+		return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
+	}
+
+	// Re-export for rollback payload and no-op detection
+	FString NewValue;
+	FinalProp->ExportText_Direct(NewValue, ValuePtr, ValuePtr, nullptr, PPF_None);
+	if (NewValue == PrevValue)
+	{
+		auto Noop = MCPSuccess();
+		MCPSetExisted(Noop);
+		Noop->SetStringField(TEXT("className"), ClassName);
+		Noop->SetStringField(TEXT("propertyName"), PropertyName);
+		Noop->SetStringField(TEXT("value"), NewValue);
+		return MCPResult(Noop);
+	}
+
+	CDO->PostEditChange();
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("className"), ClassName);
+	Result->SetStringField(TEXT("propertyName"), PropertyName);
+	Result->SetStringField(TEXT("value"), NewValue);
+
+	// Rollback: restore the previous value
+	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("className"), ClassName);
+	Payload->SetStringField(TEXT("propertyName"), PropertyName);
+	Payload->SetStringField(TEXT("value"), PrevValue);
+	MCPSetRollback(Result, TEXT("set_cdo_property"), Payload);
+
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// get_cdo_properties -- Read properties from any C++ class CDO
+// Params: className (required), propertyNames (optional array of strings)
+// Issue #183
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FBlueprintHandlers::GetCdoProperties(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ClassName;
+	if (auto Err = RequireString(Params, TEXT("className"), ClassName)) return Err;
+
+	// Resolve UClass
+	UClass* Class = LoadObject<UClass>(nullptr, *ClassName);
+	if (!Class)
+	{
+		Class = FindClassByShortName(ClassName);
+	}
+	if (!Class)
+	{
+		return MCPError(FString::Printf(TEXT("Class not found: %s"), *ClassName));
+	}
+
+	UObject* CDO = Class->GetDefaultObject();
+	if (!CDO)
+	{
+		return MCPError(FString::Printf(TEXT("Could not get CDO for class: %s"), *Class->GetName()));
+	}
+
+	// Optional filter: specific property names
+	TSet<FString> Filter;
+	const TArray<TSharedPtr<FJsonValue>>* PropNamesArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("propertyNames"), PropNamesArr) && PropNamesArr)
+	{
+		for (const auto& V : *PropNamesArr)
+		{
+			FString S;
+			if (V->TryGetString(S))
+			{
+				Filter.Add(S);
+			}
+		}
+	}
+
+	TSharedPtr<FJsonObject> PropsObj = MakeShared<FJsonObject>();
+	for (TFieldIterator<FProperty> It(Class); It; ++It)
+	{
+		FProperty* Prop = *It;
+		if (!Prop) continue;
+
+		const FString PropName = Prop->GetName();
+		if (Filter.Num() > 0 && !Filter.Contains(PropName))
+		{
+			continue;
+		}
+
+		void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(CDO);
+		FString ExportedValue;
+		Prop->ExportText_Direct(ExportedValue, ValuePtr, ValuePtr, nullptr, PPF_None);
+		PropsObj->SetStringField(PropName, ExportedValue);
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("className"), Class->GetPathName());
+	Result->SetStringField(TEXT("classShortName"), Class->GetName());
+	Result->SetObjectField(TEXT("properties"), PropsObj);
+	Result->SetNumberField(TEXT("count"), PropsObj->Values.Num());
+
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// run_construction_script -- Spawn a temp actor from a Blueprint, run its
+// construction script, collect resulting component info, then destroy it.
+// Params: assetPath (required), location (optional {x,y,z})
+// Issue #195
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FBlueprintHandlers::RunConstructionScript(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+
+	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
+	if (!Blueprint)
+	{
+		return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *AssetPath));
+	}
+
+	UClass* SpawnClass = Blueprint->GeneratedClass;
+	if (!SpawnClass)
+	{
+		return MCPError(TEXT("Blueprint has no GeneratedClass (needs compilation first?)"));
+	}
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	// Parse optional spawn location
+	FVector SpawnLocation = FVector::ZeroVector;
+	const TSharedPtr<FJsonObject>* LocationObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("location"), LocationObj) && LocationObj)
+	{
+		double X = 0.0, Y = 0.0, Z = 0.0;
+		(*LocationObj)->TryGetNumberField(TEXT("x"), X);
+		(*LocationObj)->TryGetNumberField(TEXT("y"), Y);
+		(*LocationObj)->TryGetNumberField(TEXT("z"), Z);
+		SpawnLocation = FVector(X, Y, Z);
+	}
+
+	// Spawn a temporary actor
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.bNoFail = true;
+	SpawnParams.ObjectFlags |= RF_Transient; // Mark transient so it won't be saved
+
+	FRotator SpawnRotation = FRotator::ZeroRotator;
+	AActor* TempActor = World->SpawnActor<AActor>(SpawnClass, SpawnLocation, SpawnRotation, SpawnParams);
+	if (!TempActor)
+	{
+		return MCPError(TEXT("Failed to spawn temporary actor from Blueprint"));
+	}
+
+	// Collect component info
+	TArray<TSharedPtr<FJsonValue>> ComponentsArr;
+	TArray<UActorComponent*> Components;
+	TempActor->GetComponents(Components);
+
+	for (UActorComponent* Comp : Components)
+	{
+		if (!Comp) continue;
+
+		TSharedPtr<FJsonObject> CompObj = MakeShared<FJsonObject>();
+		CompObj->SetStringField(TEXT("name"), Comp->GetName());
+		CompObj->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
+
+		// If it's a scene component, include transform info
+		if (USceneComponent* SceneComp = Cast<USceneComponent>(Comp))
+		{
+			FTransform RelTrans = SceneComp->GetRelativeTransform();
+			FVector Loc = RelTrans.GetLocation();
+			FRotator Rot = RelTrans.GetRotation().Rotator();
+			FVector Scale = RelTrans.GetScale3D();
+
+			TSharedPtr<FJsonObject> TransObj = MakeShared<FJsonObject>();
+			TSharedPtr<FJsonObject> LocObj = MakeShared<FJsonObject>();
+			LocObj->SetNumberField(TEXT("x"), Loc.X);
+			LocObj->SetNumberField(TEXT("y"), Loc.Y);
+			LocObj->SetNumberField(TEXT("z"), Loc.Z);
+			TransObj->SetObjectField(TEXT("location"), LocObj);
+
+			TSharedPtr<FJsonObject> RotObj = MakeShared<FJsonObject>();
+			RotObj->SetNumberField(TEXT("pitch"), Rot.Pitch);
+			RotObj->SetNumberField(TEXT("yaw"), Rot.Yaw);
+			RotObj->SetNumberField(TEXT("roll"), Rot.Roll);
+			TransObj->SetObjectField(TEXT("rotation"), RotObj);
+
+			TSharedPtr<FJsonObject> ScaleObj = MakeShared<FJsonObject>();
+			ScaleObj->SetNumberField(TEXT("x"), Scale.X);
+			ScaleObj->SetNumberField(TEXT("y"), Scale.Y);
+			ScaleObj->SetNumberField(TEXT("z"), Scale.Z);
+			TransObj->SetObjectField(TEXT("scale"), ScaleObj);
+
+			CompObj->SetObjectField(TEXT("relativeTransform"), TransObj);
+
+			// Is it the root?
+			CompObj->SetBoolField(TEXT("isRoot"), SceneComp == TempActor->GetRootComponent());
+		}
+
+		ComponentsArr.Add(MakeShared<FJsonValueObject>(CompObj));
+	}
+
+	// Destroy the temporary actor
+	World->DestroyActor(TempActor);
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetStringField(TEXT("className"), SpawnClass->GetName());
+	Result->SetArrayField(TEXT("components"), ComponentsArr);
+	Result->SetNumberField(TEXT("componentCount"), ComponentsArr.Num());
+
 	return MCPResult(Result);
 }

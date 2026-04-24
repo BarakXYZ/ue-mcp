@@ -70,6 +70,13 @@ private:
 	// v0.7.18 issue #138: reparent a Blueprint to a new parent class.
 	static TSharedPtr<FJsonValue> ReparentBlueprint(const TSharedPtr<FJsonObject>& Params);
 
+	// issues #182/#183: C++ class CDO property access
+	static TSharedPtr<FJsonValue> SetCdoProperty(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> GetCdoProperties(const TSharedPtr<FJsonObject>& Params);
+
+	// issue #195: run construction script and inspect resulting components
+	static TSharedPtr<FJsonValue> RunConstructionScript(const TSharedPtr<FJsonObject>& Params);
+
 	// Helper functions
 	static class UBlueprint* LoadBlueprint(const FString& AssetPath);
 	static struct FEdGraphPinType MakePinType(const FString& TypeStr);
