@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import type { createFlowTool } from "./flow-tool.js";
 import type { ToolContext } from "../types.js";
+import { info, error as logError } from "../log.js";
 
 type FlowTool = ReturnType<typeof createFlowTool>;
 
@@ -77,12 +78,15 @@ export function startFlowHttpServer(
     }
   });
 
-  server.listen(port, host, () => {
-    console.error(`[ue-mcp] Flow HTTP server listening on http://${host}:${port}`);
+  // Attach the error handler BEFORE listen so that synchronous bind failures
+  // (EADDRINUSE / EACCES) surface via the handler rather than throwing out of
+  // the caller's try/catch after the fact.
+  server.on("error", (err) => {
+    logError("http", `flow HTTP server error on ${host}:${port}`, err);
   });
 
-  server.on("error", (err) => {
-    console.error(`[ue-mcp] HTTP server error: ${err instanceof Error ? err.message : err}`);
+  server.listen(port, host, () => {
+    info("http", `flow HTTP server listening on http://${host}:${port}`);
   });
 
   return { server, port, host };

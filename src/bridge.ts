@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { McpError, ErrorCode } from "./errors.js";
+import { debug, warn } from "./log.js";
 
 export interface BridgeResponse {
   id: string;
@@ -71,14 +72,12 @@ export class EditorBridge implements IBridge {
 
   startReconnecting(intervalMs = 15000): void {
     if (this.reconnectTimer) return;
-    this.reconnectTimer = setInterval(async () => {
+    this.reconnectTimer = setInterval(() => {
       if (this.isConnected) return;
-      try {
-        await this.connect();
-        console.error("[ue-mcp] Editor bridge reconnected");
-      } catch {
-        // silent retry
-      }
+      this.connect().then(
+        () => { warn("bridge", "editor bridge reconnected"); },
+        (e) => { debug("bridge", "reconnect attempt failed (will retry)", e); },
+      );
     }, intervalMs);
   }
 
@@ -145,8 +144,8 @@ export class EditorBridge implements IBridge {
         } else {
           pending.resolve(msg.result);
         }
-      } catch {
-        // malformed message, ignore
+      } catch (e) {
+        warn("bridge", "dropped malformed message from editor", e);
       }
     });
 
@@ -159,8 +158,10 @@ export class EditorBridge implements IBridge {
       this.ws = null;
     });
 
-    ws.on("error", () => {
-      // handled by close
+    ws.on("error", (err) => {
+      // `close` fires next and is where we reject pending calls; log here so
+      // the underlying socket error (ECONNRESET, etc.) is not invisible.
+      debug("bridge", "websocket error (close will follow)", err);
     });
   }
 }

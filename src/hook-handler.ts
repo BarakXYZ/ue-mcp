@@ -33,8 +33,22 @@ async function postToolUse(): Promise<void> {
     const raw = await readStdin();
     if (!raw.trim()) return;
     input = JSON.parse(raw);
-  } catch {
-    return; // unparseable → no-op
+  } catch (e) {
+    // We cannot log to stderr without breaking the Claude Code hook contract
+    // (stderr is surfaced to the agent). Write to a rotating diagnostic file
+    // so the failure is not completely invisible during debugging.
+    try {
+      const os = await import("node:os");
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      fs.appendFileSync(
+        path.join(os.tmpdir(), "ue-mcp-hook.log"),
+        `${new Date().toISOString()} post-tool-use: unparseable stdin :: ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+    } catch {
+      // logging is best-effort; the hook itself must not throw
+    }
+    return;
   }
 
   if (input.tool_input?.action !== "execute_python") return;

@@ -8,6 +8,7 @@ import { attach, attachSummary } from "./deployer.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { isDirectiveResponse, type ToolDef, type ToolContext } from "./types.js";
 import { McpError } from "./errors.js";
+import { info } from "./log.js";
 import { buildFlowRegistry } from "./flow/registry.js";
 import { loadFlowConfig } from "./flow/loader.js";
 import { createFlowTool } from "./flow/flow-tool.js";
@@ -188,9 +189,9 @@ async function main() {
   // ── Bridge connection ────────────────────────────────────────────
   try {
     await bridge.connect();
-    console.error("[ue-mcp] Editor bridge connected — live mode active");
-  } catch {
-    console.error("[ue-mcp] Editor not reachable — will retry in background");
+    info("bridge", "editor bridge connected - live mode active");
+  } catch (e) {
+    info("bridge", "editor not reachable - will retry in background", e);
   }
   bridge.startReconnecting();
 

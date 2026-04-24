@@ -5,6 +5,7 @@ import * as readline from "node:readline";
 import { ProjectContext } from "./project.js";
 import { deploy } from "./deployer.js";
 import { installSkills } from "./skills.js";
+import { warn as logWarn } from "./log.js";
 
 /* ------------------------------------------------------------------ */
 /*  Terminal helpers                                                    */
@@ -341,8 +342,8 @@ function writeMcpConfig(configPath: string, uprojectPath: string): void {
   if (fs.existsSync(configPath)) {
     try {
       existing = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    } catch {
-      // corrupt file, overwrite
+    } catch (e) {
+      logWarn("init", `MCP client config at ${configPath} was not valid JSON - overwriting with a fresh ue-mcp entry`, e);
     }
   }
 
@@ -382,8 +383,8 @@ function installClaudeHooks(settingsPath: string): void {
   if (fs.existsSync(settingsPath)) {
     try {
       existing = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-    } catch {
-      // corrupt — overwrite hooks section only
+    } catch (e) {
+      logWarn("init", `Claude settings at ${settingsPath} was not valid JSON - rewriting hooks section only`, e);
     }
   }
 
@@ -426,8 +427,8 @@ function writeProjectConfig(projectDir: string, disabled: string[]): void {
   if (fs.existsSync(configPath)) {
     try {
       existing = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    } catch {
-      // overwrite
+    } catch (e) {
+      logWarn("init", `.ue-mcp.json was not valid JSON - overwriting`, e);
     }
   }
 

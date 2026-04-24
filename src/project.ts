@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { McpError, ErrorCode } from "./errors.js";
+import { info, warn } from "./log.js";
+import { UProjectSchema, UeMcpConfigSchema } from "./schemas.js";
 
 export interface PluginInfo {
   name: string;
@@ -64,6 +66,12 @@ export class ProjectContext {
 
   resolveContentPath(assetPath: string): string {
     this.ensureLoaded();
+    // A trailing slash is an unambiguous directory hint; resolve as a dir
+    // rather than a file so "/Game/MyFolder/" does not become
+    // "/Game/MyFolder.uasset".
+    if (assetPath.endsWith("/") || assetPath.endsWith("\\")) {
+      return this.resolveContentDir(assetPath);
+    }
     if (isGamePath(assetPath)) {
       let stripped = stripGamePrefix(assetPath);
       if (!stripped.endsWith(".uasset") && !stripped.endsWith(".umap")) {
@@ -170,9 +178,16 @@ export class ProjectContext {
   private parseUProject(): void {
     if (!this.projectPath) return;
     try {
-      const json = JSON.parse(fs.readFileSync(this.projectPath, "utf-8"));
-      this.engineAssociation = json.EngineAssociation ?? null;
-    } catch {
+      const raw = JSON.parse(fs.readFileSync(this.projectPath, "utf-8"));
+      const parsed = UProjectSchema.safeParse(raw);
+      if (!parsed.success) {
+        warn("project", `.uproject at ${this.projectPath} did not match expected shape - engine association unknown`, parsed.error);
+        this.engineAssociation = null;
+        return;
+      }
+      this.engineAssociation = parsed.data.EngineAssociation ?? null;
+    } catch (e) {
+      warn("project", `.uproject at ${this.projectPath} was not valid JSON - engine association unknown`, e);
       this.engineAssociation = null;
     }
   }
@@ -182,10 +197,16 @@ export class ProjectContext {
     const configPath = path.join(this.projectDir, ".ue-mcp.json");
     if (!fs.existsSync(configPath)) return;
     try {
-      this.config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      console.error(`[ue-mcp] Loaded config from ${configPath}`);
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const parsed = UeMcpConfigSchema.safeParse(raw);
+      if (!parsed.success) {
+        warn("project", `.ue-mcp.json at ${configPath} did not match expected shape - using defaults`, parsed.error);
+        return;
+      }
+      this.config = parsed.data;
+      info("project", `loaded config from ${configPath}`);
     } catch (e) {
-      console.error(`[ue-mcp] Failed to parse .ue-mcp.json: ${e instanceof Error ? e.message : e}`);
+      warn("project", `failed to parse .ue-mcp.json at ${configPath} - using defaults`, e);
     }
   }
 }

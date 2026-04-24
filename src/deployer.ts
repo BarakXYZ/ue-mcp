@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
 import type { ProjectContext } from "./project.js";
+import { debug, warn } from "./log.js";
+import { UPluginSchema } from "./schemas.js";
 
 export interface DeployResult {
   pythonPluginEnabled: boolean;
@@ -144,9 +146,11 @@ function readUpluginVersion(upluginPath: string): string | null {
   try {
     if (!fs.existsSync(upluginPath)) return null;
     const raw = fs.readFileSync(upluginPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    return typeof parsed.VersionName === "string" ? parsed.VersionName : null;
-  } catch {
+    const parsed = UPluginSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return null;
+    return parsed.data.VersionName ?? null;
+  } catch (e) {
+    warn("deployer", `could not read VersionName from ${upluginPath}`, e);
     return null;
   }
 }
@@ -271,6 +275,10 @@ export function findEngineInstall(
 }
 
 function findEngineByGuid(guid: string): string | null {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guid)) {
+    debug("deployer", `refusing registry lookup for non-GUID engine association '${guid}'`);
+    return null;
+  }
   try {
     const output = execSync(
       `reg query "HKCU\\SOFTWARE\\Epic Games\\Unreal Engine\\Builds" /v "${guid}"`,
@@ -281,8 +289,8 @@ function findEngineByGuid(guid: string): string | null {
       const p = match[1].trim();
       if (fs.existsSync(p)) return p;
     }
-  } catch {
-    // registry key not found
+  } catch (e) {
+    debug("deployer", `no registry entry for GUID ${guid}`, e);
   }
   return null;
 }
@@ -308,8 +316,8 @@ function findLauncherEngine(association: string): string | null {
           }
         }
       }
-    } catch {
-      // malformed manifest
+    } catch (e) {
+      warn("deployer", `LauncherInstalled.dat at ${launcherDat} could not be parsed - falling back to drive-letter scan`, e);
     }
   }
 

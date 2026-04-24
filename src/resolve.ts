@@ -69,13 +69,22 @@ async function resolve() {
     fail("Not a git repository. Clone ue-mcp first.");
   }
 
-  // Detect repo owner/name from git remote
+  // Detect repo owner/name from git remote. If the remote is missing or
+  // unparseable, fall back to the upstream repo but make it loud so contributors
+  // working in a fork know the gh calls below will target db-lyon/ue-mcp.
+  const YELLOW = "\x1b[33m";
   let repo: string;
   try {
     const remote = run("git remote get-url origin");
     const match = remote.match(/[/:]([^/]+\/[^/.]+?)(?:\.git)?$/);
-    repo = match ? match[1] : "db-lyon/ue-mcp";
-  } catch {
+    if (match) {
+      repo = match[1];
+    } else {
+      console.error(`  ${YELLOW}!${RESET} origin remote '${remote.trim()}' did not match owner/repo pattern - falling back to db-lyon/ue-mcp`);
+      repo = "db-lyon/ue-mcp";
+    }
+  } catch (e) {
+    console.error(`  ${YELLOW}!${RESET} could not read origin remote (${e instanceof Error ? e.message : e}) - falling back to db-lyon/ue-mcp`);
     repo = "db-lyon/ue-mcp";
   }
 
