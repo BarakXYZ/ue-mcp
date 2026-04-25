@@ -6,6 +6,10 @@ import { McpError, ErrorCode } from "./errors.js";
 export interface ToolContext {
   bridge: IBridge;
   project: ProjectContext;
+  /** Lazy accessor for the active flow registry. Returns the merged
+   *  built-in + ue-mcp.yml flows. Used by project(get_status) so agents
+   *  see which canonical sequences are pre-encoded for this project. */
+  getFlows?: () => Array<{ name: string; description?: string }>;
 }
 
 export interface ToolDef {

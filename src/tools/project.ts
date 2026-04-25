@@ -99,11 +99,18 @@ export const projectTool: ToolDef = categoryTool(
   {
     get_status: {
       description: "Check server mode and editor connection",
-      handler: async (ctx) => ({
-        mode: ctx.bridge.isConnected ? "live" : "disconnected",
-        editorConnected: ctx.bridge.isConnected,
-        project: ctx.project.isLoaded ? { name: ctx.project.projectName, path: ctx.project.projectPath, contentDir: ctx.project.contentDir, engineAssociation: ctx.project.engineAssociation, config: Object.keys(ctx.project.config).length > 0 ? ctx.project.config : undefined } : null,
-      }),
+      handler: async (ctx) => {
+        const flows = ctx.getFlows?.() ?? [];
+        return {
+          mode: ctx.bridge.isConnected ? "live" : "disconnected",
+          editorConnected: ctx.bridge.isConnected,
+          project: ctx.project.isLoaded ? { name: ctx.project.projectName, path: ctx.project.projectPath, contentDir: ctx.project.contentDir, engineAssociation: ctx.project.engineAssociation, config: Object.keys(ctx.project.config).length > 0 ? ctx.project.config : undefined } : null,
+          // Pre-built sequences for this project. If the user's request
+          // matches a flow's name/description, prefer flow(action="run")
+          // over composing the sequence by hand. See SERVER_INSTRUCTIONS.
+          flows: flows.length > 0 ? flows : undefined,
+        };
+      },
     },
     set_project: {
       description: "Switch project. Params: projectPath",

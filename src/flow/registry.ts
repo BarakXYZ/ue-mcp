@@ -30,7 +30,7 @@ export function buildFlowRegistry(tools: ToolDef[]): TaskRegistry {
         registry.register(
           taskName,
           handlerTaskClass(taskName, (ctx: FlowContext, params: Record<string, unknown>) => {
-            const toolCtx: ToolContext = { bridge: ctx.bridge, project: ctx.project };
+            const toolCtx: ToolContext = { bridge: ctx.bridge, project: ctx.project, getFlows: ctx.getFlows };
             return originalHandler(toolCtx, params);
           }),
         );

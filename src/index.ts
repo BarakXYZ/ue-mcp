@@ -29,7 +29,23 @@ function withUpgradeNotice(content: TextBlock[]): TextBlock[] {
 async function main() {
   const bridge = new EditorBridge();
   const project = new ProjectContext();
-  const ctx: ToolContext = { bridge, project };
+
+  // Lazy flow accessor — reads ue-mcp.yml fresh each call so agents see
+  // edits without a server restart. project(get_status) uses this so the
+  // first call agents make in any session reveals the registered flows.
+  const getFlows = (): Array<{ name: string; description?: string }> => {
+    try {
+      const cfg = loadFlowConfig(ALL_TOOLS, project.projectDir ?? undefined).config;
+      return Object.entries(cfg.flows).map(([name, def]) => ({
+        name,
+        description: (def as { description?: string }).description,
+      }));
+    } catch {
+      return [];
+    }
+  };
+
+  const ctx: ToolContext = { bridge, project, getFlows };
 
   // Kick off the npm registry check in the background; the next tool response
   // injects the notice if a newer version is published.
@@ -63,7 +79,7 @@ async function main() {
       const action = params.action as string;
       const taskName = `${tool.name}.${action}`;
       const { action: _, ...taskParams } = params;
-      const flowCtx: FlowContext = { bridge, project };
+      const flowCtx: FlowContext = { bridge, project, getFlows };
 
       try {
         const task = await registry.create(taskName, flowCtx, taskParams);
