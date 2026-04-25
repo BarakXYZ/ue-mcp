@@ -138,6 +138,40 @@ feedback — Agent feedback submission
 • editor(action="focus_on_actor", actorLabel="MyActor") snaps the viewport to any actor.
 • Log output: editor(action="get_log", category="LogMCPBridge") to see bridge-specific logs.
 
+═══ FLOWS — READ BEFORE ACTING ═══
+
+Before you run bash/npm commands or chain 3+ category tool calls to
+satisfy a user request, look at the \`flows\` field returned by
+project(action="get_status").
+
+That field lists named, pre-built sequences for this project. Each
+entry has a name and description. If ANY flow's description matches
+what the user asked for, you MUST run it instead of building the
+sequence yourself.
+
+Examples:
+  User asks                          | Look for a flow like
+  ---------------------------------- | ------------------------------
+  "rebuild and relaunch the editor"  | rebuild, up:build
+  "run the smoke tests"              | smoke, test:smoke
+  "redeploy the plugin"              | deploy, redeploy
+  "package the project"              | package
+
+Run a matched flow with: flow(action="run", flowName="<name>")
+
+DO NOT:
+- Skip the get_status flows check before running bash/npm yourself.
+- Author a new flow on your own. Only the user authors flows.
+- Suggest a flow for a one-off task the user is unlikely to repeat.
+
+DO suggest a new flow IF AND ONLY IF all three are true:
+  1. You just finished a sequence with 3+ steps.
+  2. The sequence had the same shape every run, with only 1-2 values
+     changing.
+  3. The user is likely to ask for the same shape again.
+In that case say: "This sequence (X -> Y -> Z) might be worth registering
+as a flow in ue-mcp.yml. Want me to draft one?" Then STOP. Wait.
+
 ═══ FEEDBACK ═══
 If you had to use editor(action="execute_python") as a workaround because a native tool
 couldn't handle the task, keep a mental note of what you did and why. When your task is

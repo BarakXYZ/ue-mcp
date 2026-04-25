@@ -24,7 +24,11 @@ export function createFlowTool(
   return {
     name: "flow",
     description:
-      `Run or inspect named flows defined in ue-mcp.yml. Config is reloaded on every call — no restart needed.\n\n` +
+      `Run pre-built named sequences for this project. ALWAYS check ` +
+      `project(action="get_status") first - its 'flows' field lists what's available. ` +
+      `If a flow matches the user's request, run it via ` +
+      `flow(action="run", flowName="...") instead of composing the sequence by hand. ` +
+      `Config reloads on every call - no restart needed.\n\n` +
       `Actions:\n` +
       `- run: Execute a flow. Params: flowName, skip?, params?, rollback_on_failure?\n` +
       `- plan: Show execution plan without running. Params: flowName\n` +
