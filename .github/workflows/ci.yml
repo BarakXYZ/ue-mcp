@@ -55,6 +55,7 @@ jobs:
     permissions:
       contents: write   # for git tag push and gh-release
       id-token: write   # for npm provenance
+      statuses: write   # for posting landing/headline from the Promote step
     steps:
       - uses: actions/checkout@v4
         with:
