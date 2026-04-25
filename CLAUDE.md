@@ -53,24 +53,25 @@ UBT's incremental build + Live Coding can mask registration failures from earlie
 
 ## Release process
 
-After `package.json` version bump lands on `main`:
+CI **gates the publish job** on two pre-staged inputs against the release commit. If either is missing or malformed, the publish job fails before npm publish runs. Both must be in place before pushing the bump (CI polls each for ~60s after push to absorb the race).
 
-1. **Wait for CI** (~1-2 min) to create the GitHub release. It ships with an empty body.
-2. **Fill the release body:**
+1. **Author the release notes as a GitHub draft release.** No file is committed to the repo. The notes file lives anywhere local (gitignored, scratch dir, /tmp).
    ```bash
-   gh release edit vX.Y.Z --notes-file docs/release-notes-X.Y.Z.md
+   gh release create vX.Y.Z --draft --notes-file /path/to/local-notes.md
    ```
-3. **Post the `landing/headline` commit status** on the release commit. The [ue-mcp-landing](https://github.com/db-lyon/ue-mcp-landing) site reads this to render the latest-version badge. Miss this and the landing page sits on the previous version.
+2. **Bump `package.json` version, commit, push.** Capture the SHA: `git rev-parse HEAD`.
+3. **Post the `landing/headline` commit status** on the bump SHA. The [ue-mcp-landing](https://github.com/db-lyon/ue-mcp-landing) site reads this to render the latest-version badge.
    ```bash
    gh api -X POST repos/db-lyon/ue-mcp/statuses/<FULL_SHA> \
      -f state=success \
      -f context=landing/headline \
-     -f description="2-3 headline features separated by · (~70 chars)" \
+     -f description="2-3 headline features separated by middle-dot (<=140 chars, aim ~70)" \
      -f target_url=https://github.com/db-lyon/ue-mcp/releases/tag/vX.Y.Z
    ```
-   Use `git rev-parse <short-sha>` — the API rejects short SHAs.
+   Use the full SHA — the API rejects short SHAs. The description field is hard-capped at 140 chars by GitHub; CI rejects anything longer.
+4. **Wait for CI.** It validates both inputs, publishes to npm, tags the release, attaches the tarball, and flips the draft to published. No manual `gh release edit` needed.
 
-Release notes structure: one-line summary, then `## New actions` / `## Bug fixes` / `## Internals` sections. See `docs/release-notes-0.7.18.md` and `docs/release-notes-0.7.19.md` for the style.
+Release notes structure: one-line summary, then `## New actions` / `## Bug fixes` / `## Internals` sections. See `docs/release-notes-0.7.18.md` and `docs/release-notes-0.7.19.md` for the style. (Older release-notes files in `docs/` predate the draft-release flow and are kept as references.)
 
 ## Issue handling
 
@@ -114,6 +115,7 @@ node scripts/deploy.mjs # Sync plugin/ → tests/ue_mcp/Plugins/
 ## Don'ts
 
 - Don't create git tags; CI handles releases from version bumps on main.
+- Don't push a version bump without first creating the draft release and posting the `landing/headline` commit status. CI fails the publish job if either is missing.
 - Don't manually copy plugin files to `tests/ue_mcp/`. The deployer does it.
 - Don't use `TaskOutput` with `block=true` on long-running background tasks; it freezes the conversation. Background + poll or notify.
 - Don't run live tests without verifying the MCP target first.

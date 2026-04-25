@@ -84,6 +84,60 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate release inputs
+        # Required pre-publish inputs for vX.Y.Z, posted after the bump push:
+        #   1. A 'landing/headline' commit status with state=success and a
+        #      non-empty description (<=140 chars, the GitHub status limit).
+        #   2. A draft release tagged vX.Y.Z with a non-empty body.
+        # Both are polled for up to ~60s to absorb the small race between
+        # 'git push' and the user posting the status / creating the draft.
+        if: steps.version.outputs.changed == 'true'
+        id: release_inputs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.local }}
+        run: |
+          set -euo pipefail
+
+          HEADLINE=""
+          for i in $(seq 1 30); do
+            HEADLINE=$(gh api "repos/$REPO/commits/$SHA/statuses" \
+              --jq '[.[] | select(.context=="landing/headline" and .state=="success")][0].description // ""')
+            if [ -n "$HEADLINE" ]; then break; fi
+            sleep 2
+          done
+          if [ -z "$HEADLINE" ]; then
+            echo "::error::Missing 'landing/headline' commit status on $SHA."
+            echo "Post it with:"
+            echo "  gh api -X POST repos/$REPO/statuses/$SHA \\"
+            echo "    -f state=success -f context=landing/headline \\"
+            echo "    -f description='<2-3 features separated by middle-dot, ~70 chars>' \\"
+            echo "    -f target_url=https://github.com/$REPO/releases/tag/v$VERSION"
+            exit 1
+          fi
+          if [ "${#HEADLINE}" -gt 140 ]; then
+            echo "::error::Headline is ${#HEADLINE} chars; GitHub status descriptions cap at 140."
+            exit 1
+          fi
+          echo "Headline (${#HEADLINE} chars): $HEADLINE"
+
+          DRAFT_BODY=""
+          for i in $(seq 1 30); do
+            DRAFT_BODY=$(gh release view "v$VERSION" --json body,isDraft \
+              --jq 'select(.isDraft==true) | .body' 2>/dev/null || true)
+            if [ -n "$DRAFT_BODY" ]; then break; fi
+            sleep 2
+          done
+          if [ -z "$DRAFT_BODY" ]; then
+            echo "::error::No draft release v$VERSION with non-empty body found."
+            echo "Create it with:"
+            echo "  gh release create v$VERSION --draft --notes-file <path/to/notes.md>"
+            exit 1
+          fi
+          echo "Draft release v$VERSION present (${#DRAFT_BODY} chars of body)."
+
       - name: Install & Build
         if: steps.version.outputs.changed == 'true'
         # See note on the build job's Install step re: the rollup
@@ -126,14 +180,18 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         run: tar czf ue-mcp.tar.gz dist/ plugin/ package.json package-lock.json README.md LICENSE
 
-      - name: Create GitHub Release
+      - name: Promote draft release
+        # The release was authored as a draft before the bump push (see the
+        # 'Validate release inputs' step). Here we attach the tarball and flip
+        # draft=false so the release goes live. Body is left untouched.
         if: steps.version.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "v${{ steps.version.outputs.local }}"
-          name: "v${{ steps.version.outputs.local }}"
-          generate_release_notes: true
-          files: ue-mcp.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.local }}
+        run: |
+          set -euo pipefail
+          gh release upload "v$VERSION" ue-mcp.tar.gz --clobber
+          gh release edit "v$VERSION" --draft=false --tag "v$VERSION"
 
   docs:
     needs: build
