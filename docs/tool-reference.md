@@ -1,9 +1,12 @@
 # Tool Reference
 
-UE-MCP exposes **19 category tools** covering **440+ actions**. Every tool takes an `action` parameter that selects the operation, plus action-specific parameters.
+UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` tool for running multi-step YAML workflows. Every category tool takes an `action` parameter that selects the operation, plus action-specific parameters.
 
-!!! tip
+!!! tip "First call in any session"
     Start with `project(action="get_status")` to check the connection, then `level(action="get_outliner")` or `asset(action="list")` to explore.
+
+!!! info "How to read this page"
+    Each row lists a single action and its key parameters. Optional params are marked with `?`. For full schemas (types, descriptions, defaults), every action also surfaces its description through the MCP schema — your AI client can introspect them at runtime.
 
 ---
 

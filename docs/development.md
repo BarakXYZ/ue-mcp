@@ -47,13 +47,16 @@ node dist/index.js init C:/path/to/MyGame.uproject
 ```
 src/
 ├── index.ts              # Entry point, tool registration, MCP server
+├── tools.ts              # ALL_TOOLS registry (consumed by index.ts and tests)
 ├── types.ts              # ToolDef, ActionSpec, categoryTool() factory
-├── bridge.ts             # EditorBridge — WebSocket JSON-RPC client
-├── project.ts            # ProjectContext — paths, INI, C++ parsing
+├── bridge.ts             # EditorBridge - WebSocket JSON-RPC client
+├── project.ts            # ProjectContext - paths, INI, C++ parsing
 ├── deployer.ts           # Plugin deployment
 ├── editor-control.ts     # Editor process management
 ├── instructions.ts       # AI-facing server instructions
 ├── github-app.ts         # GitHub App auth for feedback submission
+├── init.ts / update.ts / resolve.ts / hook-handler.ts  # CLI subcommands
+├── flow/                 # Flow engine (registry, loader, task factory, HTTP)
 └── tools/                # 19 tool category implementations
     ├── project.ts
     ├── asset.ts
@@ -82,36 +85,50 @@ plugin/ue_mcp_bridge/     # C++ bridge plugin (deployed to UE projects)
         ├── BridgeServer.cpp/.h
         ├── HandlerRegistry.cpp/.h
         ├── GameThreadExecutor.cpp/.h
-        └── Handlers/          # 21 C++ handler groups
+        └── Handlers/          # 22 C++ handler groups
 
 tests/smoke/               # Smoke tests (require live editor)
+tests/unit/                # Pure-TypeScript unit tests (no editor needed)
 scripts/                   # Build and run scripts
 docs/                      # Documentation (MkDocs Material)
 ```
 
 ## Testing
 
-### Smoke Tests
+### Unit Tests
 
-Smoke tests run against a live editor and verify tool functionality end-to-end.
+Pure-TypeScript tests under `tests/unit/`. No editor required.
 
 ```bash
-# All suites
-npm test
+npm run test:unit
+```
 
+These also run in CI on every PR.
+
+### Smoke Tests
+
+Smoke tests run against a **live editor** and verify tool functionality end-to-end.
+
+```bash
 # Specific suite
 npm run test:level
 npm run test:blueprint
 npm run test:material
-# ... etc for all 16 suites
+# ... 17 suites total — see scripts in package.json
 
-# Full smoke test runner
+# All suites (Vitest)
+npm test
+
+# Full smoke test runner — exercises every registered handler
 npm run test:smoke
 ```
 
+!!! warning "Smoke tests require the test project"
+    The smoke runner targets `tests/ue_mcp/ue_mcp.uproject` only. Real mutations execute against the connected editor (creating blueprints, deleting assets, modifying the level). **Never run smoke tests against a real project.** The runner aborts if it detects a connection to anything else.
+
 !!! note "Prerequisites"
     - Editor running with the test project
-    - Bridge connected (`project(action="get_status")`)
+    - Bridge connected (`project(action="get_status")` returns `bridgeConnected: true`)
 
 ### Test Suites
 
@@ -125,10 +142,10 @@ npm run test:smoke
 | `reflection` | Class/struct/enum reflection, gameplay tags |
 | `animation` | Anim BP, montages, skeletons |
 | `landscape` | Landscape info, sculpting, painting |
-| `gameplay` | Physics, collision, navigation |
+| `gameplay` | Physics, collision, navigation, AI |
 | `audio` | Sound listing, playback |
-| `niagara` | Niagara system inspection |
-| `pcg` | PCG graph listing |
+| `niagara` | Niagara system inspection and authoring |
+| `pcg` | PCG graph listing and authoring |
 | `foliage` | Foliage types |
 | `widget` | Widget blueprint creation, tree manipulation, slot properties |
 | `networking` | Replication config |

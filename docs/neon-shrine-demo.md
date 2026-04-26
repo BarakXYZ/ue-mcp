@@ -1,22 +1,26 @@
 # Neon Shrine Demo
 
-The Neon Shrine is a built-in, 19-step procedural demo that showcases UE-MCP's capabilities across multiple tool categories. It builds a complete scene from scratch — materials, meshes, actors, lights, VFX, landscape — all through MCP tool calls.
+The Neon Shrine is a built-in **19-step procedural demo** that builds a complete scene from scratch through MCP tool calls — materials, geometry, lighting, atmosphere, VFX, PCG, sequencer, even an editor utility widget. It's the fastest way to see UE-MCP working end-to-end after install.
 
 ## Running the Demo
 
 ### Prerequisites
 
-- Editor running and connected (`project(action="get_status")` shows connected)
-- An empty or expendable level (the demo creates many actors)
+- Editor running and connected. Check with `project(action="get_status")` — `bridgeConnected` must be `true`.
+- An empty or expendable level. The demo creates ~30 actors and writes assets under `/Game/Demo/`.
 
-### Step by Step
+### Step List
 
-Get the full step list:
+Get the ordered list of steps:
+
 ```
 demo(action="step")
 ```
 
-Execute steps one at a time:
+### Run Steps
+
+Execute one at a time:
+
 ```
 demo(action="step", stepIndex=1)
 demo(action="step", stepIndex=2)
@@ -24,41 +28,52 @@ demo(action="step", stepIndex=2)
 demo(action="step", stepIndex=19)
 ```
 
-Each step returns a description of what it created and any relevant asset paths.
+Or just ask your AI to "run the Neon Shrine demo" and it will iterate through them.
+
+Each step returns a description of what it created and any new asset paths.
 
 ### Cleanup
 
-Remove everything the demo created:
+Remove every actor and asset the demo created:
+
 ```
 demo(action="cleanup")
 ```
 
-This deletes all demo actors from the level and demo assets from the project.
+This wipes `/Game/Demo/` and removes the demo actors from the level.
 
-## What the Demo Covers
+## What the Demo Builds
 
-The 19 steps exercise a wide range of tools:
+| # | Step | Description |
+|---|---|---|
+| 1 | `create_level` | New level at `/Game/Demo/DemoLevel` |
+| 2 | `materials` | Three materials: floor, glow, pillar |
+| 3 | `floor` | 60m dark reflective floor |
+| 4 | `pedestal` | Central pedestal cylinder |
+| 5 | `hero_sphere` | Emissive gold hero sphere on the pedestal |
+| 6 | `pillars` | Four corner pillar cylinders |
+| 7 | `orbs` | Four glowing orbs at the pillar bases |
+| 8 | `neon_lights` | Four coloured point lights (cyan / magenta / gold / green) |
+| 9 | `hero_light` | Warm point light above the hero sphere |
+| 10 | `moonlight` | Directional moon light |
+| 11 | `sky_light` | SkyLight ambient fill |
+| 12 | `fog` | ExponentialHeightFog atmosphere |
+| 13 | `post_process` | PostProcessVolume with bloom and vignette |
+| 14 | `niagara_vfx` | Niagara particle system above the hero |
+| 15 | `pcg_scatter` | PCG scatter volume on the floor |
+| 16 | `orbit_rings` | Eight orbiting emissive spheres with rotation |
+| 17 | `level_sequence` | LevelSequence with the hero sphere bound |
+| 18 | `tuning_panel` | EditorUtilityWidget control panel |
+| 19 | `save` | Save the current level |
 
-| Step | What It Does | Tools Used |
-|------|--------------|------------|
-| 1 | Create a new level | `level` |
-| 2–4 | Create materials (metal, glass, stone) | `material` |
-| 5–7 | Place shrine geometry | `level`, `asset` |
-| 8–10 | Add colored point lights | `level` (lights) |
-| 11 | Set up landscape | `landscape` |
-| 12 | Paint landscape layers | `landscape` |
-| 13 | Add foliage | `foliage` |
-| 14 | Place spline paths | `level` (splines) |
-| 15 | Add VFX | `niagara` |
-| 16 | Place ambient audio | `audio` |
-| 17 | Add volumes | `level` (volumes) |
-| 18 | Configure viewport | `editor` (viewport) |
-| 19 | Final touches and summary | Multiple |
+## Why It Exists
 
-## Purpose
+- **Verification.** Running through all 19 steps confirms the bridge, asset registry, materials, lighting, Niagara, PCG, sequencer, and UMG editor utility paths all work.
+- **Showcase.** It's a single command that produces something visible.
+- **Reference.** Each step is a real handler call you can imitate. If you want to know how to spawn a colored point light or set up a PCG volume, look at how the corresponding step does it.
 
-The demo serves as:
+The implementation lives in `plugin/ue_mcp_bridge/Source/UE_MCP_Bridge/Private/Handlers/DemoHandlers.cpp`.
 
-- **Verification** — confirms that the bridge and major tool categories are working
-- **Showcase** — demonstrates what UE-MCP can do in a single session
-- **Learning tool** — each step shows a real tool invocation pattern you can reuse
+## See Also
+
+For a much larger declarative example, see the **Beacon** flow described in [Flows](flows.md#beacon) — a 56-step shrine scene defined entirely in YAML.

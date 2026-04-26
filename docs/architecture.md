@@ -14,22 +14,25 @@ flowchart LR
 
 **Entry point:** `src/index.ts`
 
-The server creates an `McpServer` instance (from `@modelcontextprotocol/sdk`), registers 19 category tools, and communicates with the AI client over stdio.
+The server creates an `McpServer` instance (from `@modelcontextprotocol/sdk`), registers 19 category tools plus a `flow` tool, and communicates with the AI client over stdio.
 
 ### Key Modules
 
 | Module | Purpose |
 |--------|---------|
 | `index.ts` | Tool registration, MCP server lifecycle |
-| `bridge.ts` | `EditorBridge` (implements `IBridge`) — WebSocket client, JSON-RPC messaging, auto-reconnect |
-| `project.ts` | `ProjectContext` — path resolution, INI parsing, C++ header parsing |
+| `tools.ts` | The `ALL_TOOLS` registry consumed by `index.ts` and tests |
+| `bridge.ts` | `EditorBridge` (implements `IBridge`) - WebSocket client, JSON-RPC messaging, auto-reconnect |
+| `project.ts` | `ProjectContext` - path resolution, INI parsing, C++ header parsing |
 | `types.ts` | `ToolDef`, `ActionSpec`, `categoryTool()` factory |
-| `schemas.ts` | Shared Zod schemas — `Vec3`, `Rotator`, `Color`, `Quat` |
+| `schemas.ts` | Shared Zod schemas - `Vec3`, `Rotator`, `Color`, `Quat` |
 | `errors.ts` | `McpError` class with `ErrorCode` enum for structured error handling |
 | `deployer.ts` | First-run deployment: copy plugin, mutate `.uproject` |
 | `editor-control.ts` | Start/stop/restart the Unreal Editor process |
 | `instructions.ts` | AI-facing server instructions (embedded documentation) |
 | `github-app.ts` | GitHub App auth for agent feedback issue submission |
+| `flow/` | Flow engine (registry, loader, task factory, HTTP server) — see [Flows](flows.md) |
+| `init.ts` / `update.ts` / `resolve.ts` / `hook-handler.ts` | CLI subcommands (`npx ue-mcp init`, `update`, `resolve`, `hook`) |
 
 ### Tool Registration Pattern
 
@@ -97,30 +100,31 @@ The plugin runs a raw WebSocket server on a dedicated thread, dispatches incomin
 
 ### Handler Categories
 
-21 C++ handler groups are registered in `BridgeServer.cpp`:
+22 C++ handler groups are registered in `BridgeServer.cpp`. Together they expose 440+ method names (some of which are aliases mapped onto a smaller number of canonical handlers):
 
-| Handler | Coverage |
+| Handler group | Coverage |
 |---------|----------|
-| EditorHandlers | Console, Python, PIE, viewport, sequencer, build, logs, perf |
-| AssetHandlers | CRUD, import, search, datatables, textures |
-| BlueprintHandlers | Read/write, graphs, compilation, node types |
-| LevelHandlers | Actors, components, levels, volumes, lights |
+| EditorHandlers | Console, Python, PIE, viewport, build, logs, perf, screenshots, scalability |
+| AssetHandlers | CRUD, import, search, datatables, textures, sockets, FTS search |
+| BlueprintHandlers | Read/write, graphs, compilation, node types, T3D import/export, reparent, validate |
+| LevelHandlers | Actors, components, volumes, lights, world settings, splines |
 | ReflectionHandlers | Class/struct/enum reflection, gameplay tags |
-| MaterialHandlers | Materials, instances, expressions |
-| AnimationHandlers | Anim BPs, montages, skeletons, blendspaces |
-| AudioHandlers | Playback, ambient sounds, cues |
-| WidgetHandlers | UMG widgets, editor utilities |
-| FoliageHandlers | Foliage painting and types |
-| LandscapeHandlers | Terrain sculpting and painting |
-| NetworkingHandlers | Replication config |
-| NiagaraHandlers | VFX systems and emitters |
-| PCGHandlers | Procedural generation graphs |
-| GasHandlers | Gameplay Ability System |
-| GameplayHandlers | Physics, collision, navigation, AI, input, game framework |
-| PhysicsHandlers | Collision and physics properties |
-| SequencerHandlers | Level sequences |
-| SplineHandlers | Spline actors |
-| DialogHandlers | Modal dialog management |
+| MaterialHandlers | Materials, instances, expression graph authoring, declarative builder, render preview |
+| AnimationHandlers | Anim BPs, montages, blendspaces, skeletons, IK Rig, ControlRig, virtual bones |
+| AudioHandlers | Playback, ambient sounds, SoundCues, MetaSounds |
+| WidgetHandlers | UMG widget trees, editor utility widgets and blueprints |
+| FoliageHandlers | Foliage painting, types, instance queries |
+| LandscapeHandlers | Terrain sculpting, layer painting, heightmap import |
+| NetworkingHandlers | Replication, dormancy, relevancy, net priority |
+| NiagaraHandlers | VFX systems, emitters, renderers, data interfaces, GPU HLSL inspection |
+| PCGHandlers | Procedural generation graphs, mesh spawner authoring |
+| GasHandlers | Gameplay Ability System (attributes, abilities, effects, cues) |
+| GameplayHandlers | Physics, collision, navigation, AI (BTs, EQS, perception), input, game framework |
+| PhysicsHandlers | Collision profiles, simulation toggles, body properties |
+| SequencerHandlers | Level sequences and tracks |
+| SplineHandlers | Spline actor authoring |
+| DialogHandlers | Modal dialog auto-response policies |
+| ProjectHandlers | Project info, world subsystem queries |
 | DemoHandlers | Neon Shrine demo builder |
 
 ### Plugin Dependencies
