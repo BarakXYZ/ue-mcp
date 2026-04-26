@@ -22,7 +22,7 @@ UE-MCP lets you tell an AI assistant what you want done in Unreal. It can place 
 
 The wizard then:
 
-1. Asks for your `.uproject` path (or auto-detects).
+1. Auto-detects your `.uproject`.
 2. Asks which **tool categories** to enable (`level`, `blueprint`, `material`, `niagara`, etc.). Default is all on.
 3. Copies the C++ bridge plugin into `<YourProject>/Plugins/UE_MCP_Bridge/`.
 4. Edits your `.uproject` to enable the bridge plugin and its dependencies (Niagara, PCG, GameplayAbilities, Enhanced Input).
