@@ -1,17 +1,14 @@
 # Getting Started
 
-!!! tip "⏱ ~5 minutes once prerequisites are installed"
-    Add 30-60 seconds the first time Unreal compiles the bridge plugin.
+!!! tip "⏱ ~5 minutes"
 
 UE-MCP lets you tell an AI assistant what you want done in Unreal, and it actually does it - placing actors, writing blueprints, authoring materials, configuring Niagara, building lighting, all by driving the editor for you.
 
 ## Prerequisites
 
-1. [**Unreal Engine 5.4 to 5.7**](https://www.unrealengine.com/en-US/download "Free download via the Epic Games Launcher. UE-MCP supports versions 5.4 through 5.7. You also need any .uproject to attach to — a brand new Blank template is fine.") installed, with a `.uproject` for UE-MCP to attach to.
-2. [**Node.js 18 or newer**](https://nodejs.org/ "JavaScript runtime that UE-MCP needs to run. Install the LTS build, then verify in a fresh terminal with: node --version. You will not write any JavaScript yourself.") installed and on your PATH.
-3. **An MCP-capable AI client** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code "Anthropic's official CLI agent. The best fit for UE-MCP and the client most of the docs assume."), [Claude Desktop](https://claude.ai/download "The standalone Claude desktop app. Reads MCP server configuration from claude_desktop_config.json."), or [Cursor](https://cursor.com "AI-powered code editor based on VS Code. Reads MCP server configuration from .cursor/mcp.json.") — to drive UE-MCP and, through it, the editor.
-
-Hover any link above for a one-sentence explanation. MCP (Model Context Protocol) is the standard that lets AI clients talk to external tools: your AI client is the MCP client, UE-MCP is an MCP server, and pointing one at the other connects them.
+1. [**Unreal Engine 5.4 to 5.7**](https://www.unrealengine.com/en-US/download "Free download via the Epic Games Launcher.") installed, with a `.uproject` for UE-MCP to attach to.
+2. [**Node.js 18 or newer**](https://nodejs.org/ "JavaScript runtime that UE-MCP needs to run.") installed and on your PATH.
+3. **An MCP-capable AI client** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code "Anthropic's official CLI agent. The best fit for UE-MCP and the client most of the docs assume."), [Claude Desktop](https://claude.ai/download "The standalone Claude desktop app."), or [Cursor](https://cursor.com "AI-powered code editor based on VS Code. Reads MCP server configuration from .cursor/mcp.json.") — to drive UE-MCP and, through it, the editor.
 
 ## 1. Install
 
