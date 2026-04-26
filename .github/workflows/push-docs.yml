@@ -34,8 +34,8 @@ jobs:
       - name: Commit and push if changed
         working-directory: ue-mcp-landing
         run: |
-          git config user.name "ue-mcp-docs-bot"
-          git config user.email "ue-mcp-docs-bot@users.noreply.github.com"
+          git config user.name "db-lyon"
+          git config user.email "david@bingham.me"
           if [[ -z "$(git status --porcelain content/docs)" ]]; then
             echo "No doc changes to sync."
             exit 0
