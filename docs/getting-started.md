@@ -6,11 +6,11 @@ This page gets you from nothing to your AI making changes in your project. It sh
 
 ## Prerequisites
 
-You need **Unreal Engine 5.4 to 5.7** installed, with a `.uproject` to attach UE-MCP to. Any project will do - a brand new "Blank" template is fine. Install Unreal from the [Epic Games Launcher](https://www.unrealengine.com/en-US/download) if you don't have it yet.
+1. [**Unreal Engine 5.4 to 5.7**](https://www.unrealengine.com/en-US/download "Free download via the Epic Games Launcher. UE-MCP supports versions 5.4 through 5.7. You also need any .uproject to attach to — a brand new Blank template is fine.") installed, with a `.uproject` for UE-MCP to attach to.
+2. [**Node.js 18 or newer**](https://nodejs.org/ "JavaScript runtime that UE-MCP needs to run. Install the LTS build, then verify in a fresh terminal with: node --version. You will not write any JavaScript yourself.") installed and on your PATH.
+3. **An MCP-capable AI client** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code "Anthropic's official CLI agent. The best fit for UE-MCP and the client most of the docs assume."), [Claude Desktop](https://claude.ai/download "The standalone Claude desktop app. Reads MCP server configuration from claude_desktop_config.json."), or [Cursor](https://cursor.com "AI-powered code editor based on VS Code. Reads MCP server configuration from .cursor/mcp.json.") — to drive UE-MCP and, through it, the editor.
 
-You need **Node.js 18 or newer**. Node.js is a JavaScript runtime; UE-MCP runs on top of it. You don't have to write any JavaScript yourself - just install it from [nodejs.org](https://nodejs.org/) (the LTS version is fine), open a fresh terminal, and confirm with `node --version`.
-
-You need an **MCP-capable AI client**. MCP (Model Context Protocol) is the standard that lets AI clients talk to external tools - your client is the MCP client, UE-MCP is an MCP server, and you point one at the other to connect them. The supported clients are [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Claude Desktop](https://claude.ai/download), and [Cursor](https://cursor.com). If you're picking one fresh, Claude Code is the best fit and the one most of the docs assume.
+Hover any link above for a one-sentence explanation. MCP (Model Context Protocol) is the standard that lets AI clients talk to external tools: your AI client is the MCP client, UE-MCP is an MCP server, and pointing one at the other connects them.
 
 ## 1. Install
 
