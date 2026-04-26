@@ -13,22 +13,14 @@ UE-MCP lets you tell an AI assistant what you want done in Unreal. It can place 
 ## 1. Installation
 
 1. If your Unreal Editor is open, close it.
-2. Open a terminal and run:
+2. `cd` into your project folder (the one with the `.uproject`).
+3. Run:
 
-```bash
-npx ue-mcp init
-```
+   ```bash
+   npx ue-mcp init
+   ```
 
-`npx` ships with Node.js — it downloads `ue-mcp` from npm and runs it. First run takes ~30 seconds; cached after.
-
-Run from inside the project folder to auto-detect the `.uproject`, or pass it directly:
-
-```bash
-npx ue-mcp init C:/path/to/MyGame.uproject
-```
-
-!!! tip "Use forward slashes on Windows"
-    `C:/Users/...`, not `C:\Users\...`. Backslashes need escaping inside JSON config and tend to bite later. Forward slashes work everywhere.
+`npx` ships with Node.js — it downloads `ue-mcp` from npm and runs the wizard. First run takes ~30 seconds; cached after.
 
 ### What the installer does
 
@@ -126,7 +118,10 @@ UE-MCP redeploys the bridge and reconnects. (That's `project(action="set_project
 
 ## Manual configuration
 
-If you'd rather skip `npx ue-mcp init`, edit the MCP client config yourself:
+If you'd rather skip `npx ue-mcp init`, edit the MCP client config yourself.
+
+!!! tip "Use forward slashes on Windows"
+    `C:/Users/...`, not `C:\Users\...`. Backslashes need escaping inside JSON.
 
 === "Claude Code"
 
