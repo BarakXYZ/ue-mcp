@@ -14,15 +14,13 @@ UE-MCP lets you tell an AI assistant what you want done in Unreal. It can place 
 
 1. If your Unreal Editor is open, close it.
 2. `cd` into your project folder (the one with the `.uproject`).
-3. Run:
+3. Run the wizard:
 
    ```bash
    npx ue-mcp init
    ```
 
-`npx` ships with Node.js — it downloads `ue-mcp` from npm and runs the wizard. First run takes ~30 seconds; cached after.
-
-### What the installer does
+The wizard then:
 
 1. Asks for your `.uproject` path (or auto-detects).
 2. Asks which **tool categories** to enable (`level`, `blueprint`, `material`, `niagara`, etc.). Default is all on.
