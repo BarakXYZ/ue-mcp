@@ -25,9 +25,10 @@ The wizard then:
 1. Auto-detects your `.uproject`.
 2. Asks which **tool categories** to enable (`level`, `blueprint`, `material`, `niagara`, etc.). Default is all on.
 3. Copies the C++ bridge plugin into `<YourProject>/Plugins/UE_MCP_Bridge/`.
-4. Edits your `.uproject` to enable the bridge plugin and its dependencies (Niagara, PCG, GameplayAbilities, Enhanced Input).
-5. Detects installed MCP clients (Claude Code, Claude Desktop, Cursor) and writes the config for each.
-6. **Claude Code only**: optionally installs a hook that nudges agents to report tool gaps when they fall back to raw Python.
+4. Enables the plugins it needs in your `.uproject`: `UE_MCP_Bridge`, `PythonScriptPlugin`, plus any of `Niagara`, `PCG`, `GameplayAbilities`, `EnhancedInput` required by the categories you kept.
+5. Writes `.ue-mcp.json` (project config) and scaffolds an empty `ue-mcp.yml` (for custom flows) if missing.
+6. Detects installed MCP clients (Claude Code, Claude Desktop, Cursor) and writes the config for each you confirm.
+7. **Claude Code only**: optionally installs a PostToolUse hook that prompts agents to file a GitHub issue when they fall back to `execute_python`, and copies bundled workflow skills into `.claude/`.
 
 ## 2. Open the Editor
 
@@ -43,7 +44,7 @@ The bridge starts automatically once the editor finishes loading, listening on `
 3. Confirm this line appears:
 
    ```
-   LogMCPBridge: UE-MCP Bridge server started on ws://localhost:9877
+   LogMCPBridge: [UE-MCP] Bridge listening on ws://localhost:9877
    ```
 
 If it's not there, see [Troubleshooting](troubleshooting.md).
@@ -57,7 +58,7 @@ If it's not there, see [Troubleshooting](troubleshooting.md).
    Run project(action="get_status").
    ```
 
-3. Look for `"bridgeConnected": true` in the response.
+3. Look for `"editorConnected": true` in the response.
 
 ## 4. Try things
 
