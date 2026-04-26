@@ -29,7 +29,7 @@ The wizard then:
 5. Detects installed MCP clients (Claude Code, Claude Desktop, Cursor) and writes the config for each.
 6. **Claude Code only**: optionally installs a hook that nudges agents to report tool gaps when they fall back to raw Python.
 
-## 2. Restart the Editor
+## 2. Open the Editor
 
 1. Open your project.
 2. When the editor asks whether to compile `UE_MCP_Bridge`, say yes. First-time compile takes ~30-60 seconds.
