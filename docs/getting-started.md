@@ -1,6 +1,6 @@
 # Getting Started
 
-!!! tip "⏱ ~5 minutes"
+<Badge variant="time">⏱ ~5 minutes</Badge>
 
 UE-MCP lets you tell an AI assistant what you want done in Unreal, and it actually does it - placing actors, writing blueprints, authoring materials, configuring Niagara, building lighting, all by driving the editor for you.
 
