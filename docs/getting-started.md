@@ -23,7 +23,7 @@ UE-MCP lets you tell an AI assistant what you want done in Unreal. It can place 
 The wizard then:
 
 1. Auto-detects your `.uproject`.
-2. Asks which **tool categories** to enable (`level`, `blueprint`, `material`, `niagara`, etc.). Default is all on.
+2. Asks which **tool categories** to enable (`level`, `blueprint`, `material`, `niagara`, etc.). All enabled by default.
 3. Copies the C++ bridge plugin into `<YourProject>/Plugins/UE_MCP_Bridge/`.
 4. Enables the plugins it needs in your `.uproject`: `UE_MCP_Bridge`, `PythonScriptPlugin`, plus any of `Niagara`, `PCG`, `GameplayAbilities`, `EnhancedInput` required by the categories you kept.
 5. Writes `.ue-mcp.json` (project config) and scaffolds an empty `ue-mcp.yml` (for custom flows) if missing.
@@ -103,17 +103,15 @@ Run from your project directory whenever a new UE-MCP version ships:
 npx ue-mcp update
 ```
 
-Idempotent. Tells you if a restart is needed.
-
 ## Switching projects
 
-To attach to a different `.uproject` without restarting your AI client, ask:
+To point ue-mcp at a different `.uproject` without restarting your AI client, ask:
 
 ```text
 Switch to the project at C:/path/to/Other.uproject.
 ```
 
-UE-MCP redeploys the bridge and reconnects. (That's `project(action="set_project")` under the hood.)
+UE-MCP redeploys the bridge and reconnects. (Calls `project(action="set_project")` under the hood.)
 
 ## Manual configuration
 
