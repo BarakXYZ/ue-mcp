@@ -166,16 +166,6 @@ If you'd rather skip `npx ue-mcp init`, edit the MCP client config yourself.
 
 The first run auto-deploys the C++ plugin. To deploy explicitly: `npx ue-mcp update <path>`, then restart the editor.
 
-## Resolving GitHub issues
-
-Let Claude Code take a swing at an open issue:
-
-```bash
-npx ue-mcp resolve 16
-```
-
-Fetches the issue, creates a `resolve/<n>` branch, runs Claude Code with the issue body as context, opens a PR. Requires `claude` and `gh` CLIs.
-
 ## Where to next
 
 - **[Tool Reference](tool-reference.md)** - every tool and every action

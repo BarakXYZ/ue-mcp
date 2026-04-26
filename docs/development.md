@@ -14,6 +14,24 @@ cd ue-mcp
 npm install
 ```
 
+## Resolving an Issue with Claude Code
+
+From inside your `ue-mcp` clone:
+
+```bash
+npx ue-mcp resolve 16
+```
+
+This:
+
+1. Fetches issue #16 from `db-lyon/ue-mcp` via `gh`.
+2. Creates a `resolve/16` branch from `origin/main` in your current checkout.
+3. Pipes a generated prompt (issue body + repo conventions) into `claude --print --dangerously-skip-permissions`.
+4. Claude reads code, implements the fix, runs `npx tsc --noEmit`, and commits.
+5. The script then pushes the branch and opens a PR against `db-lyon/ue-mcp`.
+
+Requires `gh` and `claude` CLIs, write access to the repo (or a fork to push to), and you must run it from inside a `ue-mcp` clone — it operates on the working tree, not a temp clone.
+
 ## Building
 
 ```bash
