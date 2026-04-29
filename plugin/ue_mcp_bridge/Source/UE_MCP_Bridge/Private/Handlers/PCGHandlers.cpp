@@ -316,6 +316,44 @@ TSharedPtr<FJsonValue> FPCGHandlers::ReadPCGGraph(const TSharedPtr<FJsonObject>&
 
 	Result->SetArrayField(TEXT("nodes"), NodeArray);
 	Result->SetNumberField(TEXT("nodeCount"), NodeArray.Num());
+
+	// #217: include edges so callers can verify wiring without dropping into
+	// Python. Walk every node's output pins and serialise each edge as
+	// {from, fromPin, to, toPin}. Input/Output graph nodes participate too.
+	auto EmitEdgesFromNode = [](const UPCGNode* From, TArray<TSharedPtr<FJsonValue>>& OutEdges)
+	{
+		if (!From) return;
+		for (const TObjectPtr<UPCGPin>& OutPin : From->GetOutputPins())
+		{
+			if (!OutPin) continue;
+			for (const TObjectPtr<UPCGEdge>& Edge : OutPin->Edges)
+			{
+				if (!Edge) continue;
+				const UPCGPin* OtherPin = Edge->InputPin == OutPin ? Edge->OutputPin.Get() : Edge->InputPin.Get();
+				const UPCGNode* ToNode = OtherPin ? OtherPin->Node.Get() : nullptr;
+				if (!OtherPin || !ToNode) continue;
+				TSharedPtr<FJsonObject> EdgeObj = MakeShared<FJsonObject>();
+				EdgeObj->SetStringField(TEXT("from"), From->GetName());
+				EdgeObj->SetStringField(TEXT("fromPin"), OutPin->Properties.Label.ToString());
+				EdgeObj->SetStringField(TEXT("to"), ToNode->GetName());
+				EdgeObj->SetStringField(TEXT("toPin"), OtherPin->Properties.Label.ToString());
+				OutEdges.Add(MakeShared<FJsonValueObject>(EdgeObj));
+			}
+		}
+	};
+
+	TArray<TSharedPtr<FJsonValue>> EdgeArray;
+	if (const UPCGNode* InputNode = Graph->GetInputNode())
+	{
+		EmitEdgesFromNode(InputNode, EdgeArray);
+	}
+	for (const UPCGNode* Node : Nodes)
+	{
+		EmitEdgesFromNode(Node, EdgeArray);
+	}
+	Result->SetArrayField(TEXT("edges"), EdgeArray);
+	Result->SetNumberField(TEXT("edgeCount"), EdgeArray.Num());
+
 	return MCPResult(Result);
 }
 
