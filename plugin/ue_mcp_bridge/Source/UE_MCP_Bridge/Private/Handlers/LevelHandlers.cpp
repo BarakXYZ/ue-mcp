@@ -46,6 +46,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "HandlerJsonProperty.h"
 
 void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -1342,10 +1343,39 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		return MCPError(FString::Printf(TEXT("Component '%s' not found on actor '%s'"), *ComponentName, *ActorLabel));
 	}
 
-	FProperty* Prop = TargetComp->GetClass()->FindPropertyByName(*PropertyName);
-	if (!Prop)
+	// #216: walk dotted property paths so callers can write
+	// "GraphInstance.Graph" without us silently no-oping at the top level.
+	TArray<FString> PathParts;
+	PropertyName.ParseIntoArray(PathParts, TEXT("."));
+	if (PathParts.Num() == 0)
 	{
-		return MCPError(FString::Printf(TEXT("Property '%s' not found on component"), *PropertyName));
+		return MCPError(TEXT("Empty propertyName"));
+	}
+
+	UStruct* CurrentStruct = TargetComp->GetClass();
+	void* CurrentContainer = TargetComp;
+	FProperty* Prop = nullptr;
+	for (int32 i = 0; i < PathParts.Num(); ++i)
+	{
+		FProperty* SegmentProp = CurrentStruct->FindPropertyByName(FName(*PathParts[i]));
+		if (!SegmentProp)
+		{
+			return MCPError(FString::Printf(TEXT("Property '%s' not found at '%s'"), *PathParts[i], *PropertyName));
+		}
+		if (i < PathParts.Num() - 1)
+		{
+			FStructProperty* SP = CastField<FStructProperty>(SegmentProp);
+			if (!SP)
+			{
+				return MCPError(FString::Printf(TEXT("'%s' is not a struct - cannot descend"), *PathParts[i]));
+			}
+			CurrentContainer = SP->ContainerPtrToValuePtr<void>(CurrentContainer);
+			CurrentStruct = SP->Struct;
+		}
+		else
+		{
+			Prop = SegmentProp;
+		}
 	}
 
 	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
@@ -1354,10 +1384,11 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		return MCPError(TEXT("Missing 'value' parameter"));
 	}
 
+	void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(CurrentContainer);
+
 	// Capture previous value as a string for self-inverse rollback.
 	FString PreviousValueStr;
-	Prop->ExportText_Direct(PreviousValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp),
-		Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+	Prop->ExportText_Direct(PreviousValueStr, ValuePtr, ValuePtr, TargetComp, PPF_None);
 
 	FString ValueStr;
 	if ((*ValueField)->TryGetString(ValueStr))
@@ -1408,7 +1439,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 			}
 			ValueStr = Result;
 		}
-		Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+		Prop->ImportText_Direct(*ValueStr, ValuePtr, TargetComp, PPF_None);
 	}
 	else
 	{
@@ -1416,7 +1447,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		if ((*ValueField)->TryGetNumber(NumValue))
 		{
 			ValueStr = FString::SanitizeFloat(NumValue);
-			Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+			Prop->ImportText_Direct(*ValueStr, ValuePtr, TargetComp, PPF_None);
 		}
 		else
 		{
@@ -1424,7 +1455,17 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 			if ((*ValueField)->TryGetBool(BoolValue))
 			{
 				ValueStr = BoolValue ? TEXT("true") : TEXT("false");
-				Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
+				Prop->ImportText_Direct(*ValueStr, ValuePtr, TargetComp, PPF_None);
+			}
+			else
+			{
+				// #216: structured JSON values (objects/arrays). Drives UObject
+				// asset paths, FVector {x,y,z}, nested struct fields, etc.
+				FString SetErr;
+				if (!MCPJsonProperty::SetJsonOnProperty(Prop, ValuePtr, *ValueField, SetErr))
+				{
+					return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
+				}
 			}
 		}
 	}
