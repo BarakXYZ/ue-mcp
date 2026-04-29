@@ -49,4 +49,18 @@ private:
 	static TSharedPtr<FJsonValue> ResolveActor(const TSharedPtr<FJsonObject>& Params);
 	// #202/#230: generic per-instance UPROPERTY writer for level actors
 	static TSharedPtr<FJsonValue> SetActorProperty(const TSharedPtr<FJsonObject>& Params);
+	// #220: bulk delete actors by label prefix / class / tag
+	static TSharedPtr<FJsonValue> DeleteActors(const TSharedPtr<FJsonObject>& Params);
+	// #219: actor tag CRUD
+	static TSharedPtr<FJsonValue> AddActorTag(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> RemoveActorTag(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetActorTags(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ListActorTags(const TSharedPtr<FJsonObject>& Params);
+	// #205: actor attach/detach + mobility
+	static TSharedPtr<FJsonValue> AttachActor(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> DetachActor(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetActorMobility(const TSharedPtr<FJsonObject>& Params);
+	// #204: edit-level current sub-level
+	static TSharedPtr<FJsonValue> GetCurrentEditLevel(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetCurrentEditLevel(const TSharedPtr<FJsonObject>& Params);
 };
