@@ -69,6 +69,8 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | `export` | Export asset to disk file (Texture2D → PNG, StaticMesh → FBX, etc.) | `assetPath`, `outputPath` |
 | `search_fts` | Ranked token search over asset name/class/path (replaces wildcard search for agent use) | `query`, `maxResults?`, `classFilter?` |
 | `reindex_fts` | Force AssetRegistry rescan to refresh FTS search coverage | `directory?` |
+| `move_folder` | Move an entire content folder with redirector fixup | `sourcePath`, `destinationPath` |
+| `create_folder` | Create empty content browser folders (#212) | `path` or `paths[]` |
 
 !!! note
     `search` auto-searches all configured content roots (see [Configuration](configuration.md)).
@@ -162,6 +164,18 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | `set_world_settings` | Set DefaultGameMode and other world settings | `gameModePath?`, `killZ?`, `globalGravityZ?` |
 | `get_spline_info` | Read spline component data | `actorLabel` |
 | `set_spline_points` | Set spline points | `actorLabel`, `points[]`, `closedLoop?` |
+| `set_actor_property` | Set per-instance UPROPERTY on a level actor (`actorLabel="WorldSettings"` to target the world settings actor; `force=true` bypasses EditDefaultsOnly) (#202/#230) | `actorLabel`, `propertyName`, `value`, `force?`, `world?` |
+| `delete_actors` | Bulk-delete by `labelPrefix` / `className` / `tag` with optional `dryRun` (#220) | filter + `dryRun?` |
+| `add_actor_tag` / `remove_actor_tag` / `set_actor_tags` / `list_actor_tags` | Manage actor `Tags` array (#219) | `actorLabel`, `tag` or `tags[]` |
+| `attach_actor` / `detach_actor` | Reparent an actor's root component (#205) | `childLabel`, `parentLabel`, `attachRule?`, `socketName?` |
+| `set_actor_mobility` | Set root-component mobility (`static`/`stationary`/`movable`) (#205) | `actorLabel`, `mobility` |
+| `get_current_edit_level` / `set_current_edit_level` | Read or set the active edit-target sub-level so spawns land in the right place (#204) | `levelName` |
+| `list_streaming_sublevels` | List streaming sub-levels with transform + flags (#206) | |
+| `add_streaming_sublevel` | Add a streaming sub-level | `levelPath`, `streamingClass?`, `location?`, `initiallyLoaded?`, `initiallyVisible?` |
+| `remove_streaming_sublevel` | Remove a streaming sub-level | `levelName` |
+| `set_streaming_sublevel_properties` | Update sub-level transform / load / visibility flags | `levelName`, `location?`, `initiallyLoaded?`, `initiallyVisible?`, `editorVisible?` |
+| `spawn_grid` | Batch-spawn StaticMeshActors on a 3D grid with optional jitter (#203) | `staticMesh`, `min`, `max`, `countX/Y/Z?`, `jitter?`, `labelPrefix?` |
+| `batch_translate` | Translate a set of actors (by labels or tag) by an offset (#203) | `offset`, `actorLabels[]` or `tag` |
 
 ---
 
@@ -194,6 +208,8 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | `build_graph` | Declarative graph builder: `{nodes: [{name, class, posX, posY, value?}], propertyConnections: [{property, from, outputIndex}]}`. | `assetPath`, `nodes`, `propertyConnections?` |
 | `render_preview` | Render a preview PNG of the material (base color approximation in v0.7.8). | `assetPath`, `outputPath`, `width?`, `height?` |
 | `begin_transaction` / `end_transaction` | Bracket multi-step edits in a single undo transaction. | `label?` |
+| `create_simple` | Single-call simple material: create + base/metallic/specular/roughness/emissive constants + usage flags + recompile + save (#225) | `name`, `packagePath?`, `baseColor?`, `metallic?`, `specular?`, `roughness?`, `emissive?`, `usages?[]` |
+| `set_usage` | Set EMaterialUsage flag(s) (`InstancedStaticMeshes`, `Nanite`, `NiagaraSprites`, ...) (#225) | `assetPath`, `usage` or `usages[]`, `enabled?` |
 
 ---
 
@@ -362,7 +378,7 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | `get_perf_stats` | Get editor performance stats | |
 | `run_stat` | Toggle stat overlay | `command` |
 | `set_scalability` | Set quality/scalability level | `level` |
-| `capture_screenshot` | Capture a viewport screenshot | `filename?`, `resolution?` |
+| `capture_screenshot` | Capture a viewport screenshot. `target=auto` routes to the PIE viewport while PIE is running (#226) | `filename?`, `resolution?`, `target? (auto\|pie\|editor)` |
 | `get_viewport` | Get viewport camera transform | |
 | `set_viewport` | Set viewport camera transform | `location?`, `rotation?` |
 | `focus_on_actor` | Focus viewport on an actor | `actorLabel` |
@@ -384,6 +400,8 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | `get_dialog_policy` | Get current dialog policies | |
 | `list_dialogs` | List pending modal dialogs | |
 | `respond_to_dialog` | Respond to a specific dialog | `dialogId`, `response` |
+| `get_pie_pawn` | Resolve the controlled pawn in the active PIE world (#228/#229) | `playerIndex?` |
+| `invoke_function` | Call a BlueprintCallable / Exec UFUNCTION on a target actor in editor or PIE (#228/#229) | `actorLabel`, `functionName`, `args?` (object), `world?` |
 
 !!! tip
     - `execute_python` is the escape hatch for anything not covered by dedicated tools.
