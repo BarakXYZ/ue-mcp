@@ -1390,8 +1390,16 @@ TSharedPtr<FJsonValue> FEditorHandlers::CreateNewLevel(const TSharedPtr<FJsonObj
 		return MCPResult(Existed);
 	}
 
+	// #224: treat templateLevel="Empty" / "None" / "" as "no template",
+	// since callers reasonably read "Empty" as a sentinel for the empty
+	// template. NewLevelFromTemplate("/Game/X", "Empty") otherwise tries to
+	// load an asset literally named "Empty" and fails opaquely.
+	const bool bHasTemplate = !TemplateLevel.IsEmpty()
+		&& !TemplateLevel.Equals(TEXT("Empty"), ESearchCase::IgnoreCase)
+		&& !TemplateLevel.Equals(TEXT("None"), ESearchCase::IgnoreCase);
+
 	bool bSuccess = false;
-	if (TemplateLevel.IsEmpty())
+	if (!bHasTemplate)
 	{
 		bSuccess = LevelEditorSubsystem->NewLevel(LevelPath);
 	}
@@ -1402,7 +1410,25 @@ TSharedPtr<FJsonValue> FEditorHandlers::CreateNewLevel(const TSharedPtr<FJsonObj
 
 	if (!bSuccess)
 	{
-		return MCPError(FString::Printf(TEXT("Failed to create new level at: %s"), *LevelPath));
+		// #224: surface concrete reasons instead of a bare "Failed to create".
+		FString Reason;
+		if (LevelPath.IsEmpty())
+		{
+			Reason = TEXT("levelPath is required (e.g. \"/Game/Maps/MyLevel\")");
+		}
+		else if (!LevelPath.StartsWith(TEXT("/")))
+		{
+			Reason = FString::Printf(TEXT("levelPath must be a /Game/... mount point, got '%s'"), *LevelPath);
+		}
+		else if (bHasTemplate && !UEditorAssetLibrary::DoesAssetExist(TemplateLevel))
+		{
+			Reason = FString::Printf(TEXT("templateLevel asset not found: '%s' (omit or pass \"Empty\" for an empty level)"), *TemplateLevel);
+		}
+		else
+		{
+			Reason = FString::Printf(TEXT("LevelEditorSubsystem refused to create '%s' (path may be invalid, locked, or already open elsewhere)"), *LevelPath);
+		}
+		return MCPError(Reason);
 	}
 
 	auto Result = MCPSuccess();
