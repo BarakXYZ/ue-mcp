@@ -37,6 +37,7 @@
 #include "GameFramework/PainCausingVolume.h"
 #include "Selection.h"
 #include "Engine/LevelStreaming.h"
+#include "Engine/LevelStreamingDynamic.h"
 #include "LevelEditorSubsystem.h"
 #include "EditorLevelUtils.h"
 #include "FileHelpers.h"
@@ -90,6 +91,12 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("set_actor_mobility"), &SetActorMobility);
 	Registry.RegisterHandler(TEXT("get_current_edit_level"), &GetCurrentEditLevel);
 	Registry.RegisterHandler(TEXT("set_current_edit_level"), &SetCurrentEditLevel);
+	Registry.RegisterHandler(TEXT("list_streaming_sublevels"), &ListStreamingSublevels);
+	Registry.RegisterHandler(TEXT("add_streaming_sublevel"), &AddStreamingSublevel);
+	Registry.RegisterHandler(TEXT("remove_streaming_sublevel"), &RemoveStreamingSublevel);
+	Registry.RegisterHandler(TEXT("set_streaming_sublevel_properties"), &SetStreamingSublevelProperties);
+	Registry.RegisterHandler(TEXT("spawn_grid"), &SpawnGrid);
+	Registry.RegisterHandler(TEXT("batch_translate"), &BatchTranslate);
 }
 
 TSharedPtr<FJsonValue> FLevelHandlers::GetOutliner(const TSharedPtr<FJsonObject>& Params)
@@ -2606,5 +2613,290 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetCurrentEditLevel(const TSharedPtr<FJso
 		Result->SetStringField(TEXT("levelName"), Cur->GetOuter()->GetName());
 		Result->SetStringField(TEXT("levelPath"), Cur->GetOuter()->GetPathName());
 	}
+	return MCPResult(Result);
+}
+
+// #206: streaming sub-level CRUD
+namespace
+{
+	static ULevelStreaming* FindStreamingByName(UWorld* World, const FString& NameOrPath)
+	{
+		if (!World) return nullptr;
+		for (ULevelStreaming* SL : World->GetStreamingLevels())
+		{
+			if (!SL) continue;
+			const FString PkgName = SL->GetWorldAssetPackageName();
+			if (PkgName == NameOrPath) return SL;
+			if (FPaths::GetBaseFilename(PkgName) == NameOrPath) return SL;
+			if (SL->GetName() == NameOrPath) return SL;
+		}
+		return nullptr;
+	}
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::ListStreamingSublevels(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+
+	TArray<TSharedPtr<FJsonValue>> Out;
+	for (ULevelStreaming* SL : World->GetStreamingLevels())
+	{
+		if (!SL) continue;
+		TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+		const FString PkgName = SL->GetWorldAssetPackageName();
+		O->SetStringField(TEXT("levelName"), FPaths::GetBaseFilename(PkgName));
+		O->SetStringField(TEXT("packageName"), PkgName);
+		O->SetStringField(TEXT("streamingClass"), SL->GetClass()->GetName());
+		O->SetBoolField(TEXT("initiallyLoaded"), SL->bInitiallyLoaded);
+		O->SetBoolField(TEXT("initiallyVisible"), SL->bInitiallyVisible);
+		O->SetBoolField(TEXT("loaded"), SL->IsLevelLoaded());
+		O->SetBoolField(TEXT("visible"), SL->GetShouldBeVisibleFlag());
+		const FTransform T = SL->LevelTransform;
+		TSharedPtr<FJsonObject> Loc = MakeShared<FJsonObject>();
+		Loc->SetNumberField(TEXT("x"), T.GetLocation().X);
+		Loc->SetNumberField(TEXT("y"), T.GetLocation().Y);
+		Loc->SetNumberField(TEXT("z"), T.GetLocation().Z);
+		O->SetObjectField(TEXT("location"), Loc);
+		Out.Add(MakeShared<FJsonValueObject>(O));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetArrayField(TEXT("sublevels"), Out);
+	Result->SetNumberField(TEXT("count"), Out.Num());
+	return MCPResult(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::AddStreamingSublevel(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+	FString LevelPath; if (auto E = RequireString(Params, TEXT("levelPath"), LevelPath)) return E;
+
+	const FString StreamingClassName = OptionalString(Params, TEXT("streamingClass"), TEXT("LevelStreamingDynamic"));
+	UClass* StreamingClass = ULevelStreamingDynamic::StaticClass();
+	if (StreamingClassName.Equals(TEXT("LevelStreamingAlwaysLoaded"), ESearchCase::IgnoreCase))
+	{
+		StreamingClass = LoadClass<ULevelStreaming>(nullptr, TEXT("/Script/Engine.LevelStreamingAlwaysLoaded"));
+		if (!StreamingClass) StreamingClass = ULevelStreamingDynamic::StaticClass();
+	}
+
+	ULevelStreaming* SL = UEditorLevelUtils::AddLevelToWorld(World, *LevelPath, StreamingClass);
+	if (!SL)
+	{
+		return MCPError(FString::Printf(TEXT("Failed to add sub-level '%s'"), *LevelPath));
+	}
+
+	if (Params->HasField(TEXT("initiallyLoaded"))) SL->bInitiallyLoaded = OptionalBool(Params, TEXT("initiallyLoaded"), true);
+	if (Params->HasField(TEXT("initiallyVisible"))) SL->bInitiallyVisible = OptionalBool(Params, TEXT("initiallyVisible"), true);
+
+	const TSharedPtr<FJsonObject>* LocObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("location"), LocObj) && LocObj && (*LocObj).IsValid())
+	{
+		double X = 0, Y = 0, Z = 0;
+		(*LocObj)->TryGetNumberField(TEXT("x"), X);
+		(*LocObj)->TryGetNumberField(TEXT("y"), Y);
+		(*LocObj)->TryGetNumberField(TEXT("z"), Z);
+		FTransform T = SL->LevelTransform;
+		T.SetLocation(FVector(X, Y, Z));
+		SL->LevelTransform = T;
+	}
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("levelPath"), LevelPath);
+	Result->SetStringField(TEXT("levelName"), FPaths::GetBaseFilename(LevelPath));
+	return MCPResult(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::RemoveStreamingSublevel(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+	FString Name;
+	if (!Params->TryGetStringField(TEXT("levelName"), Name)) Params->TryGetStringField(TEXT("levelPath"), Name);
+	if (Name.IsEmpty()) return MCPError(TEXT("Missing levelName (or levelPath)"));
+
+	ULevelStreaming* SL = FindStreamingByName(World, Name);
+	if (!SL) return MCPError(FString::Printf(TEXT("Streaming sub-level not found: %s"), *Name));
+
+	ULevel* Loaded = SL->GetLoadedLevel();
+	if (Loaded)
+	{
+		UEditorLevelUtils::RemoveLevelFromWorld(Loaded);
+	}
+	World->RemoveStreamingLevels({ SL });
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("levelName"), Name);
+	Result->SetBoolField(TEXT("removed"), true);
+	return MCPResult(Result);
+}
+
+TSharedPtr<FJsonValue> FLevelHandlers::SetStreamingSublevelProperties(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+	FString Name;
+	if (!Params->TryGetStringField(TEXT("levelName"), Name)) Params->TryGetStringField(TEXT("levelPath"), Name);
+	if (Name.IsEmpty()) return MCPError(TEXT("Missing levelName (or levelPath)"));
+
+	ULevelStreaming* SL = FindStreamingByName(World, Name);
+	if (!SL) return MCPError(FString::Printf(TEXT("Streaming sub-level not found: %s"), *Name));
+
+	bool bChanged = false;
+	if (Params->HasField(TEXT("initiallyLoaded"))) { SL->bInitiallyLoaded = OptionalBool(Params, TEXT("initiallyLoaded"), true); bChanged = true; }
+	if (Params->HasField(TEXT("initiallyVisible"))) { SL->bInitiallyVisible = OptionalBool(Params, TEXT("initiallyVisible"), true); bChanged = true; }
+
+	const TSharedPtr<FJsonObject>* LocObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("location"), LocObj) && LocObj && (*LocObj).IsValid())
+	{
+		double X = 0, Y = 0, Z = 0;
+		(*LocObj)->TryGetNumberField(TEXT("x"), X);
+		(*LocObj)->TryGetNumberField(TEXT("y"), Y);
+		(*LocObj)->TryGetNumberField(TEXT("z"), Z);
+		FTransform T = SL->LevelTransform;
+		T.SetLocation(FVector(X, Y, Z));
+		SL->LevelTransform = T;
+		bChanged = true;
+	}
+
+	bool bEditorVisibleSet = false;
+	const bool bEditorVisible = OptionalBool(Params, TEXT("editorVisible"), true);
+	if (Params->HasField(TEXT("editorVisible")))
+	{
+		ULevel* Loaded = SL->GetLoadedLevel();
+		if (Loaded)
+		{
+			UEditorLevelUtils::SetLevelVisibility(Loaded, bEditorVisible, false);
+		}
+		bEditorVisibleSet = true;
+	}
+
+	auto Result = MCPSuccess();
+	if (bChanged) MCPSetUpdated(Result); else MCPSetExisted(Result);
+	Result->SetStringField(TEXT("levelName"), Name);
+	Result->SetBoolField(TEXT("initiallyLoaded"), SL->bInitiallyLoaded);
+	Result->SetBoolField(TEXT("initiallyVisible"), SL->bInitiallyVisible);
+	if (bEditorVisibleSet) Result->SetBoolField(TEXT("editorVisible"), bEditorVisible);
+	return MCPResult(Result);
+}
+
+// #203: batch spawn StaticMeshActors on a 3D grid (or jittered cloud) so
+// agents don't ship one place_actor per mesh. Bounds are an FBox; density
+// drives count along each axis.
+TSharedPtr<FJsonValue> FLevelHandlers::SpawnGrid(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+
+	FString MeshPath; if (auto E = RequireString(Params, TEXT("staticMesh"), MeshPath)) return E;
+	UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *MeshPath);
+	if (!Mesh) return MCPError(FString::Printf(TEXT("StaticMesh not found: %s"), *MeshPath));
+
+	const TSharedPtr<FJsonObject>* MinObj = nullptr;
+	const TSharedPtr<FJsonObject>* MaxObj = nullptr;
+	if (!Params->TryGetObjectField(TEXT("min"), MinObj) || !Params->TryGetObjectField(TEXT("max"), MaxObj))
+	{
+		return MCPError(TEXT("Missing 'min' / 'max' Vec3 fields for grid bounds"));
+	}
+	auto ReadVec = [](const TSharedPtr<FJsonObject>* O) -> FVector
+	{
+		FVector V = FVector::ZeroVector;
+		double X = 0; if ((*O)->TryGetNumberField(TEXT("x"), X)) V.X = X;
+		double Y = 0; if ((*O)->TryGetNumberField(TEXT("y"), Y)) V.Y = Y;
+		double Z = 0; if ((*O)->TryGetNumberField(TEXT("z"), Z)) V.Z = Z;
+		return V;
+	};
+	const FVector Min = ReadVec(MinObj);
+	const FVector Max = ReadVec(MaxObj);
+
+	const int32 CountX = FMath::Max(1, OptionalInt(Params, TEXT("countX"), 4));
+	const int32 CountY = FMath::Max(1, OptionalInt(Params, TEXT("countY"), 4));
+	const int32 CountZ = FMath::Max(1, OptionalInt(Params, TEXT("countZ"), 1));
+	const double Jitter = OptionalNumber(Params, TEXT("jitter"), 0.0);
+	const FString LabelPrefix = OptionalString(Params, TEXT("labelPrefix"), TEXT("Grid"));
+
+	const FVector Step = FVector(
+		CountX > 1 ? (Max.X - Min.X) / (CountX - 1) : 0,
+		CountY > 1 ? (Max.Y - Min.Y) / (CountY - 1) : 0,
+		CountZ > 1 ? (Max.Z - Min.Z) / (CountZ - 1) : 0);
+
+	FRandomStream Rand((int32)FDateTime::Now().GetTicks());
+
+	TArray<TSharedPtr<FJsonValue>> Spawned;
+	int32 Index = 0;
+	for (int32 zi = 0; zi < CountZ; ++zi)
+	for (int32 yi = 0; yi < CountY; ++yi)
+	for (int32 xi = 0; xi < CountX; ++xi)
+	{
+		FVector Loc = Min + FVector(xi * Step.X, yi * Step.Y, zi * Step.Z);
+		if (Jitter > 0.0)
+		{
+			Loc += FVector(Rand.FRandRange(-Jitter, Jitter), Rand.FRandRange(-Jitter, Jitter), Rand.FRandRange(-Jitter, Jitter));
+		}
+		FActorSpawnParameters SpawnParams;
+		AStaticMeshActor* SMA = World->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), Loc, FRotator::ZeroRotator, SpawnParams);
+		if (!SMA) continue;
+		SMA->SetMobility(EComponentMobility::Movable);
+		if (UStaticMeshComponent* SMC = SMA->GetStaticMeshComponent())
+		{
+			SMC->SetStaticMesh(Mesh);
+		}
+		SMA->SetActorLabel(FString::Printf(TEXT("%s_%d"), *LabelPrefix, Index));
+		Spawned.Add(MakeShared<FJsonValueString>(SMA->GetActorLabel()));
+		Index++;
+	}
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetNumberField(TEXT("count"), Spawned.Num());
+	Result->SetArrayField(TEXT("labels"), Spawned);
+	return MCPResult(Result);
+}
+
+// #203: batch translate by label list or tag.
+TSharedPtr<FJsonValue> FLevelHandlers::BatchTranslate(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+
+	const TSharedPtr<FJsonObject>* OffObj = nullptr;
+	if (!Params->TryGetObjectField(TEXT("offset"), OffObj))
+	{
+		return MCPError(TEXT("Missing 'offset' Vec3"));
+	}
+	double X = 0, Y = 0, Z = 0;
+	(*OffObj)->TryGetNumberField(TEXT("x"), X);
+	(*OffObj)->TryGetNumberField(TEXT("y"), Y);
+	(*OffObj)->TryGetNumberField(TEXT("z"), Z);
+	const FVector Offset(X, Y, Z);
+
+	TSet<AActor*> Targets;
+	const TArray<TSharedPtr<FJsonValue>>* LabelArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("actorLabels"), LabelArr) && LabelArr)
+	{
+		for (const auto& V : *LabelArr)
+		{
+			FString S; if (V.IsValid() && V->TryGetString(S))
+			{
+				if (AActor* A = FindActorByLabel(World, S)) Targets.Add(A);
+			}
+		}
+	}
+	FString TagFilter; if (Params->TryGetStringField(TEXT("tag"), TagFilter) && !TagFilter.IsEmpty())
+	{
+		const FName TagName(*TagFilter);
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->ActorHasTag(TagName)) Targets.Add(*It);
+		}
+	}
+	if (Targets.Num() == 0) return MCPError(TEXT("Provide actorLabels[] or tag matching at least one actor"));
+
+	for (AActor* A : Targets)
+	{
+		A->Modify();
+		A->SetActorLocation(A->GetActorLocation() + Offset);
+		A->MarkPackageDirty();
+	}
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetNumberField(TEXT("count"), Targets.Num());
 	return MCPResult(Result);
 }

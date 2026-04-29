@@ -63,4 +63,12 @@ private:
 	// #204: edit-level current sub-level
 	static TSharedPtr<FJsonValue> GetCurrentEditLevel(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetCurrentEditLevel(const TSharedPtr<FJsonObject>& Params);
+	// #206: streaming sub-level CRUD on the persistent world
+	static TSharedPtr<FJsonValue> ListStreamingSublevels(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddStreamingSublevel(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> RemoveStreamingSublevel(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetStreamingSublevelProperties(const TSharedPtr<FJsonObject>& Params);
+	// #203: batch spawn / batch transform
+	static TSharedPtr<FJsonValue> SpawnGrid(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> BatchTranslate(const TSharedPtr<FJsonObject>& Params);
 };
