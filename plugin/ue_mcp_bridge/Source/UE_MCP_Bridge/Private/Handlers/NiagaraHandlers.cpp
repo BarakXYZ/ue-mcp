@@ -566,8 +566,21 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::AddEmitterToSystem(const TSharedPtr<FJs
 	FString EmitterPath;
 	if (auto Err = RequireString(Params, TEXT("emitterPath"), EmitterPath)) return Err;
 
-	UNiagaraSystem* System = Cast<UNiagaraSystem>(UEditorAssetLibrary::LoadAsset(SystemPath));
-	UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(UEditorAssetLibrary::LoadAsset(EmitterPath));
+	// #223: EditorAssetLibrary::LoadAsset returned None for valid Niagara
+	// asset paths (likely a class-resolution mismatch). Use LoadObject<>
+	// directly which mirrors what unreal.load_object does in Python.
+	auto LoadEither = [](const FString& Path) -> UObject*
+	{
+		FString WithSuffix = Path;
+		if (UObject* Hit = LoadObject<UObject>(nullptr, *WithSuffix)) return Hit;
+		const FString BaseName = FPaths::GetBaseFilename(Path);
+		WithSuffix = FString::Printf(TEXT("%s.%s"), *Path, *BaseName);
+		if (UObject* Hit = LoadObject<UObject>(nullptr, *WithSuffix)) return Hit;
+		return UEditorAssetLibrary::LoadAsset(Path);
+	};
+
+	UNiagaraSystem* System = Cast<UNiagaraSystem>(LoadEither(SystemPath));
+	UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(LoadEither(EmitterPath));
 
 	if (!System)
 	{
@@ -598,7 +611,11 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::AddEmitterToSystem(const TSharedPtr<FJs
 	System->Modify();
 	FNiagaraEmitterHandle Handle = System->AddEmitterHandle(*Emitter, Emitter->GetFName(), FGuid::NewGuid());
 
-	UEditorAssetLibrary::SaveAsset(System->GetPathName());
+	// #223: SaveAsset by path resolved a different in-memory instance and
+	// dropped the new handle. Save the loaded system object directly.
+	System->PostEditChange();
+	System->MarkPackageDirty();
+	UEditorAssetLibrary::SaveLoadedAsset(System, /*bOnlyIfIsDirty=*/false);
 
 	auto Result = MCPSuccess();
 	MCPSetCreated(Result);
@@ -1046,7 +1063,15 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::CreateNiagaraSystemFromSpec(const TShar
 			if (!V->TryGetObject(EmitterObj)) continue;
 			FString EmitterPath;
 			if (!(*EmitterObj)->TryGetStringField(TEXT("path"), EmitterPath)) continue;
-			UNiagaraEmitter* Source = Cast<UNiagaraEmitter>(UEditorAssetLibrary::LoadAsset(EmitterPath));
+			// #223: same load-asset gap as add_emitter_to_system - use
+			// LoadObject<> with both bare and Path.Path forms.
+			UNiagaraEmitter* Source = LoadObject<UNiagaraEmitter>(nullptr, *EmitterPath);
+			if (!Source)
+			{
+				const FString WithSuffix = FString::Printf(TEXT("%s.%s"), *EmitterPath, *FPaths::GetBaseFilename(EmitterPath));
+				Source = LoadObject<UNiagaraEmitter>(nullptr, *WithSuffix);
+			}
+			if (!Source) Source = Cast<UNiagaraEmitter>(UEditorAssetLibrary::LoadAsset(EmitterPath));
 			if (!Source) continue;
 			const FGuid Version = Source->GetExposedVersion().VersionGuid;
 			System->AddEmitterHandle(*Source, FName(*Source->GetName()), Version);
