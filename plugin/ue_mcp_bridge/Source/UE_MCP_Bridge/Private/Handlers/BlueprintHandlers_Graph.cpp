@@ -1000,8 +1000,14 @@ UActorComponent* ResolveComponentTemplate(
 	}
 
 	// 3) CDO fallback — catches native C++ components and anything the
-	// SCS walk missed. Reads only; writes to these would need different
-	// plumbing and are not supported here.
+	// SCS walk missed. The CDO component pointer is the right write target
+	// for default-value overrides on inherited native components: mutating
+	// it lands on the Blueprint's GeneratedClass CDO, which is what spawns
+	// new instances at runtime. Names match by component instance name,
+	// instance prefix, or FObjectProperty variable name (#211: declarations
+	// like UPROPERTY() UCharacterMovementComponent* CharacterMovement; expose
+	// the property name "CharacterMovement", which is what callers reach
+	// for, not the construct-time instance name "CharMoveComp").
 	if (Blueprint->GeneratedClass)
 	{
 		if (AActor* ActorCDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject(false)))
@@ -1016,9 +1022,24 @@ UActorComponent* ResolveComponentTemplate(
 					C->GetName().StartsWith(ComponentName + TEXT("_")) ||
 					C->GetFName().ToString() == ComponentName)
 				{
-					// Reads of native components are fine. Writes via this
-					// path are unsupported — caller should check the flag.
 					return C;
+				}
+			}
+			// FObjectProperty lookup: walk class properties for an
+			// FObjectProperty named ComponentName whose value points at a
+			// component on the CDO.
+			if (FObjectProperty* OP = CastField<FObjectProperty>(ActorCDO->GetClass()->FindPropertyByName(FName(*ComponentName))))
+			{
+				if (OP->PropertyClass && OP->PropertyClass->IsChildOf(UActorComponent::StaticClass()))
+				{
+					if (UObject* Obj = OP->GetObjectPropertyValue_InContainer(ActorCDO))
+					{
+						if (UActorComponent* AC = Cast<UActorComponent>(Obj))
+						{
+							OutAvailable.AddUnique(ComponentName);
+							return AC;
+						}
+					}
 				}
 			}
 		}
