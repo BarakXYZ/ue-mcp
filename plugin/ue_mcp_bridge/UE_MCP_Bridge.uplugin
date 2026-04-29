@@ -19,7 +19,7 @@
 		{
 			"Name": "UE_MCP_Bridge",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PostEngineInit"
 		}
 	],
 	"Plugins": [
