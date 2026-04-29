@@ -122,6 +122,7 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("get_mesh_collision"), &GetMeshCollision);
 	Registry.RegisterHandler(TEXT("set_mesh_nav"), &SetMeshNav);
 	Registry.RegisterHandler(TEXT("move_folder"), &MoveFolder);
+	Registry.RegisterHandler(TEXT("create_folder"), &CreateFolder);
 }
 
 // ---------------------------------------------------------------------------
@@ -2007,5 +2008,67 @@ TSharedPtr<FJsonValue> FAssetHandlers::MoveFolder(const TSharedPtr<FJsonObject>&
 	Result->SetNumberField(TEXT("totalAssets"), FoundAssets.Num());
 	Result->SetNumberField(TEXT("renamedCount"), Succeeded);
 	Result->SetBoolField(TEXT("allSucceeded"), bOk && Succeeded == BatchRenames.Num());
+	return MCPResult(Result);
+}
+
+// ---------------------------------------------------------------------------
+// #212 — create empty content browser folder under /Game (or any mount point).
+// Accepts a single 'path' or a 'paths' array; returns per-path created/existed.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonValue> FAssetHandlers::CreateFolder(const TSharedPtr<FJsonObject>& Params)
+{
+	TArray<FString> Paths;
+	const TArray<TSharedPtr<FJsonValue>>* PathsArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("paths"), PathsArr) && PathsArr)
+	{
+		for (const TSharedPtr<FJsonValue>& V : *PathsArr)
+		{
+			FString S; if (V.IsValid() && V->TryGetString(S) && !S.IsEmpty()) Paths.Add(S);
+		}
+	}
+	FString SinglePath;
+	if (Params->TryGetStringField(TEXT("path"), SinglePath) && !SinglePath.IsEmpty())
+	{
+		Paths.AddUnique(SinglePath);
+	}
+	if (Paths.Num() == 0)
+	{
+		return MCPError(TEXT("Provide either 'path' or 'paths' (array of /Game/... directories)."));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Created, Existed, Failed;
+	for (const FString& P : Paths)
+	{
+		FString Norm = P;
+		Norm.RemoveFromEnd(TEXT("/"));
+		if (!Norm.StartsWith(TEXT("/")))
+		{
+			Failed.Add(MakeShared<FJsonValueString>(P));
+			continue;
+		}
+		if (UEditorAssetLibrary::DoesDirectoryExist(Norm))
+		{
+			Existed.Add(MakeShared<FJsonValueString>(Norm));
+			continue;
+		}
+		const bool bOk = UEditorAssetLibrary::MakeDirectory(Norm);
+		if (bOk)
+		{
+			Created.Add(MakeShared<FJsonValueString>(Norm));
+		}
+		else
+		{
+			Failed.Add(MakeShared<FJsonValueString>(Norm));
+		}
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetArrayField(TEXT("created"), Created);
+	Result->SetArrayField(TEXT("existed"), Existed);
+	Result->SetArrayField(TEXT("failed"), Failed);
+	Result->SetNumberField(TEXT("createdCount"), Created.Num());
+	Result->SetNumberField(TEXT("existedCount"), Existed.Num());
+	Result->SetNumberField(TEXT("failedCount"), Failed.Num());
+	Result->SetBoolField(TEXT("allSucceeded"), Failed.Num() == 0);
 	return MCPResult(Result);
 }

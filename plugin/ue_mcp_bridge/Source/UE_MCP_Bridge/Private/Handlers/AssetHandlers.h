@@ -77,4 +77,6 @@ private:
 	static TSharedPtr<FJsonValue> GetMeshCollision(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> MoveFolder(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetMeshNav(const TSharedPtr<FJsonObject>& Params);
+	// #212: create empty content browser folders
+	static TSharedPtr<FJsonValue> CreateFolder(const TSharedPtr<FJsonObject>& Params);
 };
