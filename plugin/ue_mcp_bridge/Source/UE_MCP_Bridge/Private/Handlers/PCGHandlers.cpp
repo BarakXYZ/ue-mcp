@@ -23,6 +23,9 @@
 #include "Elements/PCGStaticMeshSpawner.h"
 #include "MeshSelectors/PCGMeshSelectorWeighted.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Brush.h"
+#include "Components/BrushComponent.h"
+#include "Builders/CubeBuilder.h"
 #include "UObject/Package.h"
 #include "Misc/PackageName.h"
 #include "UObject/SavePackage.h"
@@ -788,23 +791,31 @@ TSharedPtr<FJsonValue> FPCGHandlers::SpawnPCGVolume(const TSharedPtr<FJsonObject
 		}
 	}
 
-	// Parse location
-	FVector Location = FVector::ZeroVector;
-	double X = 0, Y = 0, Z = 0;
-	Params->TryGetNumberField(TEXT("x"), X);
-	Params->TryGetNumberField(TEXT("y"), Y);
-	Params->TryGetNumberField(TEXT("z"), Z);
-	Location = FVector(X, Y, Z);
-
-	// Parse bounds extent
-	FVector Extent = FVector(500.0, 500.0, 500.0);
-	double ExtentX = 500, ExtentY = 500, ExtentZ = 500;
-	if (Params->TryGetNumberField(TEXT("extentX"), ExtentX) ||
-		Params->TryGetNumberField(TEXT("extentY"), ExtentY) ||
-		Params->TryGetNumberField(TEXT("extentZ"), ExtentZ))
+	// #218: location/extent ship as nested {x,y,z} objects per the TS schema
+	// (Vec3). Older calls may pass flat x/y/z and extentX/Y/Z; accept both.
+	auto ReadVec3 = [&](const TCHAR* ObjKey, const TCHAR* FlatX, const TCHAR* FlatY, const TCHAR* FlatZ, FVector& Out) -> bool
 	{
-		Extent = FVector(ExtentX, ExtentY, ExtentZ);
-	}
+		bool bAny = false;
+		const TSharedPtr<FJsonObject>* Obj = nullptr;
+		if (Params->TryGetObjectField(ObjKey, Obj) && Obj && Obj->IsValid())
+		{
+			double V = 0;
+			if ((*Obj)->TryGetNumberField(TEXT("x"), V)) { Out.X = V; bAny = true; }
+			if ((*Obj)->TryGetNumberField(TEXT("y"), V)) { Out.Y = V; bAny = true; }
+			if ((*Obj)->TryGetNumberField(TEXT("z"), V)) { Out.Z = V; bAny = true; }
+		}
+		double V = 0;
+		if (Params->TryGetNumberField(FlatX, V)) { Out.X = V; bAny = true; }
+		if (Params->TryGetNumberField(FlatY, V)) { Out.Y = V; bAny = true; }
+		if (Params->TryGetNumberField(FlatZ, V)) { Out.Z = V; bAny = true; }
+		return bAny;
+	};
+
+	FVector Location = FVector::ZeroVector;
+	ReadVec3(TEXT("location"), TEXT("x"), TEXT("y"), TEXT("z"), Location);
+
+	FVector Extent(500.0, 500.0, 500.0);
+	ReadVec3(TEXT("extent"), TEXT("extentX"), TEXT("extentY"), TEXT("extentZ"), Extent);
 
 	// Spawn PCG Volume actor
 	FTransform SpawnTransform(FRotator::ZeroRotator, Location);
@@ -814,7 +825,23 @@ TSharedPtr<FJsonValue> FPCGHandlers::SpawnPCGVolume(const TSharedPtr<FJsonObject
 		return MCPError(TEXT("Failed to spawn PCGVolume actor"));
 	}
 
-	PCGVolumeActor->SetActorScale3D(Extent / 100.0);
+	// #218: AVolume needs an actual cube brush, not just an actor scale.
+	// SpawnActor creates the actor with an empty UModel, so PCG samplers see
+	// bounds=(0,0,0). Build a UCubeBuilder cube sized to (extent*2) so the
+	// reported half-extent matches what the caller asked for.
+	UCubeBuilder* CubeBuilder = NewObject<UCubeBuilder>(GetTransientPackage(), UCubeBuilder::StaticClass());
+	CubeBuilder->X = Extent.X * 2.0;
+	CubeBuilder->Y = Extent.Y * 2.0;
+	CubeBuilder->Z = Extent.Z * 2.0;
+	CubeBuilder->Build(World, PCGVolumeActor);
+	PCGVolumeActor->BrushBuilder = CubeBuilder;
+	PCGVolumeActor->SetActorScale3D(FVector::OneVector);
+	if (UBrushComponent* BrushComp = PCGVolumeActor->GetBrushComponent())
+	{
+		BrushComp->BuildSimpleBrushCollision();
+		BrushComp->UpdateBounds();
+		BrushComp->MarkRenderStateDirty();
+	}
 
 	if (!Label.IsEmpty())
 	{
