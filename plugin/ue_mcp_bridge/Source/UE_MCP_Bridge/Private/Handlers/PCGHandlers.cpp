@@ -179,6 +179,87 @@ namespace
 		void* ValueAddr = Prop->ContainerPtrToValuePtr<void>(Container);
 		return SetJsonOnProperty(Prop, ValueAddr, Value, OutError);
 	}
+
+	// #213: shared class lookup. Mirrors AddPCGNode's tolerant resolver — accepts
+	// short name, "/Script/PCG.X" path, or "U"-prefixed short name.
+	static UClass* FindPCGSettingsClass(const FString& ClassName)
+	{
+		if (ClassName.IsEmpty()) return nullptr;
+		UClass* Cls = FindObject<UClass>(nullptr, *ClassName);
+		if (!Cls) Cls = FindObject<UClass>(nullptr, *(TEXT("/Script/PCG.") + ClassName));
+		if (!Cls && !ClassName.StartsWith(TEXT("U")))
+		{
+			Cls = FindObject<UClass>(nullptr, *(TEXT("/Script/PCG.U") + ClassName));
+		}
+		if (Cls && !Cls->IsChildOf(UPCGSettings::StaticClass())) return nullptr;
+		return Cls;
+	}
+
+	// #213: locate a node by name within a graph, including Input/Output specials.
+	static UPCGNode* FindNodeByName(UPCGGraph* Graph, const FString& Name)
+	{
+		if (!Graph || Name.IsEmpty()) return nullptr;
+		for (UPCGNode* Node : Graph->GetNodes())
+		{
+			if (Node && Node->GetName() == Name) return Node;
+		}
+		if (UPCGNode* In = Graph->GetInputNode(); In && In->GetName() == Name) return In;
+		if (UPCGNode* Out = Graph->GetOutputNode(); Out && Out->GetName() == Name) return Out;
+		return nullptr;
+	}
+
+	// #213: structured property serializer used by export_pcg_graph. Emits every
+	// editable property recursively as JSON so the result round-trips through
+	// SetDottedPropertyFromJson on import. Mirrors the lambda in
+	// ReadPCGNodeSettings (#214/#215) but kept as a standalone function so both
+	// callers can share it without rebuilding the closure each call.
+	static TSharedPtr<FJsonValue> SerializePropForExport(FProperty* Prop, const void* Addr)
+	{
+		if (!Prop || !Addr) return MakeShared<FJsonValueNull>();
+
+		if (FStructProperty* SP = CastField<FStructProperty>(Prop))
+		{
+			TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+			for (TFieldIterator<FProperty> It(SP->Struct); It; ++It)
+			{
+				FProperty* Inner = *It;
+				if (!Inner) continue;
+				const void* InnerAddr = Inner->ContainerPtrToValuePtr<void>(Addr);
+				Obj->SetField(Inner->GetName(), SerializePropForExport(Inner, InnerAddr));
+			}
+			return MakeShared<FJsonValueObject>(Obj);
+		}
+		if (FArrayProperty* AP = CastField<FArrayProperty>(Prop))
+		{
+			TArray<TSharedPtr<FJsonValue>> Items;
+			FScriptArrayHelper H(AP, Addr);
+			for (int32 i = 0; i < H.Num(); ++i)
+			{
+				Items.Add(SerializePropForExport(AP->Inner, H.GetRawPtr(i)));
+			}
+			return MakeShared<FJsonValueArray>(Items);
+		}
+		if (FBoolProperty* BP = CastField<FBoolProperty>(Prop))
+		{
+			return MakeShared<FJsonValueBoolean>(BP->GetPropertyValue(Addr));
+		}
+		if (FNumericProperty* NP = CastField<FNumericProperty>(Prop))
+		{
+			if (NP->IsFloatingPoint())
+			{
+				return MakeShared<FJsonValueNumber>(NP->GetFloatingPointPropertyValue(Addr));
+			}
+			return MakeShared<FJsonValueNumber>((double)NP->GetSignedIntPropertyValue(Addr));
+		}
+		if (FObjectProperty* OP = CastField<FObjectProperty>(Prop))
+		{
+			UObject* Ref = OP->GetObjectPropertyValue(Addr);
+			return MakeShared<FJsonValueString>(Ref ? Ref->GetPathName() : TEXT(""));
+		}
+		FString Out;
+		Prop->ExportTextItem_Direct(Out, Addr, nullptr, nullptr, PPF_None);
+		return MakeShared<FJsonValueString>(Out);
+	}
 }
 
 void FPCGHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
@@ -201,6 +282,10 @@ void FPCGHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("force_regenerate_pcg"), &ForceRegeneratePCG);
 	Registry.RegisterHandler(TEXT("cleanup_pcg"), &CleanupPCG);
 	Registry.RegisterHandler(TEXT("toggle_pcg_graph"), &ToggleGraphPCG);
+
+	// #213: bulk JSON-driven graph authoring (mirrors material.import_graph).
+	Registry.RegisterHandler(TEXT("import_pcg_graph"), &ImportGraph);
+	Registry.RegisterHandler(TEXT("export_pcg_graph"), &ExportGraph);
 }
 
 TSharedPtr<FJsonValue> FPCGHandlers::ListPCGGraphs(const TSharedPtr<FJsonObject>& Params)
@@ -1394,5 +1479,308 @@ TSharedPtr<FJsonValue> FPCGHandlers::ToggleGraphPCG(const TSharedPtr<FJsonObject
 	Result->SetStringField(TEXT("graphName"), TargetGraph->GetName());
 	Result->SetStringField(TEXT("graphPath"), TargetGraph->GetPathName());
 	Result->SetBoolField(TEXT("toggled"), true);
+	return MCPResult(Result);
+}
+
+// ─── #213 import_pcg_graph / export_pcg_graph ────────────────────────
+// Bulk JSON-driven graph authoring. Mirrors material.import_graph: one tool
+// call replaces N add_node + M connect_nodes + K set_node_settings round-trips.
+// Operates directly on the runtime UPCGGraph (no editor-graph required).
+TSharedPtr<FJsonValue> FPCGHandlers::ImportGraph(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	const TArray<TSharedPtr<FJsonValue>>* NodesArr = nullptr;
+	if (!Params->TryGetArrayField(TEXT("nodes"), NodesArr) || !NodesArr)
+	{
+		return MCPError(TEXT("Missing 'nodes' array"));
+	}
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
+	if (!Graph)
+	{
+		return MCPError(FString::Printf(TEXT("PCGGraph not found: %s"), *AssetPath));
+	}
+
+	const bool bReplace = OptionalBool(Params, TEXT("replace"), false);
+
+	FScopedTransaction Transaction(NSLOCTEXT("UEMCPBridge", "ImportPCGGraph", "Import PCG Graph"));
+	Graph->Modify();
+
+	int32 Removed = 0;
+	if (bReplace)
+	{
+		// Snapshot first; RemoveNode mutates the graph's node list.
+		TArray<UPCGNode*> Existing;
+		for (UPCGNode* Node : Graph->GetNodes())
+		{
+			if (Node) Existing.Add(Node);
+		}
+		for (UPCGNode* Node : Existing)
+		{
+			Graph->RemoveNode(Node);
+			++Removed;
+		}
+	}
+
+	// User-supplied JSON `name` is a local identifier only; the engine assigns
+	// the actual UPCGNode name on creation. Edges reference these local names.
+	TMap<FString, UPCGNode*> ByLocalName;
+	TArray<TSharedPtr<FJsonValue>> Warnings;
+	int32 NodesCreated = 0;
+	int32 SettingsApplied = 0;
+
+	for (const TSharedPtr<FJsonValue>& V : *NodesArr)
+	{
+		const TSharedPtr<FJsonObject>* NodeObj = nullptr;
+		if (!V.IsValid() || !V->TryGetObject(NodeObj) || !NodeObj || !(*NodeObj).IsValid()) continue;
+
+		FString LocalName;
+		(*NodeObj)->TryGetStringField(TEXT("name"), LocalName);
+
+		FString ClassName;
+		if (!(*NodeObj)->TryGetStringField(TEXT("class"), ClassName) || ClassName.IsEmpty())
+		{
+			Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s': missing 'class'"), *LocalName)));
+			continue;
+		}
+
+		UClass* SettingsClass = FindPCGSettingsClass(ClassName);
+		if (!SettingsClass)
+		{
+			Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s': class not found or invalid: %s"), *LocalName, *ClassName)));
+			continue;
+		}
+
+		UPCGSettings* DefaultSettings = NewObject<UPCGSettings>(Graph, SettingsClass, NAME_None, RF_Transactional);
+		if (!DefaultSettings)
+		{
+			Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s': failed to instantiate settings"), *LocalName)));
+			continue;
+		}
+
+		UPCGNode* NewNode = Graph->AddNodeInstance(DefaultSettings);
+		if (!NewNode)
+		{
+			Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s': AddNodeInstance failed"), *LocalName)));
+			continue;
+		}
+
+		if (DefaultSettings->GetOuter() != NewNode && !DefaultSettings->GetOuter()->IsA<UPackage>())
+		{
+			DefaultSettings->Rename(nullptr, NewNode, REN_DontCreateRedirectors | REN_DoNotDirty);
+		}
+
+		double PosX = 0, PosY = 0;
+		if ((*NodeObj)->TryGetNumberField(TEXT("posX"), PosX)) NewNode->PositionX = (int32)PosX;
+		if ((*NodeObj)->TryGetNumberField(TEXT("posY"), PosY)) NewNode->PositionY = (int32)PosY;
+
+		// Apply settings via the same dotted-path JSON setter used by
+		// set_pcg_node_settings (#149).
+		const TSharedPtr<FJsonObject>* SettingsObj = nullptr;
+		if ((*NodeObj)->TryGetObjectField(TEXT("settings"), SettingsObj) && SettingsObj && (*SettingsObj).IsValid())
+		{
+			DefaultSettings->Modify();
+			for (const auto& Pair : (*SettingsObj)->Values)
+			{
+				FString SubErr;
+				if (SetDottedPropertyFromJson(DefaultSettings, Pair.Key, Pair.Value, SubErr))
+				{
+					++SettingsApplied;
+				}
+				else
+				{
+					Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s' setting '%s': %s"), *LocalName, *Pair.Key, *SubErr)));
+				}
+			}
+			DefaultSettings->PostEditChange();
+		}
+
+		NewNode->PostEditChange();
+
+		if (!LocalName.IsEmpty())
+		{
+			ByLocalName.Add(LocalName, NewNode);
+		}
+		++NodesCreated;
+	}
+
+	// Connections. Resolve names via the local-name map first, then fall back
+	// to the graph's own nodes (Input/Output/already-existing) by engine name.
+	const TArray<TSharedPtr<FJsonValue>>* ConnsArr = nullptr;
+	int32 ConnectionsMade = 0;
+	if (Params->TryGetArrayField(TEXT("connections"), ConnsArr) && ConnsArr)
+	{
+		auto Resolve = [&](const FString& Name) -> UPCGNode*
+		{
+			if (UPCGNode** Found = ByLocalName.Find(Name); Found && *Found) return *Found;
+			return FindNodeByName(Graph, Name);
+		};
+
+		auto FirstOutputPin = [](UPCGNode* N) -> FName
+		{
+			if (!N) return NAME_None;
+			const auto& Pins = N->GetOutputPins();
+			return (Pins.Num() > 0 && Pins[0]) ? Pins[0]->Properties.Label : NAME_None;
+		};
+
+		auto FirstInputPin = [](UPCGNode* N) -> FName
+		{
+			if (!N) return NAME_None;
+			const auto& Pins = N->GetInputPins();
+			return (Pins.Num() > 0 && Pins[0]) ? Pins[0]->Properties.Label : NAME_None;
+		};
+
+		for (const TSharedPtr<FJsonValue>& V : *ConnsArr)
+		{
+			const TSharedPtr<FJsonObject>* CObj = nullptr;
+			if (!V.IsValid() || !V->TryGetObject(CObj) || !CObj || !(*CObj).IsValid()) continue;
+
+			FString From, To, FromPin, ToPin;
+			(*CObj)->TryGetStringField(TEXT("from"), From);
+			(*CObj)->TryGetStringField(TEXT("to"), To);
+			(*CObj)->TryGetStringField(TEXT("fromPin"), FromPin);
+			(*CObj)->TryGetStringField(TEXT("toPin"), ToPin);
+
+			UPCGNode* SrcNode = Resolve(From);
+			UPCGNode* DstNode = Resolve(To);
+			if (!SrcNode)
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("connection: source not found: %s"), *From)));
+				continue;
+			}
+			if (!DstNode)
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("connection: target not found: %s"), *To)));
+				continue;
+			}
+
+			const FName SrcPinName = FromPin.IsEmpty() ? FirstOutputPin(SrcNode) : FName(*FromPin);
+			const FName DstPinName = ToPin.IsEmpty() ? FirstInputPin(DstNode) : FName(*ToPin);
+
+			if (SrcPinName == NAME_None || DstPinName == NAME_None)
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("connection %s.%s -> %s.%s: pin not resolvable"), *From, *FromPin, *To, *ToPin)));
+				continue;
+			}
+
+			if (Graph->AddEdge(SrcNode, SrcPinName, DstNode, DstPinName))
+			{
+				++ConnectionsMade;
+			}
+			else
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("connection %s.%s -> %s.%s: AddEdge failed (incompatible or duplicate?)"), *From, *SrcPinName.ToString(), *To, *DstPinName.ToString())));
+			}
+		}
+	}
+
+	Graph->PostEditChange();
+	if (UPackage* Pkg = Graph->GetOutermost()) { Pkg->MarkPackageDirty(); }
+	UEditorAssetLibrary::SaveLoadedAsset(Graph, /*bOnlyIfIsDirty=*/false);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetBoolField(TEXT("replace"), bReplace);
+	Result->SetNumberField(TEXT("nodesRemoved"), Removed);
+	Result->SetNumberField(TEXT("nodesCreated"), NodesCreated);
+	Result->SetNumberField(TEXT("connectionsMade"), ConnectionsMade);
+	Result->SetNumberField(TEXT("settingsApplied"), SettingsApplied);
+	if (Warnings.Num() > 0)
+	{
+		Result->SetArrayField(TEXT("warnings"), Warnings);
+	}
+	return MCPResult(Result);
+}
+
+
+TSharedPtr<FJsonValue> FPCGHandlers::ExportGraph(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *AssetPath);
+	if (!Graph)
+	{
+		return MCPError(FString::Printf(TEXT("PCGGraph not found: %s"), *AssetPath));
+	}
+
+	const bool bIncludeSettings = OptionalBool(Params, TEXT("includeSettings"), true);
+
+	TArray<TSharedPtr<FJsonValue>> NodesArr;
+	for (const UPCGNode* Node : Graph->GetNodes())
+	{
+		if (!Node) continue;
+
+		TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
+		NodeObj->SetStringField(TEXT("name"), Node->GetName());
+		NodeObj->SetNumberField(TEXT("posX"), Node->PositionX);
+		NodeObj->SetNumberField(TEXT("posY"), Node->PositionY);
+
+		const UPCGSettings* Settings = Node->GetSettings();
+		if (Settings)
+		{
+			NodeObj->SetStringField(TEXT("class"), Settings->GetClass()->GetName());
+
+			if (bIncludeSettings)
+			{
+				TSharedPtr<FJsonObject> SettingsOut = MakeShared<FJsonObject>();
+				for (TFieldIterator<FProperty> It(Settings->GetClass()); It; ++It)
+				{
+					FProperty* Prop = *It;
+					if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+					const void* Addr = Prop->ContainerPtrToValuePtr<void>(Settings);
+					SettingsOut->SetField(Prop->GetName(), SerializePropForExport(Prop, Addr));
+				}
+				NodeObj->SetObjectField(TEXT("settings"), SettingsOut);
+			}
+		}
+
+		NodesArr.Add(MakeShared<FJsonValueObject>(NodeObj));
+	}
+
+	// Edges — same shape as read_pcg_graph (#217), reused so import/export speak
+	// the same vocabulary. Walk every output pin, including Input/Output specials.
+	auto EmitEdgesFromNode = [](const UPCGNode* From, TArray<TSharedPtr<FJsonValue>>& OutEdges)
+	{
+		if (!From) return;
+		for (const TObjectPtr<UPCGPin>& OutPin : From->GetOutputPins())
+		{
+			if (!OutPin) continue;
+			for (const TObjectPtr<UPCGEdge>& Edge : OutPin->Edges)
+			{
+				if (!Edge) continue;
+				const UPCGPin* OtherPin = Edge->InputPin == OutPin ? Edge->OutputPin.Get() : Edge->InputPin.Get();
+				const UPCGNode* ToNode = OtherPin ? OtherPin->Node.Get() : nullptr;
+				if (!OtherPin || !ToNode) continue;
+				TSharedPtr<FJsonObject> EdgeObj = MakeShared<FJsonObject>();
+				EdgeObj->SetStringField(TEXT("from"), From->GetName());
+				EdgeObj->SetStringField(TEXT("fromPin"), OutPin->Properties.Label.ToString());
+				EdgeObj->SetStringField(TEXT("to"), ToNode->GetName());
+				EdgeObj->SetStringField(TEXT("toPin"), OtherPin->Properties.Label.ToString());
+				OutEdges.Add(MakeShared<FJsonValueObject>(EdgeObj));
+			}
+		}
+	};
+
+	TArray<TSharedPtr<FJsonValue>> ConnsArr;
+	if (const UPCGNode* InputNode = Graph->GetInputNode())
+	{
+		EmitEdgesFromNode(InputNode, ConnsArr);
+	}
+	for (const UPCGNode* Node : Graph->GetNodes())
+	{
+		EmitEdgesFromNode(Node, ConnsArr);
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("name"), Graph->GetName());
+	Result->SetArrayField(TEXT("nodes"), NodesArr);
+	Result->SetArrayField(TEXT("connections"), ConnsArr);
+	Result->SetNumberField(TEXT("nodeCount"), NodesArr.Num());
+	Result->SetNumberField(TEXT("connectionCount"), ConnsArr.Num());
 	return MCPResult(Result);
 }

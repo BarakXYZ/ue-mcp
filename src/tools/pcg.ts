@@ -22,6 +22,8 @@ export const pcgTool: ToolDef = categoryTool(
     cleanup:              bp("Cleanup a PCG component (remove spawned content). Params: actorLabel, removeComponents? (default true) (#146)", "cleanup_pcg", (p) => ({ actorLabel: p.actorLabel, removeComponents: p.removeComponents })),
     toggle_graph:         bp("Toggle a PCG component's graph assignment to force reinit (no generate). Params: actorLabel, graphPath? (#146)", "toggle_pcg_graph", (p) => ({ actorLabel: p.actorLabel, graphPath: p.graphPath })),
     add_volume:           bp("Place PCG volume. Params: graphPath, location?, extent?", "add_pcg_volume"),
+    import_graph:         bp("Bulk-author a PCG graph from JSON. Params: assetPath, nodes=[{name,class,posX?,posY?,settings?}], connections=[{from,fromPin?,to,toPin?}], replace? (default false). One call replaces N add_node + M connect_nodes + K set_node_settings (#213).", "import_pcg_graph", (p) => ({ assetPath: p.assetPath, nodes: p.nodes, connections: p.connections, replace: p.replace })),
+    export_graph:         bp("Export a PCG graph as JSON. Params: assetPath, includeSettings? (default true). Round-trip safe with import_graph (#213).", "export_pcg_graph", (p) => ({ assetPath: p.assetPath, includeSettings: p.includeSettings })),
   },
   undefined,
   {
@@ -33,10 +35,13 @@ export const pcgTool: ToolDef = categoryTool(
     targetNode: z.string().optional(), targetPin: z.string().optional(),
     settings: z.record(z.unknown()).optional(),
     entries: z.array(z.record(z.unknown())).optional().describe("Array of {mesh, weight?} entries for set_static_mesh_spawner_meshes"),
-    replace: z.boolean().optional().describe("When true (default) overwrite existing MeshEntries; when false, append"),
+    replace: z.boolean().optional().describe("set_static_mesh_spawner_meshes: overwrite existing MeshEntries (default true). import_graph: wipe existing user nodes first (default false)."),
     graphPath: z.string().optional(),
     location: Vec3.optional(),
     extent: Vec3.optional(),
     removeComponents: z.boolean().optional().describe("cleanup: remove managed spawned components (default true)"),
+    nodes: z.array(z.record(z.unknown())).optional().describe("import_graph: [{name, class, posX?, posY?, settings?}]"),
+    connections: z.array(z.record(z.unknown())).optional().describe("import_graph: [{from, fromPin?, to, toPin?}]"),
+    includeSettings: z.boolean().optional().describe("export_graph: include per-node editable settings in the response (default true)"),
   },
 );

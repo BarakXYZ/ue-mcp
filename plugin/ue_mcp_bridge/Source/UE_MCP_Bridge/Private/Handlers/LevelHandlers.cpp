@@ -38,6 +38,7 @@
 #include "Selection.h"
 #include "Engine/LevelStreaming.h"
 #include "Engine/LevelStreamingDynamic.h"
+#include "Subsystems/EditorActorSubsystem.h"
 #include "LevelEditorSubsystem.h"
 #include "EditorLevelUtils.h"
 #include "FileHelpers.h"
@@ -2647,8 +2648,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::ListStreamingSublevels(const TSharedPtr<F
 		O->SetStringField(TEXT("levelName"), FPaths::GetBaseFilename(PkgName));
 		O->SetStringField(TEXT("packageName"), PkgName);
 		O->SetStringField(TEXT("streamingClass"), SL->GetClass()->GetName());
-		O->SetBoolField(TEXT("initiallyLoaded"), SL->bInitiallyLoaded);
-		O->SetBoolField(TEXT("initiallyVisible"), SL->bInitiallyVisible);
+		O->SetBoolField(TEXT("initiallyLoaded"), SL->ShouldBeLoaded());
+		O->SetBoolField(TEXT("initiallyVisible"), SL->GetShouldBeVisibleFlag());
 		O->SetBoolField(TEXT("loaded"), SL->IsLevelLoaded());
 		O->SetBoolField(TEXT("visible"), SL->GetShouldBeVisibleFlag());
 		const FTransform T = SL->LevelTransform;
@@ -2685,8 +2686,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::AddStreamingSublevel(const TSharedPtr<FJs
 		return MCPError(FString::Printf(TEXT("Failed to add sub-level '%s'"), *LevelPath));
 	}
 
-	if (Params->HasField(TEXT("initiallyLoaded"))) SL->bInitiallyLoaded = OptionalBool(Params, TEXT("initiallyLoaded"), true);
-	if (Params->HasField(TEXT("initiallyVisible"))) SL->bInitiallyVisible = OptionalBool(Params, TEXT("initiallyVisible"), true);
+	if (Params->HasField(TEXT("initiallyLoaded"))) SL->SetShouldBeLoaded(OptionalBool(Params, TEXT("initiallyLoaded"), true));
+	if (Params->HasField(TEXT("initiallyVisible"))) SL->SetShouldBeVisible(OptionalBool(Params, TEXT("initiallyVisible"), true));
 
 	const TSharedPtr<FJsonObject>* LocObj = nullptr;
 	if (Params->TryGetObjectField(TEXT("location"), LocObj) && LocObj && (*LocObj).IsValid())
@@ -2741,8 +2742,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetStreamingSublevelProperties(const TSha
 	if (!SL) return MCPError(FString::Printf(TEXT("Streaming sub-level not found: %s"), *Name));
 
 	bool bChanged = false;
-	if (Params->HasField(TEXT("initiallyLoaded"))) { SL->bInitiallyLoaded = OptionalBool(Params, TEXT("initiallyLoaded"), true); bChanged = true; }
-	if (Params->HasField(TEXT("initiallyVisible"))) { SL->bInitiallyVisible = OptionalBool(Params, TEXT("initiallyVisible"), true); bChanged = true; }
+	if (Params->HasField(TEXT("initiallyLoaded"))) { SL->SetShouldBeLoaded(OptionalBool(Params, TEXT("initiallyLoaded"), true)); bChanged = true; }
+	if (Params->HasField(TEXT("initiallyVisible"))) { SL->SetShouldBeVisible(OptionalBool(Params, TEXT("initiallyVisible"), true)); bChanged = true; }
 
 	const TSharedPtr<FJsonObject>* LocObj = nullptr;
 	if (Params->TryGetObjectField(TEXT("location"), LocObj) && LocObj && (*LocObj).IsValid())
@@ -2772,8 +2773,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetStreamingSublevelProperties(const TSha
 	auto Result = MCPSuccess();
 	if (bChanged) MCPSetUpdated(Result); else MCPSetExisted(Result);
 	Result->SetStringField(TEXT("levelName"), Name);
-	Result->SetBoolField(TEXT("initiallyLoaded"), SL->bInitiallyLoaded);
-	Result->SetBoolField(TEXT("initiallyVisible"), SL->bInitiallyVisible);
+	Result->SetBoolField(TEXT("initiallyLoaded"), SL->ShouldBeLoaded());
+	Result->SetBoolField(TEXT("initiallyVisible"), SL->GetShouldBeVisibleFlag());
 	if (bEditorVisibleSet) Result->SetBoolField(TEXT("editorVisible"), bEditorVisible);
 	return MCPResult(Result);
 }

@@ -2493,8 +2493,8 @@ TSharedPtr<FJsonValue> FMaterialHandlers::SetMaterialUsage(const TSharedPtr<FJso
 			Unknown.Add(U);
 			continue;
 		}
-		Material->SetMaterialUsage(/*bNeedsRecompile*/ const_cast<bool&>(bEnabled), Usage);
-		Material->SetUsageByFlag(Usage, bEnabled);
+		bool bNeedsRecompile = false;
+		Material->SetMaterialUsage(bNeedsRecompile, Usage);
 		Applied.Add(U);
 	}
 
