@@ -154,9 +154,9 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | `save` | Save the current level | |
 | `list` | List map assets | |
 | `create` | Create an empty level | |
-| `spawn_volume` | Place a volume | `volumeType`, `location?`, `extent?` |
+| `spawn_volume` | Place a volume. Builds a real cube brush (FBSPOps prep) so AVolume bounds match the requested extent. Optional `graphPath` binds a PCG graph when `volumeType:"PCGVolume"`. | `volumeType`, `location?`, `extent?`, `graphPath?` |
 | `list_volumes` | List volumes in the level | `volumeType?` |
-| `set_volume_properties` | Edit volume properties | `actorLabel`, `properties` |
+| `set_volume_properties` | Edit volume properties. Synthetic `BrushExtent: {X,Y,Z}` rebuilds the cube brush; unknown property names are returned in `skipped` instead of silently no-op'ing. | `actorLabel`, `properties` |
 | `spawn_light` | Place a light | `lightType`, `location?`, `intensity?`, `color?` |
 | `set_light_properties` | Edit light properties | `actorLabel`, `intensity?`, `color?`, `temperature?` |
 | `build_lighting` | Build lighting | `quality?` |
@@ -274,8 +274,10 @@ UE-MCP exposes **19 category tools** covering **440+ actions**, plus a `flow` to
 | Action | Description | Key Params |
 |--------|-------------|------------|
 | `list_graphs` | List PCG graph assets | `directory?` |
-| `read_graph` | Read graph structure (nodes and edges) | `assetPath` |
+| `read_graph` | Read graph structure (nodes and edges, including implicit `inputNode` / `outputNode`) | `assetPath` |
 | `read_node_settings` | Read a node's settings | `assetPath`, `nodeName` |
+| `import_graph` | Bulk-author a PCG graph from a JSON spec - replaces N add_node + M connect_nodes + K set_node_settings round-trips. Operates on the runtime `UPCGGraph` directly. | `assetPath`, `nodes=[{name,class,posX?,posY?,settings?}]`, `connections=[{from,fromPin?,to,toPin?}]`, `replace?` |
+| `export_graph` | Read a PCG graph back as the same JSON spec. Round-trips with `import_graph`; layout is read from the editor graph when present. | `assetPath`, `includeSettings?` |
 | `get_components` | List PCG components in the level | |
 | `get_component_details` | Inspect a PCG component | `actorLabel` |
 | `create_graph` | Create a new PCG graph | `name` |

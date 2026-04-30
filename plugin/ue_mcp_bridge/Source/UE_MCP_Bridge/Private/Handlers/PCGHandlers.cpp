@@ -28,6 +28,9 @@
 #include "Engine/Brush.h"
 #include "Components/BrushComponent.h"
 #include "Builders/CubeBuilder.h"
+#include "BSPOps.h"
+#include "Engine/Polys.h"
+#include "Model.h"
 #include "UObject/Package.h"
 #include "Misc/PackageName.h"
 #include "UObject/SavePackage.h"
@@ -180,6 +183,43 @@ namespace
 		}
 		void* ValueAddr = Prop->ContainerPtrToValuePtr<void>(Container);
 		return SetJsonOnProperty(Prop, ValueAddr, Value, OutError);
+	}
+
+	// #238: AVolumes spawned via SpawnActor have Brush=nullptr, which makes
+	// UEditorBrushBuilder::EndBrush silently no-op (it returns true without
+	// populating polys). Initialize the UModel + UPolys + BrushComponent->Brush
+	// in the editor's documented order, then run UCubeBuilder + csgPrepMovingBrush.
+	// Mirrors UActorFactoryVolume's flow so the resulting volume reports real
+	// bounds to GetActorBounds() and downstream samplers.
+	static void BuildVolumeAsCube(UWorld* World, AVolume* Volume, const FVector& HalfExtent)
+	{
+		if (!World || !Volume) return;
+
+		Volume->PreEditChange(nullptr);
+
+		if (!Volume->Brush)
+		{
+			const EObjectFlags ObjectFlags = Volume->GetFlags() & (RF_Transient | RF_Transactional);
+			Volume->PolyFlags = 0;
+			Volume->Brush = NewObject<UModel>(Volume, NAME_None, ObjectFlags);
+			Volume->Brush->Initialize(nullptr, true);
+			Volume->Brush->Polys = NewObject<UPolys>(Volume->Brush, NAME_None, ObjectFlags);
+			if (UBrushComponent* BC = Volume->GetBrushComponent())
+			{
+				BC->Brush = Volume->Brush;
+			}
+		}
+
+		UCubeBuilder* CubeBuilder = NewObject<UCubeBuilder>(GetTransientPackage(), UCubeBuilder::StaticClass());
+		CubeBuilder->X = HalfExtent.X * 2.0;
+		CubeBuilder->Y = HalfExtent.Y * 2.0;
+		CubeBuilder->Z = HalfExtent.Z * 2.0;
+		CubeBuilder->Build(World, Volume);
+
+		Volume->BrushBuilder = CubeBuilder;
+		Volume->SetActorScale3D(FVector::OneVector);
+
+		FBSPOps::csgPrepMovingBrush(Volume);
 	}
 
 	// #213: shared class lookup. Mirrors AddPCGNode's tolerant resolver — accepts
@@ -405,6 +445,38 @@ TSharedPtr<FJsonValue> FPCGHandlers::ReadPCGGraph(const TSharedPtr<FJsonObject>&
 	Result->SetArrayField(TEXT("nodes"), NodeArray);
 	Result->SetNumberField(TEXT("nodeCount"), NodeArray.Num());
 
+	// #239: surface the implicit DefaultInputNode / DefaultOutputNode so
+	// callers can wire to them via connect_pcg_nodes. They aren't part of
+	// GetNodes() but their names are required to thread the PCG component's
+	// bounds into samplers (e.g. SurfaceSampler.BoundingShape <- graph input).
+	auto SerializeImplicitNode = [](const UPCGNode* Node) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		if (!Node) return Obj;
+		Obj->SetStringField(TEXT("name"), Node->GetName());
+		Obj->SetStringField(TEXT("title"), Node->GetNodeTitle(EPCGNodeTitleType::ListView).ToString());
+		TArray<TSharedPtr<FJsonValue>> InPins, OutPins;
+		for (const TObjectPtr<UPCGPin>& P : Node->GetInputPins())
+		{
+			if (P) InPins.Add(MakeShared<FJsonValueString>(P->Properties.Label.ToString()));
+		}
+		for (const TObjectPtr<UPCGPin>& P : Node->GetOutputPins())
+		{
+			if (P) OutPins.Add(MakeShared<FJsonValueString>(P->Properties.Label.ToString()));
+		}
+		Obj->SetArrayField(TEXT("inputPins"), InPins);
+		Obj->SetArrayField(TEXT("outputPins"), OutPins);
+		return Obj;
+	};
+	if (const UPCGNode* InputNode = Graph->GetInputNode())
+	{
+		Result->SetObjectField(TEXT("inputNode"), SerializeImplicitNode(InputNode));
+	}
+	if (const UPCGNode* OutputNode = Graph->GetOutputNode())
+	{
+		Result->SetObjectField(TEXT("outputNode"), SerializeImplicitNode(OutputNode));
+	}
+
 	// #217: include edges so callers can verify wiring without dropping into
 	// Python. Walk every node's output pins and serialise each edge as
 	// {from, fromPin, to, toPin}. Input/Output graph nodes participate too.
@@ -586,13 +658,32 @@ TSharedPtr<FJsonValue> FPCGHandlers::ConnectPCGNodes(const TSharedPtr<FJsonObjec
 		TargetNode = Graph->GetOutputNode();
 	}
 
+	// #239: callers commonly try "Input"/"Output" - point them at the actual
+	// implicit node names (DefaultInputNode/DefaultOutputNode) which are now
+	// surfaced by read_pcg_graph.
+	auto ImplicitHint = [&](const FString& Name) -> FString
+	{
+		if (Name.Equals(TEXT("Input"), ESearchCase::IgnoreCase) ||
+			Name.Equals(TEXT("InputNode"), ESearchCase::IgnoreCase) ||
+			Name.Equals(TEXT("GraphInput"), ESearchCase::IgnoreCase))
+		{
+			return Graph->GetInputNode() ? FString::Printf(TEXT(" - did you mean '%s'?"), *Graph->GetInputNode()->GetName()) : FString();
+		}
+		if (Name.Equals(TEXT("Output"), ESearchCase::IgnoreCase) ||
+			Name.Equals(TEXT("OutputNode"), ESearchCase::IgnoreCase) ||
+			Name.Equals(TEXT("GraphOutput"), ESearchCase::IgnoreCase))
+		{
+			return Graph->GetOutputNode() ? FString::Printf(TEXT(" - did you mean '%s'?"), *Graph->GetOutputNode()->GetName()) : FString();
+		}
+		return FString();
+	};
 	if (!SourceNode)
 	{
-		return MCPError(FString::Printf(TEXT("Source node not found: %s"), *SourceNodeName));
+		return MCPError(FString::Printf(TEXT("Source node not found: %s%s"), *SourceNodeName, *ImplicitHint(SourceNodeName)));
 	}
 	if (!TargetNode)
 	{
-		return MCPError(FString::Printf(TEXT("Target node not found: %s"), *TargetNodeName));
+		return MCPError(FString::Printf(TEXT("Target node not found: %s%s"), *TargetNodeName, *ImplicitHint(TargetNodeName)));
 	}
 
 	// Get pin labels if specified, otherwise use the first available pins
@@ -951,23 +1042,7 @@ TSharedPtr<FJsonValue> FPCGHandlers::SpawnPCGVolume(const TSharedPtr<FJsonObject
 		return MCPError(TEXT("Failed to spawn PCGVolume actor"));
 	}
 
-	// #218: AVolume needs an actual cube brush, not just an actor scale.
-	// SpawnActor creates the actor with an empty UModel, so PCG samplers see
-	// bounds=(0,0,0). Build a UCubeBuilder cube sized to (extent*2) so the
-	// reported half-extent matches what the caller asked for.
-	UCubeBuilder* CubeBuilder = NewObject<UCubeBuilder>(GetTransientPackage(), UCubeBuilder::StaticClass());
-	CubeBuilder->X = Extent.X * 2.0;
-	CubeBuilder->Y = Extent.Y * 2.0;
-	CubeBuilder->Z = Extent.Z * 2.0;
-	CubeBuilder->Build(World, PCGVolumeActor);
-	PCGVolumeActor->BrushBuilder = CubeBuilder;
-	PCGVolumeActor->SetActorScale3D(FVector::OneVector);
-	if (UBrushComponent* BrushComp = PCGVolumeActor->GetBrushComponent())
-	{
-		BrushComp->BuildSimpleBrushCollision();
-		BrushComp->UpdateBounds();
-		BrushComp->MarkRenderStateDirty();
-	}
+	BuildVolumeAsCube(World, PCGVolumeActor, Extent);
 
 	if (!Label.IsEmpty())
 	{

@@ -27,7 +27,14 @@
 #include "Engine/ExponentialHeightFog.h"
 #include "Engine/SkyLight.h"
 #include "Engine/BrushBuilder.h"
+#include "Engine/Polys.h"
+#include "Model.h"
+#include "Builders/CubeBuilder.h"
+#include "BSPOps.h"
+#include "Components/BrushComponent.h"
 #include "GameFramework/Volume.h"
+#include "PCGComponent.h"
+#include "PCGGraph.h"
 #include "Engine/BlockingVolume.h"
 #include "Engine/TriggerVolume.h"
 #include "Engine/PostProcessVolume.h"
@@ -969,6 +976,44 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetLightProperties(const TSharedPtr<FJson
 	return MCPResult(Result);
 }
 
+namespace
+{
+	// #238: AVolumes spawned via SpawnActor have Brush=nullptr, which makes
+	// UEditorBrushBuilder::EndBrush silently no-op. Initialize the UModel +
+	// UPolys + BrushComponent->Brush in the editor's documented order, then
+	// run UCubeBuilder + csgPrepMovingBrush. Mirrors UActorFactoryVolume.
+	static void BuildVolumeAsCube(UWorld* World, AVolume* Volume, const FVector& HalfExtent)
+	{
+		if (!World || !Volume) return;
+
+		Volume->PreEditChange(nullptr);
+
+		if (!Volume->Brush)
+		{
+			const EObjectFlags ObjectFlags = Volume->GetFlags() & (RF_Transient | RF_Transactional);
+			Volume->PolyFlags = 0;
+			Volume->Brush = NewObject<UModel>(Volume, NAME_None, ObjectFlags);
+			Volume->Brush->Initialize(nullptr, true);
+			Volume->Brush->Polys = NewObject<UPolys>(Volume->Brush, NAME_None, ObjectFlags);
+			if (UBrushComponent* BC = Volume->GetBrushComponent())
+			{
+				BC->Brush = Volume->Brush;
+			}
+		}
+
+		UCubeBuilder* CubeBuilder = NewObject<UCubeBuilder>(GetTransientPackage(), UCubeBuilder::StaticClass());
+		CubeBuilder->X = HalfExtent.X * 2.0;
+		CubeBuilder->Y = HalfExtent.Y * 2.0;
+		CubeBuilder->Z = HalfExtent.Z * 2.0;
+		CubeBuilder->Build(World, Volume);
+
+		Volume->BrushBuilder = CubeBuilder;
+		Volume->SetActorScale3D(FVector::OneVector);
+
+		FBSPOps::csgPrepMovingBrush(Volume);
+	}
+}
+
 TSharedPtr<FJsonValue> FLevelHandlers::SpawnVolume(const TSharedPtr<FJsonObject>& Params)
 {
 	FString VolumeType;
@@ -1076,8 +1121,19 @@ TSharedPtr<FJsonValue> FLevelHandlers::SpawnVolume(const TSharedPtr<FJsonObject>
 		NewVolume->SetActorLabel(Label);
 	}
 
-	// Set scale based on extent
-	NewVolume->SetActorScale3D(Extent / 100.0);
+	// #238: AVolume subclasses ship with an empty UModel by default - actor
+	// scale alone leaves bounds at zero, which silently breaks downstream
+	// systems (PCG samplers, navmesh bounds, audio queries). Build an actual
+	// cube and run FBSPOps::HandleVolumeShapeChanged to prep + re-register.
+	// Non-Volume actors keep the old scale-based behavior.
+	if (AVolume* Volume = Cast<AVolume>(NewVolume))
+	{
+		BuildVolumeAsCube(World, Volume, Extent);
+	}
+	else
+	{
+		NewVolume->SetActorScale3D(Extent / 100.0);
+	}
 
 	const FString FinalLabel = NewVolume->GetActorLabel();
 
@@ -1086,6 +1142,26 @@ TSharedPtr<FJsonValue> FLevelHandlers::SpawnVolume(const TSharedPtr<FJsonObject>
 	Result->SetStringField(TEXT("actorLabel"), FinalLabel);
 	Result->SetStringField(TEXT("actorName"), NewVolume->GetName());
 	Result->SetStringField(TEXT("volumeType"), VolumeType);
+
+	// #238: when spawning a PCGVolume, accept and bind a graphPath so callers
+	// don't have to make a follow-up set_actor_property call.
+	FString GraphPath;
+	if (Params->TryGetStringField(TEXT("graphPath"), GraphPath) && !GraphPath.IsEmpty())
+	{
+		if (UPCGComponent* PCGComp = NewVolume->FindComponentByClass<UPCGComponent>())
+		{
+			if (UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath))
+			{
+				PCGComp->SetGraph(Graph);
+				Result->SetStringField(TEXT("graphPath"), GraphPath);
+				Result->SetStringField(TEXT("graphName"), Graph->GetName());
+			}
+			else
+			{
+				Result->SetStringField(TEXT("warning"), FString::Printf(TEXT("PCGGraph not found: %s - volume spawned without graph"), *GraphPath));
+			}
+		}
+	}
 
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 	Payload->SetStringField(TEXT("actorLabel"), FinalLabel);
@@ -1532,53 +1608,116 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 	}
 
 	TArray<TSharedPtr<FJsonValue>> Changes;
+	TArray<TSharedPtr<FJsonValue>> Skipped;
 	TSharedPtr<FJsonObject> PreviousValues = MakeShared<FJsonObject>();
+
+	// #238: callers pass either flat (BrushExtent:{...} at top-level) or
+	// wrapped ({properties:{BrushExtent:{...}}}). The TS schema documents
+	// the wrapped form; the original handler only walked top-level keys
+	// and silently dropped wrapped writes. Walk both.
+	TArray<TPair<FString, TSharedPtr<FJsonValue>>> Pairs;
 	for (auto& Pair : Params->Values)
 	{
-		if (Pair.Key == TEXT("actorLabel") || Pair.Key == TEXT("action"))
+		if (Pair.Key == TEXT("actorLabel") || Pair.Key == TEXT("action") || Pair.Key == TEXT("properties"))
 			continue;
+		Pairs.Emplace(Pair.Key, Pair.Value);
+	}
+	const TSharedPtr<FJsonObject>* PropsObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("properties"), PropsObj) && PropsObj && (*PropsObj).IsValid())
+	{
+		for (auto& Pair : (*PropsObj)->Values)
+		{
+			Pairs.Emplace(Pair.Key, Pair.Value);
+		}
+	}
+	for (auto& Pair : Pairs)
+	{
+
+		// #238: BrushExtent isn't a real UPROPERTY on AVolume - it's a synthetic
+		// property the bridge owns. Rebuild the cube via UCubeBuilder and run
+		// FBSPOps so the new geometry is actually applied (the prior path
+		// silently no-op'd on FindPropertyByName).
+		if (Pair.Key.Equals(TEXT("BrushExtent"), ESearchCase::IgnoreCase) || Pair.Key.Equals(TEXT("brushExtent"), ESearchCase::IgnoreCase))
+		{
+			AVolume* Volume = Cast<AVolume>(TargetActor);
+			if (!Volume)
+			{
+				Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: actor is not an AVolume"), *Pair.Key)));
+				continue;
+			}
+			const TSharedPtr<FJsonObject>* ExtObj = nullptr;
+			FVector NewExtent = FVector::ZeroVector;
+			bool bGotExtent = false;
+			if (Pair.Value->TryGetObject(ExtObj) && ExtObj && (*ExtObj).IsValid())
+			{
+				double V = 0;
+				if ((*ExtObj)->TryGetNumberField(TEXT("X"), V) || (*ExtObj)->TryGetNumberField(TEXT("x"), V)) { NewExtent.X = V; bGotExtent = true; }
+				if ((*ExtObj)->TryGetNumberField(TEXT("Y"), V) || (*ExtObj)->TryGetNumberField(TEXT("y"), V)) { NewExtent.Y = V; bGotExtent = true; }
+				if ((*ExtObj)->TryGetNumberField(TEXT("Z"), V) || (*ExtObj)->TryGetNumberField(TEXT("z"), V)) { NewExtent.Z = V; bGotExtent = true; }
+			}
+			if (!bGotExtent || NewExtent.X <= 0 || NewExtent.Y <= 0 || NewExtent.Z <= 0)
+			{
+				Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: expected {X,Y,Z} object with positive values"), *Pair.Key)));
+				continue;
+			}
+			BuildVolumeAsCube(World, Volume, NewExtent);
+			Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
+			continue;
+		}
 
 		FProperty* Prop = TargetActor->GetClass()->FindPropertyByName(*Pair.Key);
-		if (Prop)
+		if (!Prop)
 		{
-			FString PrevStr;
-			Prop->ExportText_Direct(PrevStr, Prop->ContainerPtrToValuePtr<void>(TargetActor),
-				Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
+			Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: not a property on %s"), *Pair.Key, *TargetActor->GetClass()->GetName())));
+			continue;
+		}
 
-			FString ValueStr;
-			bool bApplied = false;
-			if (Pair.Value->TryGetString(ValueStr))
+		FString PrevStr;
+		Prop->ExportText_Direct(PrevStr, Prop->ContainerPtrToValuePtr<void>(TargetActor),
+			Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
+
+		FString ValueStr;
+		bool bApplied = false;
+		if (Pair.Value->TryGetString(ValueStr))
+		{
+			Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
+			bApplied = true;
+		}
+		else
+		{
+			double NumVal;
+			if (Pair.Value->TryGetNumber(NumVal))
 			{
+				ValueStr = FString::SanitizeFloat(NumVal);
 				Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
 				bApplied = true;
 			}
-			else
-			{
-				double NumVal;
-				if (Pair.Value->TryGetNumber(NumVal))
-				{
-					ValueStr = FString::SanitizeFloat(NumVal);
-					Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
-					bApplied = true;
-				}
-			}
+		}
 
-			if (bApplied)
-			{
-				Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
-				PreviousValues->SetStringField(Pair.Key, PrevStr);
-			}
+		if (bApplied)
+		{
+			Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
+			PreviousValues->SetStringField(Pair.Key, PrevStr);
+		}
+		else
+		{
+			Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: value type not coercible"), *Pair.Key)));
 		}
 	}
 
 	auto Result = MCPSuccess();
-	MCPSetUpdated(Result);
+	if (Changes.Num() > 0) MCPSetUpdated(Result); else MCPSetExisted(Result);
 	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
 	Result->SetArrayField(TEXT("changes"), Changes);
-
-	if (Changes.Num() > 0)
+	if (Skipped.Num() > 0)
 	{
-		// Self-inverse: call again with previous values as strings.
+		Result->SetArrayField(TEXT("skipped"), Skipped);
+	}
+
+	if (Changes.Num() > 0 && PreviousValues->Values.Num() > 0)
+	{
+		// Self-inverse for property-only changes; BrushExtent rebuild has no
+		// reversible recipe (no prior extent recorded), so omit from rollback.
 		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 		Payload->SetStringField(TEXT("actorLabel"), ActorLabel);
 		for (auto& Prev : PreviousValues->Values)
