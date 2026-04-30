@@ -22,6 +22,8 @@
 #include "PCGVolume.h"
 #include "Elements/PCGStaticMeshSpawner.h"
 #include "MeshSelectors/PCGMeshSelectorWeighted.h"
+#include "Nodes/PCGEditorGraphNodeBase.h"
+#include "UObject/UObjectIterator.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Brush.h"
 #include "Components/BrushComponent.h"
@@ -1572,6 +1574,23 @@ TSharedPtr<FJsonValue> FPCGHandlers::ImportGraph(const TSharedPtr<FJsonObject>& 
 			DefaultSettings->Rename(nullptr, NewNode, REN_DontCreateRedirectors | REN_DoNotDirty);
 		}
 
+		// #236: preserve the user-supplied node name when there's no collision.
+		// AddNodeInstance assigns engine-derived names (e.g. SurfaceSampler_0),
+		// which makes export -> import not name-stable. Rename the new node
+		// to the local id when nothing else in the graph already uses it.
+		if (!LocalName.IsEmpty() && NewNode->GetName() != LocalName)
+		{
+			const bool bClashes = (StaticFindObject(nullptr, NewNode->GetOuter(), *LocalName, EFindObjectFlags::ExactClass) != nullptr);
+			if (!bClashes)
+			{
+				NewNode->Rename(*LocalName, NewNode->GetOuter(), REN_DontCreateRedirectors | REN_DoNotDirty);
+			}
+			else
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s': name collision, kept engine-assigned '%s'"), *LocalName, *NewNode->GetName())));
+			}
+		}
+
 		double PosX = 0, PosY = 0;
 		if ((*NodeObj)->TryGetNumberField(TEXT("posX"), PosX)) NewNode->PositionX = (int32)PosX;
 		if ((*NodeObj)->TryGetNumberField(TEXT("posY"), PosY)) NewNode->PositionY = (int32)PosY;
@@ -1709,6 +1728,24 @@ TSharedPtr<FJsonValue> FPCGHandlers::ExportGraph(const TSharedPtr<FJsonObject>& 
 
 	const bool bIncludeSettings = OptionalBool(Params, TEXT("includeSettings"), true);
 
+	// #235: editor layout (NodePosX/NodePosY) lives on UPCGEditorGraphNodeBase
+	// in the asset's UPCGEditorGraph. The runtime UPCGNode::PositionX/Y is
+	// only populated when the node was authored through this bridge - the PCG
+	// editor never writes back to it. Build a lookup so editor-authored
+	// graphs round-trip their hand-laid-out positions.
+	TMap<const UPCGNode*, const UPCGEditorGraphNodeBase*> EditorNodeByPCGNode;
+	for (TObjectIterator<UPCGEditorGraphNodeBase> It; It; ++It)
+	{
+		const UPCGEditorGraphNodeBase* EdNode = *It;
+		if (!EdNode || EdNode->IsTemplate()) continue;
+		const UPCGNode* PCGN = EdNode->GetPCGNode();
+		if (!PCGN) continue;
+		if (PCGN->GetTypedOuter<UPCGGraph>() == Graph)
+		{
+			EditorNodeByPCGNode.Add(PCGN, EdNode);
+		}
+	}
+
 	TArray<TSharedPtr<FJsonValue>> NodesArr;
 	for (const UPCGNode* Node : Graph->GetNodes())
 	{
@@ -1716,8 +1753,16 @@ TSharedPtr<FJsonValue> FPCGHandlers::ExportGraph(const TSharedPtr<FJsonObject>& 
 
 		TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
 		NodeObj->SetStringField(TEXT("name"), Node->GetName());
-		NodeObj->SetNumberField(TEXT("posX"), Node->PositionX);
-		NodeObj->SetNumberField(TEXT("posY"), Node->PositionY);
+
+		double PosX = Node->PositionX;
+		double PosY = Node->PositionY;
+		if (const UPCGEditorGraphNodeBase* const* EdNodePtr = EditorNodeByPCGNode.Find(Node); EdNodePtr && *EdNodePtr)
+		{
+			PosX = (*EdNodePtr)->NodePosX;
+			PosY = (*EdNodePtr)->NodePosY;
+		}
+		NodeObj->SetNumberField(TEXT("posX"), PosX);
+		NodeObj->SetNumberField(TEXT("posY"), PosY);
 
 		const UPCGSettings* Settings = Node->GetSettings();
 		if (Settings)

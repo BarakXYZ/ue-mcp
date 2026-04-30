@@ -54,7 +54,7 @@ async function update() {
   }
 
   if (result.cppPluginDeployed) {
-    ok("Plugin updated");
+    ok("Plugin sources updated - rebuild required");
   } else {
     ok("Plugin already up to date");
   }
@@ -72,7 +72,11 @@ async function update() {
 
   console.log("");
   if (result.cppPluginDeployed) {
-    console.log(`  ${DIM}Restart the editor to load the updated plugin.${RESET}`);
+    const projName = project.projectName ?? "<Project>";
+    console.log(`  ${DIM}C++ sources changed - the plugin must be rebuilt before the editor will see new handlers.${RESET}`);
+    console.log(`  ${DIM}From the project root:${RESET}`);
+    console.log(`  ${DIM}  Build.bat ${projName}Editor Win64 Development "${project.projectPath}"${RESET}`);
+    console.log(`  ${DIM}Then start (or restart) the editor.${RESET}`);
   } else {
     console.log(`  ${DIM}No changes needed.${RESET}`);
   }

@@ -60,6 +60,7 @@ public class UE_MCP_Bridge : ModuleRules
 				"Niagara",
 				"NiagaraEditor",
 				"PCG",
+				"PCGEditor",
 				"PoseSearch",
 				"PropertyEditor",
 				"PythonScriptPlugin",
