@@ -1,0 +1,3177 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for UE-MCP — Unreal Engine Model Context Protocol Server">
+      
+      
+      
+        <link rel="canonical" href="https://db-lyon.github.io/ue-mcp/tool-reference/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../handler-conventions/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Tool Reference - UE-MCP Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#tool-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="UE-MCP Documentation" class="md-header__button md-logo" aria-label="UE-MCP Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            UE-MCP Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Tool Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/db-lyon/ue-mcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    db-lyon/ue-mcp
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="UE-MCP Documentation" class="md-nav__button md-logo" aria-label="UE-MCP Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    UE-MCP Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/db-lyon/ue-mcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    db-lyon/ue-mcp
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#project-project-status-config-ini-c-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        project — Project Status, Config INI, C++ Source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#asset-asset-management-import-datatables-textures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        asset — Asset Management, Import, DataTables, Textures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blueprint-reading-authoring-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        blueprint — Reading, Authoring, Compilation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#level-actors-selection-components-volumes-lights-splines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        level — Actors, Selection, Components, Volumes, Lights, Splines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#material-materials-instances-shading-graph-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        material — Materials, Instances, Shading, Graph Authoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#animation-anim-assets-skeletons-montages-blendspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        animation — Anim Assets, Skeletons, Montages, Blendspaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#landscape-terrain-sculpting-painting-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        landscape — Terrain Sculpting, Painting, Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pcg-procedural-content-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pcg — Procedural Content Generation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#foliage-foliage-painting-and-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        foliage — Foliage Painting and Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#niagara-vfx-systems-and-graph-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        niagara — VFX Systems and Graph Authoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audio-sound-assets-and-playback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        audio — Sound Assets and Playback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#widget-umg-widgets-and-editor-utilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        widget — UMG Widgets and Editor Utilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editor-console-python-pie-viewport-sequencer-build-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        editor — Console, Python, PIE, Viewport, Sequencer, Build, Logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reflection-ue-classstructenum-reflection-gameplay-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reflection — UE Class/Struct/Enum Reflection, Gameplay Tags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gameplay-physics-collision-navigation-input-ai-game-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gameplay — Physics, Collision, Navigation, Input, AI, Game Framework
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gas-gameplay-ability-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gas — Gameplay Ability System
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#networking-replication-and-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        networking — Replication and Networking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#demo-neon-shrine-demo-scene" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        demo — Neon Shrine Demo Scene
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feedback-agent-feedback-submission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        feedback — Agent Feedback Submission
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../handler-conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Handler Conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../neon-shrine-demo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Neon Shrine Demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../feedback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feedback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#project-project-status-config-ini-c-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        project — Project Status, Config INI, C++ Source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#asset-asset-management-import-datatables-textures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        asset — Asset Management, Import, DataTables, Textures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blueprint-reading-authoring-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        blueprint — Reading, Authoring, Compilation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#level-actors-selection-components-volumes-lights-splines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        level — Actors, Selection, Components, Volumes, Lights, Splines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#material-materials-instances-shading-graph-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        material — Materials, Instances, Shading, Graph Authoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#animation-anim-assets-skeletons-montages-blendspaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        animation — Anim Assets, Skeletons, Montages, Blendspaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#landscape-terrain-sculpting-painting-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        landscape — Terrain Sculpting, Painting, Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pcg-procedural-content-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pcg — Procedural Content Generation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#foliage-foliage-painting-and-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        foliage — Foliage Painting and Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#niagara-vfx-systems-and-graph-authoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        niagara — VFX Systems and Graph Authoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audio-sound-assets-and-playback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        audio — Sound Assets and Playback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#widget-umg-widgets-and-editor-utilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        widget — UMG Widgets and Editor Utilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editor-console-python-pie-viewport-sequencer-build-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        editor — Console, Python, PIE, Viewport, Sequencer, Build, Logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reflection-ue-classstructenum-reflection-gameplay-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reflection — UE Class/Struct/Enum Reflection, Gameplay Tags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gameplay-physics-collision-navigation-input-ai-game-framework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gameplay — Physics, Collision, Navigation, Input, AI, Game Framework
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gas-gameplay-ability-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gas — Gameplay Ability System
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#networking-replication-and-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        networking — Replication and Networking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#demo-neon-shrine-demo-scene" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        demo — Neon Shrine Demo Scene
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#feedback-agent-feedback-submission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        feedback — Agent Feedback Submission
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="tool-reference">Tool Reference<a class="headerlink" href="#tool-reference" title="Permanent link">&para;</a></h1>
+<p>UE-MCP exposes <strong>19 category tools</strong> covering <strong>440+ actions</strong>, plus a <code>flow</code> tool for running multi-step YAML workflows. Every category tool takes an <code>action</code> parameter that selects the operation, plus action-specific parameters.</p>
+<div class="admonition tip">
+<p class="admonition-title">First call in any session</p>
+<p>Start with <code>project(action="get_status")</code> to check the connection, then <code>level(action="get_outliner")</code> or <code>asset(action="list")</code> to explore.</p>
+</div>
+<div class="admonition info">
+<p class="admonition-title">How to read this page</p>
+<p>Each row lists a single action and its key parameters. Optional params are marked with <code>?</code>. For full schemas (types, descriptions, defaults), every action also surfaces its description through the MCP schema — your AI client can introspect them at runtime.</p>
+</div>
+<hr />
+<h2 id="project-project-status-config-ini-c-source">project — Project Status, Config INI, C++ Source<a class="headerlink" href="#project-project-status-config-ini-c-source" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_status</code></td>
+<td>Server mode and editor connection status</td>
+<td></td>
+</tr>
+<tr>
+<td><code>set_project</code></td>
+<td>Switch to a different UE project (auto-deploys bridge)</td>
+<td><code>projectPath</code></td>
+</tr>
+<tr>
+<td><code>get_info</code></td>
+<td>Read <code>.uproject</code> file details</td>
+<td></td>
+</tr>
+<tr>
+<td><code>read_config</code></td>
+<td>Parse an INI config file</td>
+<td><code>configName</code></td>
+</tr>
+<tr>
+<td><code>search_config</code></td>
+<td>Search all INI files for a string</td>
+<td><code>query</code></td>
+</tr>
+<tr>
+<td><code>list_config_tags</code></td>
+<td>Extract gameplay tags from config</td>
+<td></td>
+</tr>
+<tr>
+<td><code>set_config</code></td>
+<td>Write to an INI file</td>
+<td><code>configName</code>, <code>section</code>, <code>key</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>read_cpp_header</code></td>
+<td>Parse a <code>.h</code> file for UCLASS/USTRUCT/UENUM/UPROPERTY/UFUNCTION</td>
+<td><code>headerPath</code></td>
+</tr>
+<tr>
+<td><code>read_module</code></td>
+<td>Read C++ module structure and Build.cs</td>
+<td><code>moduleName</code></td>
+</tr>
+<tr>
+<td><code>list_modules</code></td>
+<td>List all C++ modules in Source/</td>
+<td></td>
+</tr>
+<tr>
+<td><code>search_cpp</code></td>
+<td>Search <code>.h</code>/<code>.cpp</code> files for text</td>
+<td><code>query</code>, <code>directory?</code></td>
+</tr>
+<tr>
+<td><code>build</code></td>
+<td>Launch UnrealBuildTool to build C++</td>
+<td><code>configuration?</code>, <code>platform?</code>, <code>clean?</code></td>
+</tr>
+<tr>
+<td><code>generate_project_files</code></td>
+<td>Generate IDE project files (VS, Xcode)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>read_engine_header</code></td>
+<td>Parse a <code>.h</code> from the engine source tree</td>
+<td><code>headerPath</code> (absolute or relative to <code>Engine/Source</code>)</td>
+</tr>
+<tr>
+<td><code>find_engine_symbol</code></td>
+<td>Grep engine <code>.h</code>/<code>.inl</code> files under <code>Engine/Source/Runtime</code> for a symbol</td>
+<td><code>symbol</code>, <code>maxResults?</code></td>
+</tr>
+<tr>
+<td><code>list_engine_modules</code></td>
+<td>List modules under <code>Engine/Source/Runtime</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code>read_config</code>, <code>read_cpp_header</code>, <code>list_modules</code>, <code>search_cpp</code>, and the <code>*_engine_*</code> actions work without the editor (filesystem only).
+Engine actions resolve the engine install via <code>engineAssociation</code> in the <code>.uproject</code>.</p>
+</div>
+<hr />
+<h2 id="asset-asset-management-import-datatables-textures">asset — Asset Management, Import, DataTables, Textures<a class="headerlink" href="#asset-asset-management-import-datatables-textures" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list</code></td>
+<td>List assets in a directory</td>
+<td><code>directory?</code>, <code>typeFilter?</code>, <code>recursive?</code></td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>Search by name/class/path (supports wildcards)</td>
+<td><code>query</code>, <code>directory?</code>, <code>maxResults?</code></td>
+</tr>
+<tr>
+<td><code>read</code></td>
+<td>Read asset via reflection</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>read_properties</code></td>
+<td>Read asset properties with values</td>
+<td><code>assetPath</code>, <code>propertyName?</code>, <code>includeValues?</code></td>
+</tr>
+<tr>
+<td><code>duplicate</code></td>
+<td>Duplicate an asset</td>
+<td><code>sourcePath</code>, <code>destinationPath</code></td>
+</tr>
+<tr>
+<td><code>rename</code></td>
+<td>Rename an asset</td>
+<td><code>assetPath</code>, <code>newName</code></td>
+</tr>
+<tr>
+<td><code>move</code></td>
+<td>Move an asset to a new path</td>
+<td><code>sourcePath</code>, <code>destinationPath</code></td>
+</tr>
+<tr>
+<td><code>delete</code></td>
+<td>Delete an asset</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>save</code></td>
+<td>Save asset(s) to disk</td>
+<td><code>assetPath?</code> (omit to save all)</td>
+</tr>
+<tr>
+<td><code>import_static_mesh</code></td>
+<td>Import static mesh from FBX/OBJ</td>
+<td><code>filePath</code>, <code>name?</code>, <code>packagePath?</code></td>
+</tr>
+<tr>
+<td><code>import_skeletal_mesh</code></td>
+<td>Import skeletal mesh from FBX</td>
+<td><code>filePath</code>, <code>skeletonPath?</code></td>
+</tr>
+<tr>
+<td><code>import_animation</code></td>
+<td>Import animation from FBX</td>
+<td><code>filePath</code>, <code>skeletonPath?</code></td>
+</tr>
+<tr>
+<td><code>import_texture</code></td>
+<td>Import texture from PNG/TGA/EXR/HDR</td>
+<td><code>filePath</code></td>
+</tr>
+<tr>
+<td><code>read_datatable</code></td>
+<td>Read DataTable rows</td>
+<td><code>assetPath</code>, <code>rowFilter?</code></td>
+</tr>
+<tr>
+<td><code>create_datatable</code></td>
+<td>Create a DataTable</td>
+<td><code>name</code>, <code>rowStruct</code></td>
+</tr>
+<tr>
+<td><code>reimport_datatable</code></td>
+<td>Reimport DataTable from JSON</td>
+<td><code>assetPath</code>, <code>jsonPath?</code>, <code>jsonString?</code></td>
+</tr>
+<tr>
+<td><code>list_textures</code></td>
+<td>List texture assets</td>
+<td><code>directory?</code>, <code>recursive?</code></td>
+</tr>
+<tr>
+<td><code>get_texture_info</code></td>
+<td>Get texture details (size, format, etc.)</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>set_texture_settings</code></td>
+<td>Set texture properties</td>
+<td><code>assetPath</code>, <code>settings</code></td>
+</tr>
+<tr>
+<td><code>set_mesh_material</code></td>
+<td>Assign material to a static mesh slot</td>
+<td><code>assetPath</code>, <code>materialPath</code>, <code>slotIndex?</code></td>
+</tr>
+<tr>
+<td><code>recenter_pivot</code></td>
+<td>Move static mesh pivot to geometry center</td>
+<td><code>assetPath</code> or <code>assetPaths[]</code> (first mesh sets reference pivot)</td>
+</tr>
+<tr>
+<td><code>add_socket</code></td>
+<td>Add socket to StaticMesh or SkeletalMesh</td>
+<td><code>assetPath</code>, <code>socketName</code>, <code>boneName?</code>, <code>relativeLocation?</code>, <code>relativeRotation?</code>, <code>relativeScale?</code></td>
+</tr>
+<tr>
+<td><code>remove_socket</code></td>
+<td>Remove socket by name</td>
+<td><code>assetPath</code>, <code>socketName</code></td>
+</tr>
+<tr>
+<td><code>list_sockets</code></td>
+<td>List sockets on a mesh</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>reload_package</code></td>
+<td>Force reload an asset package from disk</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>export</code></td>
+<td>Export asset to disk file (Texture2D → PNG, StaticMesh → FBX, etc.)</td>
+<td><code>assetPath</code>, <code>outputPath</code></td>
+</tr>
+<tr>
+<td><code>search_fts</code></td>
+<td>Ranked token search over asset name/class/path (replaces wildcard search for agent use)</td>
+<td><code>query</code>, <code>maxResults?</code>, <code>classFilter?</code></td>
+</tr>
+<tr>
+<td><code>reindex_fts</code></td>
+<td>Force AssetRegistry rescan to refresh FTS search coverage</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>move_folder</code></td>
+<td>Move an entire content folder with redirector fixup</td>
+<td><code>sourcePath</code>, <code>destinationPath</code></td>
+</tr>
+<tr>
+<td><code>create_folder</code></td>
+<td>Create empty content browser folders (#212)</td>
+<td><code>path</code> or <code>paths[]</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code>search</code> auto-searches all configured content roots (see <a href="../configuration/">Configuration</a>).
+<code>search_fts</code> is preferred for agent-driven lookups: tokenized, ranked, and returns a score so the LLM can reason about match quality.</p>
+</div>
+<hr />
+<h2 id="blueprint-reading-authoring-compilation">blueprint — Reading, Authoring, Compilation<a class="headerlink" href="#blueprint-reading-authoring-compilation" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read</code></td>
+<td>Read Blueprint structure incl. SCS components (name, class, mesh, materials, transform)</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_variables</code></td>
+<td>List variables with types and flags</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_functions</code></td>
+<td>List functions and graphs</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_graphs</code></td>
+<td>List all graphs in a blueprint (EventGraph, AnimGraph, etc.)</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>read_graph</code></td>
+<td>Read graph nodes and connections</td>
+<td><code>assetPath</code>, <code>graphName</code></td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>Create a new Blueprint</td>
+<td><code>assetPath</code>, <code>parentClass?</code></td>
+</tr>
+<tr>
+<td><code>add_variable</code></td>
+<td>Add a variable</td>
+<td><code>assetPath</code>, <code>name</code>, <code>varType</code></td>
+</tr>
+<tr>
+<td><code>set_variable_properties</code></td>
+<td>Edit variable flags</td>
+<td><code>assetPath</code>, <code>name</code>, <code>instanceEditable?</code>, <code>category?</code></td>
+</tr>
+<tr>
+<td><code>create_function</code></td>
+<td>Create a function graph</td>
+<td><code>assetPath</code>, <code>functionName</code></td>
+</tr>
+<tr>
+<td><code>delete_function</code></td>
+<td>Delete a function</td>
+<td><code>assetPath</code>, <code>functionName</code></td>
+</tr>
+<tr>
+<td><code>rename_function</code></td>
+<td>Rename a function</td>
+<td><code>assetPath</code>, <code>oldName</code>, <code>newName</code></td>
+</tr>
+<tr>
+<td><code>add_node</code></td>
+<td>Add a graph node (any UEdGraphNode subclass). Aliases: <code>CallFunction</code>, <code>Event</code>, <code>CustomEvent</code>, <code>GetVar</code>, <code>SetVar</code>, <code>Branch</code>.</td>
+<td><code>assetPath</code>, <code>nodeClass</code>, <code>graphName?</code>, <code>nodeParams?</code></td>
+</tr>
+<tr>
+<td><code>delete_node</code></td>
+<td>Remove a node</td>
+<td><code>assetPath</code>, <code>graphName</code>, <code>nodeName</code></td>
+</tr>
+<tr>
+<td><code>set_node_property</code></td>
+<td>Set pin default or struct property (supports dot paths)</td>
+<td><code>assetPath</code>, <code>graphName</code>, <code>nodeName</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>connect_pins</code></td>
+<td>Wire two node pins together</td>
+<td><code>assetPath</code>, <code>sourceNode</code>, <code>sourcePin</code>, <code>targetNode</code>, <code>targetPin</code></td>
+</tr>
+<tr>
+<td><code>add_component</code></td>
+<td>Add a component to the BP</td>
+<td><code>assetPath</code>, <code>componentClass</code></td>
+</tr>
+<tr>
+<td><code>remove_component</code></td>
+<td>Remove an SCS component</td>
+<td><code>assetPath</code>, <code>componentName</code></td>
+</tr>
+<tr>
+<td><code>set_component_property</code></td>
+<td>Set property on SCS or inherited component template (dot paths, asset paths)</td>
+<td><code>assetPath</code>, <code>componentName</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>set_class_default</code></td>
+<td>Set UPROPERTY on CDO (TSubclassOf, object refs, TArray, FGameplayTagContainer via ImportText)</td>
+<td><code>assetPath</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>delete_variable</code></td>
+<td>Delete a member variable</td>
+<td><code>assetPath</code>, <code>name</code></td>
+</tr>
+<tr>
+<td><code>add_function_parameter</code></td>
+<td>Add input or output parameter to a function</td>
+<td><code>assetPath</code>, <code>functionName</code>, <code>parameterName</code>, <code>parameterType?</code>, <code>isOutput?</code></td>
+</tr>
+<tr>
+<td><code>set_variable_default</code></td>
+<td>Set default value on a BP variable (bypasses CDO restrictions)</td>
+<td><code>assetPath</code>, <code>name</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>compile</code></td>
+<td>Compile the Blueprint</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_node_types</code></td>
+<td>List available node types by category</td>
+<td><code>category?</code></td>
+</tr>
+<tr>
+<td><code>search_node_types</code></td>
+<td>Search for node types</td>
+<td><code>query</code></td>
+</tr>
+<tr>
+<td><code>create_interface</code></td>
+<td>Create a Blueprint Interface</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>add_interface</code></td>
+<td>Implement an interface on a BP</td>
+<td><code>blueprintPath</code>, <code>interfacePath</code></td>
+</tr>
+<tr>
+<td><code>add_event_dispatcher</code></td>
+<td>Add an event dispatcher</td>
+<td><code>blueprintPath</code>, <code>name</code></td>
+</tr>
+<tr>
+<td><code>read_graph_summary</code></td>
+<td>Lightweight graph summary: nodes + exec/data edges only, no pin defaults. Target ~10KB vs ~170KB from <code>read_graph</code>.</td>
+<td><code>assetPath</code>, <code>graphName?</code></td>
+</tr>
+<tr>
+<td><code>get_execution_flow</code></td>
+<td>Trace exec pins BFS from an entry point (Event / FunctionEntry / CustomEvent); returns ordered steps with branch information.</td>
+<td><code>assetPath</code>, <code>graphName?</code>, <code>entryPoint?</code></td>
+</tr>
+<tr>
+<td><code>get_dependencies</code></td>
+<td>Forward (<code>classes</code>, <code>functions</code>, <code>assets</code>) or reverse (<code>referencers</code>) dependency set via AssetRegistry + graph walk.</td>
+<td><code>assetPath</code>, <code>reverse?</code></td>
+</tr>
+<tr>
+<td><code>duplicate</code></td>
+<td>Duplicate a Blueprint asset (rollback via <code>delete_asset</code>).</td>
+<td><code>sourcePath</code>, <code>destinationPath</code></td>
+</tr>
+<tr>
+<td><code>add_local_variable</code></td>
+<td>Add a function-scope local variable to a function's entry node.</td>
+<td><code>assetPath</code>, <code>functionName</code>, <code>name</code>, <code>varType?</code></td>
+</tr>
+<tr>
+<td><code>list_local_variables</code></td>
+<td>List local variables for a function.</td>
+<td><code>assetPath</code>, <code>functionName</code></td>
+</tr>
+<tr>
+<td><code>validate</code></td>
+<td>Compile without saving and collect compiler diagnostics (errors + warnings).</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>export_nodes_t3d</code></td>
+<td>Export graph nodes as T3D text (Ctrl+C equivalent). Omit <code>nodeIds</code> to export the whole graph. Pair with <code>import_nodes_t3d</code> for bulk authoring (#130).</td>
+<td><code>assetPath</code>, <code>graphName?</code>, <code>nodeIds?</code></td>
+</tr>
+<tr>
+<td><code>import_nodes_t3d</code></td>
+<td>Paste a T3D node blob into a graph (Ctrl+V equivalent). Returns new node guids. Optional <code>posX</code>/<code>posY</code> re-centers pasted nodes (#130).</td>
+<td><code>assetPath</code>, <code>graphName?</code>, <code>t3d</code>, <code>posX?</code>, <code>posY?</code></td>
+</tr>
+<tr>
+<td><code>reparent</code></td>
+<td>Change a Blueprint's <code>ParentClass</code> and recompile. Resolves short names, full paths, and engine-module short names (#138).</td>
+<td><code>assetPath</code>, <code>parentClass</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Agent-friendly introspection</p>
+<p>Prefer <code>read_graph_summary</code> over <code>read_graph</code> for LLM use: the summary strips pin defaults, positions, and comments, keeping only what's needed to reason about structure. Use <code>get_execution_flow</code> to follow event-driven logic and <code>get_dependencies</code> (reverse) before renaming/deleting shared assets.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Graph Scripting Workflow</p>
+<p><code>search_node_types</code> → <code>add_node</code> → <code>connect_pins</code> is the standard flow for graph scripting.
+For AnimBPs: <code>list_graphs</code> → <code>read_graph</code> (with <code>graphName: "AnimGraph"</code>) → <code>add_node</code> (with <code>nodeClass: "AnimGraphNode_TwoBoneIK"</code>, etc.) → <code>connect_pins</code>.</p>
+</div>
+<div class="admonition info">
+<p class="admonition-title">nodeParams by node type</p>
+<ul>
+<li><strong>CallFunction</strong>: <code>{functionName, targetClass?}</code> — targetClass defaults to blueprint's parent class</li>
+<li><strong>Event</strong>: <code>{eventName, eventClass?}</code> — with eventClass binds an engine event override; without it creates a custom event</li>
+<li><strong>GetVar / SetVar</strong>: <code>{variableName}</code> — references a blueprint variable</li>
+<li>Aliases: <code>memberName</code>/<code>memberParent</code> accepted as alternatives to <code>functionName</code>/<code>targetClass</code>/<code>eventClass</code></li>
+</ul>
+</div>
+<hr />
+<h2 id="level-actors-selection-components-volumes-lights-splines">level — Actors, Selection, Components, Volumes, Lights, Splines<a class="headerlink" href="#level-actors-selection-components-volumes-lights-splines" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_outliner</code></td>
+<td>List all actors in the level</td>
+<td><code>classFilter?</code>, <code>nameFilter?</code></td>
+</tr>
+<tr>
+<td><code>place_actor</code></td>
+<td>Spawn an actor</td>
+<td><code>actorClass</code>, <code>location?</code>, <code>rotation?</code>, <code>label?</code></td>
+</tr>
+<tr>
+<td><code>delete_actor</code></td>
+<td>Remove an actor</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>get_actor_details</code></td>
+<td>Inspect an actor's properties</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>move_actor</code></td>
+<td>Transform an actor</td>
+<td><code>actorLabel</code>, <code>location?</code>, <code>rotation?</code>, <code>scale?</code></td>
+</tr>
+<tr>
+<td><code>select</code></td>
+<td>Select actors in the editor</td>
+<td><code>actorLabels[]</code></td>
+</tr>
+<tr>
+<td><code>get_selected</code></td>
+<td>Get current selection</td>
+<td></td>
+</tr>
+<tr>
+<td><code>add_component</code></td>
+<td>Add a component to an actor</td>
+<td><code>actorLabel</code>, <code>componentClass</code></td>
+</tr>
+<tr>
+<td><code>set_component_property</code></td>
+<td>Set a component property</td>
+<td><code>actorLabel</code>, <code>componentName</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>get_current</code></td>
+<td>Get current level info</td>
+<td></td>
+</tr>
+<tr>
+<td><code>load</code></td>
+<td>Open a level</td>
+<td><code>levelPath</code></td>
+</tr>
+<tr>
+<td><code>save</code></td>
+<td>Save the current level</td>
+<td></td>
+</tr>
+<tr>
+<td><code>list</code></td>
+<td>List map assets</td>
+<td></td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>Create an empty level</td>
+<td></td>
+</tr>
+<tr>
+<td><code>spawn_volume</code></td>
+<td>Place a volume. Builds a real cube brush (FBSPOps prep) so AVolume bounds match the requested extent. Optional <code>graphPath</code> binds a PCG graph when <code>volumeType:"PCGVolume"</code>.</td>
+<td><code>volumeType</code>, <code>location?</code>, <code>extent?</code>, <code>graphPath?</code></td>
+</tr>
+<tr>
+<td><code>list_volumes</code></td>
+<td>List volumes in the level</td>
+<td><code>volumeType?</code></td>
+</tr>
+<tr>
+<td><code>set_volume_properties</code></td>
+<td>Edit volume properties. Synthetic <code>BrushExtent: {X,Y,Z}</code> rebuilds the cube brush; unknown property names are returned in <code>skipped</code> instead of silently no-op'ing.</td>
+<td><code>actorLabel</code>, <code>properties</code></td>
+</tr>
+<tr>
+<td><code>spawn_light</code></td>
+<td>Place a light</td>
+<td><code>lightType</code>, <code>location?</code>, <code>intensity?</code>, <code>color?</code></td>
+</tr>
+<tr>
+<td><code>set_light_properties</code></td>
+<td>Edit light properties</td>
+<td><code>actorLabel</code>, <code>intensity?</code>, <code>color?</code>, <code>temperature?</code></td>
+</tr>
+<tr>
+<td><code>build_lighting</code></td>
+<td>Build lighting</td>
+<td><code>quality?</code></td>
+</tr>
+<tr>
+<td><code>get_world_settings</code></td>
+<td>Read WorldSettings (GameMode, KillZ, gravity)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>set_world_settings</code></td>
+<td>Set DefaultGameMode and other world settings</td>
+<td><code>gameModePath?</code>, <code>killZ?</code>, <code>globalGravityZ?</code></td>
+</tr>
+<tr>
+<td><code>get_spline_info</code></td>
+<td>Read spline component data</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>set_spline_points</code></td>
+<td>Set spline points</td>
+<td><code>actorLabel</code>, <code>points[]</code>, <code>closedLoop?</code></td>
+</tr>
+<tr>
+<td><code>set_actor_property</code></td>
+<td>Set per-instance UPROPERTY on a level actor (<code>actorLabel="WorldSettings"</code> to target the world settings actor; <code>force=true</code> bypasses EditDefaultsOnly) (#202/#230)</td>
+<td><code>actorLabel</code>, <code>propertyName</code>, <code>value</code>, <code>force?</code>, <code>world?</code></td>
+</tr>
+<tr>
+<td><code>delete_actors</code></td>
+<td>Bulk-delete by <code>labelPrefix</code> / <code>className</code> / <code>tag</code> with optional <code>dryRun</code> (#220)</td>
+<td>filter + <code>dryRun?</code></td>
+</tr>
+<tr>
+<td><code>add_actor_tag</code> / <code>remove_actor_tag</code> / <code>set_actor_tags</code> / <code>list_actor_tags</code></td>
+<td>Manage actor <code>Tags</code> array (#219)</td>
+<td><code>actorLabel</code>, <code>tag</code> or <code>tags[]</code></td>
+</tr>
+<tr>
+<td><code>attach_actor</code> / <code>detach_actor</code></td>
+<td>Reparent an actor's root component (#205)</td>
+<td><code>childLabel</code>, <code>parentLabel</code>, <code>attachRule?</code>, <code>socketName?</code></td>
+</tr>
+<tr>
+<td><code>set_actor_mobility</code></td>
+<td>Set root-component mobility (<code>static</code>/<code>stationary</code>/<code>movable</code>) (#205)</td>
+<td><code>actorLabel</code>, <code>mobility</code></td>
+</tr>
+<tr>
+<td><code>get_current_edit_level</code> / <code>set_current_edit_level</code></td>
+<td>Read or set the active edit-target sub-level so spawns land in the right place (#204)</td>
+<td><code>levelName</code></td>
+</tr>
+<tr>
+<td><code>list_streaming_sublevels</code></td>
+<td>List streaming sub-levels with transform + flags (#206)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>add_streaming_sublevel</code></td>
+<td>Add a streaming sub-level</td>
+<td><code>levelPath</code>, <code>streamingClass?</code>, <code>location?</code>, <code>initiallyLoaded?</code>, <code>initiallyVisible?</code></td>
+</tr>
+<tr>
+<td><code>remove_streaming_sublevel</code></td>
+<td>Remove a streaming sub-level</td>
+<td><code>levelName</code></td>
+</tr>
+<tr>
+<td><code>set_streaming_sublevel_properties</code></td>
+<td>Update sub-level transform / load / visibility flags</td>
+<td><code>levelName</code>, <code>location?</code>, <code>initiallyLoaded?</code>, <code>initiallyVisible?</code>, <code>editorVisible?</code></td>
+</tr>
+<tr>
+<td><code>spawn_grid</code></td>
+<td>Batch-spawn StaticMeshActors on a 3D grid with optional jitter (#203)</td>
+<td><code>staticMesh</code>, <code>min</code>, <code>max</code>, <code>countX/Y/Z?</code>, <code>jitter?</code>, <code>labelPrefix?</code></td>
+</tr>
+<tr>
+<td><code>batch_translate</code></td>
+<td>Translate a set of actors (by labels or tag) by an offset (#203)</td>
+<td><code>offset</code>, <code>actorLabels[]</code> or <code>tag</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="material-materials-instances-shading-graph-authoring">material — Materials, Instances, Shading, Graph Authoring<a class="headerlink" href="#material-materials-instances-shading-graph-authoring" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read</code></td>
+<td>Read material structure</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_parameters</code></td>
+<td>List overridable parameters</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>set_parameter</code></td>
+<td>Set scalar/vector/texture parameter on MaterialInstance</td>
+<td><code>assetPath</code>, <code>parameterName</code>, <code>parameterType?</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>set_expression_value</code></td>
+<td>Set value on expression node (Constant, Constant3Vector, etc.)</td>
+<td><code>materialPath</code>, <code>expressionIndex</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>disconnect_property</code></td>
+<td>Clear a material property input connection</td>
+<td><code>materialPath</code>, <code>property</code></td>
+</tr>
+<tr>
+<td><code>create_instance</code></td>
+<td>Create a material instance</td>
+<td><code>parentPath</code>, <code>name?</code></td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>Create a new material</td>
+<td><code>name</code>, <code>packagePath?</code></td>
+</tr>
+<tr>
+<td><code>set_shading_model</code></td>
+<td>Set shading model</td>
+<td><code>assetPath</code>, <code>shadingModel</code></td>
+</tr>
+<tr>
+<td><code>set_base_color</code></td>
+<td>Set base color</td>
+<td><code>assetPath</code>, <code>color {r,g,b}</code></td>
+</tr>
+<tr>
+<td><code>connect_texture</code></td>
+<td>Wire a texture to a material property</td>
+<td><code>materialPath</code>, <code>texturePath</code>, <code>property</code></td>
+</tr>
+<tr>
+<td><code>add_expression</code></td>
+<td>Add a material expression node</td>
+<td><code>assetPath</code>, <code>expressionType</code>, <code>name?</code></td>
+</tr>
+<tr>
+<td><code>connect_expressions</code></td>
+<td>Connect two expression nodes</td>
+<td><code>assetPath</code>, <code>sourceExpression</code>, <code>sourceOutput</code>, <code>destExpression</code>, <code>destInput</code></td>
+</tr>
+<tr>
+<td><code>connect_to_property</code></td>
+<td>Connect expression to a material property</td>
+<td><code>assetPath</code>, <code>expressionName</code>, <code>outputIndex?</code>, <code>property</code></td>
+</tr>
+<tr>
+<td><code>list_expressions</code></td>
+<td>List expressions in a material</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>delete_expression</code></td>
+<td>Delete an expression node</td>
+<td><code>assetPath</code>, <code>expressionName</code></td>
+</tr>
+<tr>
+<td><code>list_expression_types</code></td>
+<td>List available expression types</td>
+<td><code>filter?</code></td>
+</tr>
+<tr>
+<td><code>recompile</code></td>
+<td>Recompile the material</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>duplicate</code></td>
+<td>Duplicate a material asset (rollback via <code>delete_asset</code>).</td>
+<td><code>sourcePath</code>, <code>destinationPath</code></td>
+</tr>
+<tr>
+<td><code>validate</code></td>
+<td>Walk expressions from material property roots; report orphans and null texture refs.</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>get_shader_stats</code></td>
+<td>Texture-sample count, scalar/vector/texture parameter counts, shading model.</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>export_graph</code></td>
+<td>Export material expression graph as JSON (nodes + property connections).</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>import_graph</code></td>
+<td>Build a material graph from a JSON spec (alias of <code>build_graph</code>).</td>
+<td><code>assetPath</code>, <code>nodes</code>, <code>propertyConnections?</code></td>
+</tr>
+<tr>
+<td><code>build_graph</code></td>
+<td>Declarative graph builder: <code>{nodes: [{name, class, posX, posY, value?}], propertyConnections: [{property, from, outputIndex}]}</code>.</td>
+<td><code>assetPath</code>, <code>nodes</code>, <code>propertyConnections?</code></td>
+</tr>
+<tr>
+<td><code>render_preview</code></td>
+<td>Render a preview PNG of the material (base color approximation in v0.7.8).</td>
+<td><code>assetPath</code>, <code>outputPath</code>, <code>width?</code>, <code>height?</code></td>
+</tr>
+<tr>
+<td><code>begin_transaction</code> / <code>end_transaction</code></td>
+<td>Bracket multi-step edits in a single undo transaction.</td>
+<td><code>label?</code></td>
+</tr>
+<tr>
+<td><code>create_simple</code></td>
+<td>Single-call simple material: create + base/metallic/specular/roughness/emissive constants + usage flags + recompile + save (#225)</td>
+<td><code>name</code>, <code>packagePath?</code>, <code>baseColor?</code>, <code>metallic?</code>, <code>specular?</code>, <code>roughness?</code>, <code>emissive?</code>, <code>usages?[]</code></td>
+</tr>
+<tr>
+<td><code>set_usage</code></td>
+<td>Set EMaterialUsage flag(s) (<code>InstancedStaticMeshes</code>, <code>Nanite</code>, <code>NiagaraSprites</code>, ...) (#225)</td>
+<td><code>assetPath</code>, <code>usage</code> or <code>usages[]</code>, <code>enabled?</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="animation-anim-assets-skeletons-montages-blendspaces">animation — Anim Assets, Skeletons, Montages, Blendspaces<a class="headerlink" href="#animation-anim-assets-skeletons-montages-blendspaces" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read_anim_blueprint</code></td>
+<td>Read AnimBP structure</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>read_montage</code></td>
+<td>Read montage sections and notifies</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>read_sequence</code></td>
+<td>Read animation sequence</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>read_blendspace</code></td>
+<td>Read blendspace samples</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list</code></td>
+<td>List animation assets</td>
+<td><code>directory?</code>, <code>recursive?</code></td>
+</tr>
+<tr>
+<td><code>create_montage</code></td>
+<td>Create montage from a sequence</td>
+<td><code>animSequencePath</code></td>
+</tr>
+<tr>
+<td><code>create_anim_blueprint</code></td>
+<td>Create an AnimBP</td>
+<td><code>skeletonPath</code>, <code>parentClass?</code></td>
+</tr>
+<tr>
+<td><code>create_blendspace</code></td>
+<td>Create a blendspace</td>
+<td><code>skeletonPath</code></td>
+</tr>
+<tr>
+<td><code>add_notify</code></td>
+<td>Add a notify event</td>
+<td><code>assetPath</code>, <code>notifyName</code>, <code>triggerTime</code></td>
+</tr>
+<tr>
+<td><code>get_skeleton_info</code></td>
+<td>Read skeleton bone hierarchy</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_sockets</code></td>
+<td>List skeleton sockets</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_skeletal_meshes</code></td>
+<td>List skeletal meshes in project</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>get_physics_asset</code></td>
+<td>Read physics asset bodies</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>create_sequence</code></td>
+<td>Create blank AnimSequence</td>
+<td><code>name</code>, <code>skeletonPath</code>, <code>packagePath?</code>, <code>numFrames?</code>, <code>frameRate?</code></td>
+</tr>
+<tr>
+<td><code>set_bone_keyframes</code></td>
+<td>Set bone transform keyframes</td>
+<td><code>assetPath</code>, <code>boneName</code>, <code>keyframes</code></td>
+</tr>
+<tr>
+<td><code>get_bone_transforms</code></td>
+<td>Read reference pose transforms</td>
+<td><code>skeletonPath</code>, <code>boneNames?</code></td>
+</tr>
+<tr>
+<td><code>set_montage_sequence</code></td>
+<td>Replace animation in a montage (auto-updates duration)</td>
+<td><code>assetPath</code>, <code>animSequencePath</code>, <code>slotIndex?</code></td>
+</tr>
+<tr>
+<td><code>set_montage_properties</code></td>
+<td>Set montage duration, rate, and blending</td>
+<td><code>assetPath</code>, <code>sequenceLength?</code>, <code>rateScale?</code>, <code>blendIn?</code>, <code>blendOut?</code></td>
+</tr>
+<tr>
+<td><code>read_anim_graph</code></td>
+<td>Read AnimBP AnimGraph nodes with properties via reflection</td>
+<td><code>assetPath</code>, <code>graphName?</code></td>
+</tr>
+<tr>
+<td><code>add_curve</code></td>
+<td>Add float curve to AnimSequence</td>
+<td><code>assetPath</code>, <code>curveName</code></td>
+</tr>
+<tr>
+<td><code>set_montage_slot</code></td>
+<td>Set SlotAnimTrack slot name</td>
+<td><code>assetPath</code>, <code>slotName</code>, <code>trackIndex?</code></td>
+</tr>
+<tr>
+<td><code>add_montage_section</code></td>
+<td>Add composite section to montage</td>
+<td><code>assetPath</code>, <code>sectionName</code>, <code>startTime?</code></td>
+</tr>
+<tr>
+<td><code>create_ik_rig</code></td>
+<td>Create IKRigDefinition asset</td>
+<td><code>name</code>, <code>skeletalMeshPath</code>, <code>packagePath?</code></td>
+</tr>
+<tr>
+<td><code>read_ik_rig</code></td>
+<td>Read IK Rig chains and solvers</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>list_control_rig_variables</code></td>
+<td>Read ControlRig blueprint variables and graphs</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>set_root_motion</code></td>
+<td>Set <code>bEnableRootMotion</code>, <code>bForceRootLock</code>, <code>RootMotionRootLock</code> on AnimSequence.</td>
+<td><code>assetPath</code>, <code>enableRootMotion?</code>, <code>forceRootLock?</code>, <code>rootMotionRootLock?</code></td>
+</tr>
+<tr>
+<td><code>add_virtual_bone</code> / <code>remove_virtual_bone</code></td>
+<td>Add or remove virtual bones on a skeleton.</td>
+<td><code>skeletonPath</code>, <code>sourceBone</code>/<code>targetBone</code> or <code>virtualBoneName</code></td>
+</tr>
+<tr>
+<td><code>create_composite</code></td>
+<td>Create an AnimComposite asset bound to a skeleton.</td>
+<td><code>name</code>, <code>skeletonPath</code>, <code>packagePath?</code></td>
+</tr>
+<tr>
+<td><code>list_modifiers</code></td>
+<td>List applied animation modifiers on a sequence.</td>
+<td><code>assetPath</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Most animation tools need a skeleton path — use <code>list_skeletal_meshes</code> to find it.</p>
+</div>
+<hr />
+<h2 id="landscape-terrain-sculpting-painting-layers">landscape — Terrain Sculpting, Painting, Layers<a class="headerlink" href="#landscape-terrain-sculpting-painting-layers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_info</code></td>
+<td>Get landscape setup (size, scale, layers)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>list_layers</code></td>
+<td>List paint layers</td>
+<td></td>
+</tr>
+<tr>
+<td><code>sample</code></td>
+<td>Sample height and layer weights at a point</td>
+<td><code>x</code>, <code>y</code></td>
+</tr>
+<tr>
+<td><code>list_splines</code></td>
+<td>Read landscape splines</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_component</code></td>
+<td>Inspect a landscape component</td>
+<td><code>componentIndex</code></td>
+</tr>
+<tr>
+<td><code>sculpt</code></td>
+<td>Sculpt the heightmap</td>
+<td><code>x</code>, <code>y</code>, <code>radius</code>, <code>strength</code></td>
+</tr>
+<tr>
+<td><code>paint_layer</code></td>
+<td>Paint a weight layer</td>
+<td><code>layerName</code>, <code>x</code>, <code>y</code>, <code>radius</code></td>
+</tr>
+<tr>
+<td><code>set_material</code></td>
+<td>Set the landscape material</td>
+<td><code>materialPath</code></td>
+</tr>
+<tr>
+<td><code>add_layer_info</code></td>
+<td>Register a paint layer</td>
+<td><code>layerName</code></td>
+</tr>
+<tr>
+<td><code>import_heightmap</code></td>
+<td>Import a heightmap file</td>
+<td><code>filePath</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="pcg-procedural-content-generation">pcg — Procedural Content Generation<a class="headerlink" href="#pcg-procedural-content-generation" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list_graphs</code></td>
+<td>List PCG graph assets</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>read_graph</code></td>
+<td>Read graph structure (nodes and edges, including implicit <code>inputNode</code> / <code>outputNode</code>)</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>read_node_settings</code></td>
+<td>Read a node's settings</td>
+<td><code>assetPath</code>, <code>nodeName</code></td>
+</tr>
+<tr>
+<td><code>import_graph</code></td>
+<td>Bulk-author a PCG graph from a JSON spec - replaces N add_node + M connect_nodes + K set_node_settings round-trips. Operates on the runtime <code>UPCGGraph</code> directly.</td>
+<td><code>assetPath</code>, <code>nodes=[{name,class,posX?,posY?,settings?}]</code>, <code>connections=[{from,fromPin?,to,toPin?}]</code>, <code>replace?</code></td>
+</tr>
+<tr>
+<td><code>export_graph</code></td>
+<td>Read a PCG graph back as the same JSON spec. Round-trips with <code>import_graph</code>; layout is read from the editor graph when present.</td>
+<td><code>assetPath</code>, <code>includeSettings?</code></td>
+</tr>
+<tr>
+<td><code>get_components</code></td>
+<td>List PCG components in the level</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_component_details</code></td>
+<td>Inspect a PCG component</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>create_graph</code></td>
+<td>Create a new PCG graph</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>add_node</code></td>
+<td>Add a node to the graph</td>
+<td><code>assetPath</code>, <code>nodeType</code></td>
+</tr>
+<tr>
+<td><code>connect_nodes</code></td>
+<td>Wire two nodes</td>
+<td><code>assetPath</code>, <code>sourceNode</code>, <code>sourcePin</code>, <code>targetNode</code>, <code>targetPin</code></td>
+</tr>
+<tr>
+<td><code>set_node_settings</code></td>
+<td>Set node parameters</td>
+<td><code>assetPath</code>, <code>nodeName</code>, <code>settings</code></td>
+</tr>
+<tr>
+<td><code>set_static_mesh_spawner_meshes</code></td>
+<td>Populate weighted <code>MeshEntries</code> on a <code>PCGStaticMeshSpawner</code> node (auto-instantiates <code>UPCGMeshSelectorWeighted</code> when needed). Pass <code>replace=false</code> to append (#145).</td>
+<td><code>assetPath</code>, <code>nodeName</code>, <code>entries=[{mesh, weight?}]</code>, <code>replace?</code></td>
+</tr>
+<tr>
+<td><code>remove_node</code></td>
+<td>Remove a node</td>
+<td><code>assetPath</code>, <code>nodeName</code></td>
+</tr>
+<tr>
+<td><code>execute</code></td>
+<td>Regenerate PCG output</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>add_volume</code></td>
+<td>Place a PCG volume in the level</td>
+<td><code>graphPath</code>, <code>location?</code>, <code>extent?</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="foliage-foliage-painting-and-types">foliage — Foliage Painting and Types<a class="headerlink" href="#foliage-foliage-painting-and-types" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list_types</code></td>
+<td>List foliage types in the level</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_settings</code></td>
+<td>Read foliage type settings</td>
+<td><code>foliageTypeName</code></td>
+</tr>
+<tr>
+<td><code>sample</code></td>
+<td>Query foliage instances in a region</td>
+<td><code>center {x,y,z}</code>, <code>radius</code></td>
+</tr>
+<tr>
+<td><code>paint</code></td>
+<td>Add foliage instances</td>
+<td><code>foliageType</code>, <code>center</code>, <code>radius</code></td>
+</tr>
+<tr>
+<td><code>erase</code></td>
+<td>Remove foliage instances</td>
+<td><code>center</code>, <code>radius</code></td>
+</tr>
+<tr>
+<td><code>create_type</code></td>
+<td>Create a foliage type from a StaticMesh</td>
+<td><code>meshPath</code></td>
+</tr>
+<tr>
+<td><code>set_settings</code></td>
+<td>Modify foliage type settings</td>
+<td><code>foliageTypeName</code>, <code>settings</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="niagara-vfx-systems-and-graph-authoring">niagara — VFX Systems and Graph Authoring<a class="headerlink" href="#niagara-vfx-systems-and-graph-authoring" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list</code></td>
+<td>List Niagara assets</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>get_info</code></td>
+<td>Inspect a Niagara system</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>spawn</code></td>
+<td>Spawn VFX at a location</td>
+<td><code>systemPath</code>, <code>location</code></td>
+</tr>
+<tr>
+<td><code>set_parameter</code></td>
+<td>Set parameter on a spawned component</td>
+<td><code>actorLabel</code>, <code>parameterName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>Create a new Niagara System</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>create_emitter</code></td>
+<td>Create a Niagara Emitter</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>add_emitter</code></td>
+<td>Add an emitter to a system</td>
+<td><code>systemPath</code>, <code>emitterPath</code></td>
+</tr>
+<tr>
+<td><code>list_emitters</code></td>
+<td>List emitters in a system</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>set_emitter_property</code></td>
+<td>Set emitter property</td>
+<td><code>assetPath</code>, <code>emitterName</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>list_modules</code></td>
+<td>List modules in an emitter</td>
+<td><code>assetPath</code>, <code>emitterName</code></td>
+</tr>
+<tr>
+<td><code>get_emitter_info</code></td>
+<td>Get detailed emitter info</td>
+<td><code>assetPath</code>, <code>emitterName</code></td>
+</tr>
+<tr>
+<td><code>list_renderers</code></td>
+<td>List renderers on an emitter (class + enabled state).</td>
+<td><code>systemPath</code>, <code>emitterName?</code>/<code>emitterIndex?</code></td>
+</tr>
+<tr>
+<td><code>add_renderer</code></td>
+<td>Add sprite/mesh/ribbon (or custom class) renderer to an emitter.</td>
+<td><code>systemPath</code>, <code>rendererType</code>, <code>emitterName?</code></td>
+</tr>
+<tr>
+<td><code>remove_renderer</code></td>
+<td>Remove a renderer by index.</td>
+<td><code>systemPath</code>, <code>rendererIndex</code>, <code>emitterName?</code></td>
+</tr>
+<tr>
+<td><code>set_renderer_property</code></td>
+<td>Set bool/number/string renderer property via reflection.</td>
+<td><code>systemPath</code>, <code>rendererIndex</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>inspect_data_interfaces</code></td>
+<td>List user-scope data interfaces bound to the system.</td>
+<td><code>systemPath</code></td>
+</tr>
+<tr>
+<td><code>create_system_from_spec</code></td>
+<td>Declaratively create a NiagaraSystem and add emitter handles from a list.</td>
+<td><code>name</code>, <code>packagePath?</code>, <code>emitters?:[{path}]</code></td>
+</tr>
+<tr>
+<td><code>get_compiled_hlsl</code></td>
+<td>Inspect the GPU compute script when SimTarget=GPU.</td>
+<td><code>systemPath</code>, <code>emitterName?</code>/<code>emitterIndex?</code></td>
+</tr>
+<tr>
+<td><code>list_system_parameters</code></td>
+<td>List user-exposed system parameters with type info.</td>
+<td><code>systemPath</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="audio-sound-assets-and-playback">audio — Sound Assets and Playback<a class="headerlink" href="#audio-sound-assets-and-playback" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>list</code></td>
+<td>List sound assets</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>play_at_location</code></td>
+<td>Play a sound at a world location</td>
+<td><code>soundPath</code>, <code>location</code></td>
+</tr>
+<tr>
+<td><code>spawn_ambient</code></td>
+<td>Place an ambient sound actor</td>
+<td><code>soundPath</code>, <code>location</code></td>
+</tr>
+<tr>
+<td><code>create_cue</code></td>
+<td>Create a SoundCue</td>
+<td><code>name</code>, <code>soundWavePath?</code></td>
+</tr>
+<tr>
+<td><code>create_metasound</code></td>
+<td>Create a MetaSoundSource</td>
+<td><code>name</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="widget-umg-widgets-and-editor-utilities">widget — UMG Widgets and Editor Utilities<a class="headerlink" href="#widget-umg-widgets-and-editor-utilities" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read_tree</code></td>
+<td>Read widget hierarchy</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>get_details</code></td>
+<td>Inspect a specific widget</td>
+<td><code>assetPath</code>, <code>widgetName</code></td>
+</tr>
+<tr>
+<td><code>set_property</code></td>
+<td>Set widget or slot property. Use <code>slot.</code> prefix for layout (e.g. <code>slot.anchors</code>, <code>slot.hAlign</code>, <code>slot.padding</code>)</td>
+<td><code>assetPath</code>, <code>widgetName</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>list</code></td>
+<td>List Widget Blueprints</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>read_animations</code></td>
+<td>Read UMG animations</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>Create a Widget Blueprint</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>add_widget</code></td>
+<td>Add widget to tree (TextBlock, CanvasPanel, VerticalBox, Button, Image, etc.)</td>
+<td><code>assetPath</code>, <code>widgetClass</code>, <code>widgetName?</code>, <code>parentWidgetName?</code></td>
+</tr>
+<tr>
+<td><code>remove_widget</code></td>
+<td>Remove widget from tree</td>
+<td><code>assetPath</code>, <code>widgetName</code></td>
+</tr>
+<tr>
+<td><code>move_widget</code></td>
+<td>Reparent widget to a different panel</td>
+<td><code>assetPath</code>, <code>widgetName</code>, <code>newParentWidgetName</code></td>
+</tr>
+<tr>
+<td><code>list_classes</code></td>
+<td>List available widget classes with slot property hints</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>create_utility_widget</code></td>
+<td>Create an Editor Utility Widget</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>run_utility_widget</code></td>
+<td>Open an Editor Utility Widget panel</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>create_utility_blueprint</code></td>
+<td>Create an Editor Utility Blueprint</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>run_utility_blueprint</code></td>
+<td>Run an Editor Utility Blueprint</td>
+<td><code>assetPath</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="editor-console-python-pie-viewport-sequencer-build-logs">editor — Console, Python, PIE, Viewport, Sequencer, Build, Logs<a class="headerlink" href="#editor-console-python-pie-viewport-sequencer-build-logs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>execute_command</code></td>
+<td>Run a console command</td>
+<td><code>command</code></td>
+</tr>
+<tr>
+<td><code>execute_python</code></td>
+<td>Run Python in the editor (escape hatch)</td>
+<td><code>code</code></td>
+</tr>
+<tr>
+<td><code>run_python_file</code></td>
+<td>Execute a Python file from disk with <code>__file__</code>/<code>__name__</code> populated. Append positional <code>args[]</code> to the script (#142).</td>
+<td><code>filePath</code>, <code>args?</code></td>
+</tr>
+<tr>
+<td><code>set_property</code></td>
+<td>Set a UObject property by path</td>
+<td><code>objectPath</code>, <code>propertyName</code>, <code>value</code></td>
+</tr>
+<tr>
+<td><code>play_in_editor</code></td>
+<td>PIE control</td>
+<td><code>pieAction</code> (start/stop/status)</td>
+</tr>
+<tr>
+<td><code>get_runtime_value</code></td>
+<td>Read a PIE actor property value</td>
+<td><code>actorLabel</code>, <code>propertyName</code></td>
+</tr>
+<tr>
+<td><code>hot_reload</code></td>
+<td>Trigger Live Coding hot reload</td>
+<td></td>
+</tr>
+<tr>
+<td><code>undo</code></td>
+<td>Undo last editor transaction</td>
+<td></td>
+</tr>
+<tr>
+<td><code>redo</code></td>
+<td>Redo</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_perf_stats</code></td>
+<td>Get editor performance stats</td>
+<td></td>
+</tr>
+<tr>
+<td><code>run_stat</code></td>
+<td>Toggle stat overlay</td>
+<td><code>command</code></td>
+</tr>
+<tr>
+<td><code>set_scalability</code></td>
+<td>Set quality/scalability level</td>
+<td><code>level</code></td>
+</tr>
+<tr>
+<td><code>capture_screenshot</code></td>
+<td>Capture a viewport screenshot. <code>target=auto</code> routes to the PIE viewport while PIE is running (#226)</td>
+<td><code>filename?</code>, <code>resolution?</code>, <code>target? (auto\|pie\|editor)</code></td>
+</tr>
+<tr>
+<td><code>get_viewport</code></td>
+<td>Get viewport camera transform</td>
+<td></td>
+</tr>
+<tr>
+<td><code>set_viewport</code></td>
+<td>Set viewport camera transform</td>
+<td><code>location?</code>, <code>rotation?</code></td>
+</tr>
+<tr>
+<td><code>focus_on_actor</code></td>
+<td>Focus viewport on an actor</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>create_sequence</code></td>
+<td>Create a Level Sequence</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>get_sequence_info</code></td>
+<td>Read sequence tracks and keyframes</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>add_sequence_track</code></td>
+<td>Add a track to a sequence</td>
+<td><code>assetPath</code>, <code>trackType</code>, <code>actorLabel?</code></td>
+</tr>
+<tr>
+<td><code>play_sequence</code></td>
+<td>Play/stop/pause a sequence</td>
+<td><code>assetPath</code>, <code>sequenceAction</code></td>
+</tr>
+<tr>
+<td><code>build_all</code></td>
+<td>Run full build (geometry + lighting + navigation)</td>
+<td></td>
+</tr>
+<tr>
+<td><code>build_geometry</code></td>
+<td>Build geometry only</td>
+<td></td>
+</tr>
+<tr>
+<td><code>build_hlod</code></td>
+<td>Build HLODs</td>
+<td></td>
+</tr>
+<tr>
+<td><code>validate_assets</code></td>
+<td>Run data validation</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_build_status</code></td>
+<td>Check build status</td>
+<td></td>
+</tr>
+<tr>
+<td><code>cook_content</code></td>
+<td>Cook content for target platform</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_log</code></td>
+<td>Get output log entries (ring buffer, 4096 lines)</td>
+<td><code>maxLines?</code>, <code>filter?</code>, <code>category?</code></td>
+</tr>
+<tr>
+<td><code>search_log</code></td>
+<td>Search log entries</td>
+<td><code>query</code></td>
+</tr>
+<tr>
+<td><code>get_message_log</code></td>
+<td>Get message log</td>
+<td></td>
+</tr>
+<tr>
+<td><code>set_dialog_policy</code></td>
+<td>Auto-respond to modal dialogs</td>
+<td><code>dialogTitle</code>, <code>response</code></td>
+</tr>
+<tr>
+<td><code>clear_dialog_policy</code></td>
+<td>Clear dialog auto-response</td>
+<td><code>dialogTitle?</code></td>
+</tr>
+<tr>
+<td><code>get_dialog_policy</code></td>
+<td>Get current dialog policies</td>
+<td></td>
+</tr>
+<tr>
+<td><code>list_dialogs</code></td>
+<td>List pending modal dialogs</td>
+<td></td>
+</tr>
+<tr>
+<td><code>respond_to_dialog</code></td>
+<td>Respond to a specific dialog</td>
+<td><code>dialogId</code>, <code>response</code></td>
+</tr>
+<tr>
+<td><code>get_pie_pawn</code></td>
+<td>Resolve the controlled pawn in the active PIE world (#228/#229)</td>
+<td><code>playerIndex?</code></td>
+</tr>
+<tr>
+<td><code>invoke_function</code></td>
+<td>Call a BlueprintCallable / Exec UFUNCTION on a target actor in editor or PIE (#228/#229)</td>
+<td><code>actorLabel</code>, <code>functionName</code>, <code>args?</code> (object), <code>world?</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<ul>
+<li><code>execute_python</code> is the escape hatch for anything not covered by dedicated tools.</li>
+<li><code>hot_reload</code> triggers Live Coding — no editor restart needed.</li>
+<li><code>get_log(category="LogMCPBridge")</code> shows bridge-specific logs.</li>
+<li>Dialog management lets you suppress "Are you sure?" prompts during batch operations.</li>
+</ul>
+</div>
+<hr />
+<h2 id="reflection-ue-classstructenum-reflection-gameplay-tags">reflection — UE Class/Struct/Enum Reflection, Gameplay Tags<a class="headerlink" href="#reflection-ue-classstructenum-reflection-gameplay-tags" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reflect_class</code></td>
+<td>Reflect a UClass (properties, functions, metadata)</td>
+<td><code>className</code>, <code>includeInherited?</code></td>
+</tr>
+<tr>
+<td><code>reflect_struct</code></td>
+<td>Reflect a UScriptStruct</td>
+<td><code>structName</code></td>
+</tr>
+<tr>
+<td><code>reflect_enum</code></td>
+<td>Reflect a UEnum</td>
+<td><code>enumName</code></td>
+</tr>
+<tr>
+<td><code>list_classes</code></td>
+<td>List registered classes</td>
+<td><code>parentFilter?</code>, <code>limit?</code></td>
+</tr>
+<tr>
+<td><code>list_tags</code></td>
+<td>List gameplay tags</td>
+<td><code>filter?</code></td>
+</tr>
+<tr>
+<td><code>create_tag</code></td>
+<td>Create a gameplay tag</td>
+<td><code>tag</code>, <code>comment?</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Use <code>reflect_class</code> to understand any UE class's properties before working with it.</p>
+</div>
+<hr />
+<h2 id="gameplay-physics-collision-navigation-input-ai-game-framework">gameplay — Physics, Collision, Navigation, Input, AI, Game Framework<a class="headerlink" href="#gameplay-physics-collision-navigation-input-ai-game-framework" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>set_collision_profile</code></td>
+<td>Set collision preset on an actor</td>
+<td><code>actorLabel</code>, <code>profileName</code></td>
+</tr>
+<tr>
+<td><code>set_simulate_physics</code></td>
+<td>Toggle physics simulation</td>
+<td><code>actorLabel</code>, <code>simulate</code></td>
+</tr>
+<tr>
+<td><code>set_collision_enabled</code></td>
+<td>Set collision mode</td>
+<td><code>actorLabel</code>, <code>collisionEnabled</code></td>
+</tr>
+<tr>
+<td><code>set_physics_properties</code></td>
+<td>Set mass, damping, gravity</td>
+<td><code>actorLabel</code>, <code>mass?</code>, <code>linearDamping?</code></td>
+</tr>
+<tr>
+<td><code>rebuild_navigation</code></td>
+<td>Rebuild the navigation mesh</td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_navmesh_info</code></td>
+<td>Query navigation system info</td>
+<td></td>
+</tr>
+<tr>
+<td><code>project_to_nav</code></td>
+<td>Project a point onto the navmesh</td>
+<td><code>location</code></td>
+</tr>
+<tr>
+<td><code>spawn_nav_modifier</code></td>
+<td>Place a nav modifier volume</td>
+<td><code>location</code>, <code>extent?</code>, <code>areaClass?</code></td>
+</tr>
+<tr>
+<td><code>create_input_action</code></td>
+<td>Create an Enhanced Input Action</td>
+<td><code>name</code>, <code>valueType?</code> (Boolean/Axis1D/Axis2D/Axis3D)</td>
+</tr>
+<tr>
+<td><code>create_input_mapping</code></td>
+<td>Create an Input Mapping Context</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>read_imc</code></td>
+<td>Read IMC mappings (keys, triggers, modifiers)</td>
+<td><code>imcPath</code></td>
+</tr>
+<tr>
+<td><code>add_imc_mapping</code></td>
+<td>Add key mapping to an IMC</td>
+<td><code>imcPath</code>, <code>inputActionPath</code>, <code>key</code></td>
+</tr>
+<tr>
+<td><code>set_mapping_modifiers</code></td>
+<td>Set modifiers/triggers on an IMC mapping (persists on save)</td>
+<td><code>imcPath</code>, <code>mappingIndex?</code>, <code>modifiers?</code>, <code>triggers?</code></td>
+</tr>
+<tr>
+<td><code>inspect_pie</code></td>
+<td>Inspect PIE world actors and components at runtime</td>
+<td><code>actorLabel?</code></td>
+</tr>
+<tr>
+<td><code>get_pie_anim_state</code></td>
+<td>Read runtime AnimInstance state (montages, state machines)</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>get_pie_anim_properties</code></td>
+<td>Read named UPROPERTY values on a PIE actor's AnimInstance (omit <code>propertyNames</code> to dump all) (#139).</td>
+<td><code>actorLabel</code>, <code>propertyNames?</code></td>
+</tr>
+<tr>
+<td><code>get_pie_subsystem_state</code></td>
+<td>Read UPROPERTY values on a running subsystem (<code>game</code>/<code>world</code>/<code>engine</code>/<code>localplayer</code> scope) (#139).</td>
+<td><code>subsystemClass</code>, <code>scope?</code>, <code>propertyNames?</code></td>
+</tr>
+<tr>
+<td><code>list_input_assets</code></td>
+<td>List input-related assets</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>list_behavior_trees</code></td>
+<td>List Behavior Trees and Blackboards</td>
+<td><code>directory?</code></td>
+</tr>
+<tr>
+<td><code>get_behavior_tree_info</code></td>
+<td>Inspect a Behavior Tree</td>
+<td><code>assetPath</code></td>
+</tr>
+<tr>
+<td><code>create_blackboard</code></td>
+<td>Create a Blackboard Data asset</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>create_behavior_tree</code></td>
+<td>Create a Behavior Tree</td>
+<td><code>name</code>, <code>blackboardPath?</code></td>
+</tr>
+<tr>
+<td><code>create_eqs_query</code></td>
+<td>Create an EQS query</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>list_eqs_queries</code></td>
+<td>List EQS queries</td>
+<td></td>
+</tr>
+<tr>
+<td><code>add_perception</code></td>
+<td>Add AI Perception component</td>
+<td><code>blueprintPath</code></td>
+</tr>
+<tr>
+<td><code>configure_sense</code></td>
+<td>Configure a perception sense</td>
+<td><code>blueprintPath</code>, <code>senseClass</code>, <code>settings</code></td>
+</tr>
+<tr>
+<td><code>create_state_tree</code></td>
+<td>Create a State Tree</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>list_state_trees</code></td>
+<td>List State Trees</td>
+<td></td>
+</tr>
+<tr>
+<td><code>add_state_tree_component</code></td>
+<td>Add State Tree component to an actor</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>create_smart_object_def</code></td>
+<td>Create a Smart Object Definition</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>add_smart_object_component</code></td>
+<td>Add Smart Object component</td>
+<td><code>actorLabel</code></td>
+</tr>
+<tr>
+<td><code>create_game_mode</code></td>
+<td>Create a Game Mode BP</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>create_game_state</code></td>
+<td>Create a Game State BP</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>create_player_controller</code></td>
+<td>Create a Player Controller BP</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>create_player_state</code></td>
+<td>Create a Player State BP</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>create_hud</code></td>
+<td>Create a HUD BP</td>
+<td><code>name</code></td>
+</tr>
+<tr>
+<td><code>set_world_game_mode</code></td>
+<td>Set the world's game mode</td>
+<td><code>gameModePath</code></td>
+</tr>
+<tr>
+<td><code>get_framework_info</code></td>
+<td>Get game framework class assignments</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="gas-gameplay-ability-system">gas — Gameplay Ability System<a class="headerlink" href="#gas-gameplay-ability-system" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>add_asc</code></td>
+<td>Add AbilitySystemComponent to a BP</td>
+<td><code>blueprintPath</code></td>
+</tr>
+<tr>
+<td><code>create_attribute_set</code></td>
+<td>Create an AttributeSet Blueprint</td>
+<td><code>name</code>, <code>packagePath?</code></td>
+</tr>
+<tr>
+<td><code>add_attribute</code></td>
+<td>Add an attribute to a set</td>
+<td><code>attributeSetPath</code>, <code>attributeName</code></td>
+</tr>
+<tr>
+<td><code>create_ability</code></td>
+<td>Create a GameplayAbility Blueprint</td>
+<td><code>name</code>, <code>parentClass?</code></td>
+</tr>
+<tr>
+<td><code>set_ability_tags</code></td>
+<td>Set activation/cancel/block tags</td>
+<td><code>abilityPath</code>, <code>ability_tags?</code>, <code>activation_required_tags?</code></td>
+</tr>
+<tr>
+<td><code>create_effect</code></td>
+<td>Create a GameplayEffect Blueprint</td>
+<td><code>name</code>, <code>durationPolicy?</code></td>
+</tr>
+<tr>
+<td><code>set_effect_modifier</code></td>
+<td>Add a modifier to an effect</td>
+<td><code>effectPath</code>, <code>attribute</code>, <code>operation?</code>, <code>magnitude?</code></td>
+</tr>
+<tr>
+<td><code>create_cue</code></td>
+<td>Create a GameplayCue notify</td>
+<td><code>name</code>, <code>cueType?</code> (Static/Actor)</td>
+</tr>
+<tr>
+<td><code>get_info</code></td>
+<td>Inspect GAS setup on a Blueprint</td>
+<td><code>blueprintPath</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="networking-replication-and-networking">networking — Replication and Networking<a class="headerlink" href="#networking-replication-and-networking" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>set_replicates</code></td>
+<td>Enable/disable actor replication</td>
+<td><code>blueprintPath</code>, <code>replicates?</code></td>
+</tr>
+<tr>
+<td><code>set_property_replicated</code></td>
+<td>Mark a variable as replicated</td>
+<td><code>blueprintPath</code>, <code>propertyName</code></td>
+</tr>
+<tr>
+<td><code>configure_net_frequency</code></td>
+<td>Set net update frequency</td>
+<td><code>blueprintPath</code>, <code>netUpdateFrequency?</code></td>
+</tr>
+<tr>
+<td><code>set_dormancy</code></td>
+<td>Set net dormancy mode</td>
+<td><code>blueprintPath</code>, <code>dormancy</code></td>
+</tr>
+<tr>
+<td><code>set_net_load_on_client</code></td>
+<td>Control client loading</td>
+<td><code>blueprintPath</code>, <code>loadOnClient?</code></td>
+</tr>
+<tr>
+<td><code>set_always_relevant</code></td>
+<td>Always network relevant</td>
+<td><code>blueprintPath</code>, <code>alwaysRelevant?</code></td>
+</tr>
+<tr>
+<td><code>set_only_relevant_to_owner</code></td>
+<td>Only relevant to owning connection</td>
+<td><code>blueprintPath</code>, <code>onlyRelevantToOwner?</code></td>
+</tr>
+<tr>
+<td><code>configure_cull_distance</code></td>
+<td>Set net cull distance</td>
+<td><code>blueprintPath</code>, <code>netCullDistanceSquared?</code></td>
+</tr>
+<tr>
+<td><code>set_priority</code></td>
+<td>Set net priority</td>
+<td><code>blueprintPath</code>, <code>netPriority?</code></td>
+</tr>
+<tr>
+<td><code>set_replicate_movement</code></td>
+<td>Enable/disable movement replication</td>
+<td><code>blueprintPath</code>, <code>replicateMovement?</code></td>
+</tr>
+<tr>
+<td><code>get_info</code></td>
+<td>Get current networking config</td>
+<td><code>blueprintPath</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="demo-neon-shrine-demo-scene">demo — Neon Shrine Demo Scene<a class="headerlink" href="#demo-neon-shrine-demo-scene" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>step</code></td>
+<td>Execute a demo step (omit stepIndex for step list)</td>
+<td><code>stepIndex?</code></td>
+</tr>
+<tr>
+<td><code>cleanup</code></td>
+<td>Remove all demo assets and actors</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>See <strong><a href="../neon-shrine-demo/">Neon Shrine Demo</a></strong> for a full walkthrough.</p>
+<hr />
+<h2 id="feedback-agent-feedback-submission">feedback — Agent Feedback Submission<a class="headerlink" href="#feedback-agent-feedback-submission" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+<th>Key Params</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>submit</code></td>
+<td>Submit feedback about a tool gap</td>
+<td><code>title</code>, <code>summary</code>, <code>pythonWorkaround?</code>, <code>idealTool?</code></td>
+</tr>
+</tbody>
+</table>
+<p>See <strong><a href="../feedback/">Feedback</a></strong> for details on how the feedback system works.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
