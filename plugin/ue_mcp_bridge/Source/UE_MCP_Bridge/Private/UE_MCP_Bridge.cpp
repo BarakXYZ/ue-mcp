@@ -2,6 +2,7 @@
 #include "Modules/ModuleManager.h"
 #include "BridgeServer.h"
 #include "Handlers/DialogHandlers.h"
+#include "CoreGlobals.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
 #include "Containers/Ticker.h"
@@ -13,6 +14,12 @@ static TSharedPtr<FMCPBridgeServer> G_BridgeServer;
 
 void FUE_MCP_BridgeModule::StartupModule()
 {
+	if (IsRunningCommandlet())
+	{
+		UE_LOG(LogMCPBridge, Log, TEXT("[UE-MCP] Skipping bridge startup in commandlet"));
+		return;
+	}
+
 	// Create and start bridge server
 	G_BridgeServer = MakeShared<FMCPBridgeServer>(9877);
 	FDialogHandlers::InstallDialogHook();
