@@ -18,23 +18,23 @@
 *.a binary
 
 # Text files - normalize line endings
-*.cpp text eol=crlf
-*.h text eol=crlf
-*.cs text eol=crlf
-*.csproj text eol=crlf
-*.sln text eol=crlf
-*.vcxproj text eol=crlf
-*.vcxproj.filters text eol=crlf
-*.Build.cs text eol=crlf
-*.Target.cs text eol=crlf
-*.ini text eol=crlf
+*.cpp text eol=lf
+*.h text eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.sln text eol=lf
+*.vcxproj text eol=lf
+*.vcxproj.filters text eol=lf
+*.Build.cs text eol=lf
+*.Target.cs text eol=lf
+*.ini text eol=lf
 *.json text eol=lf
 *.md text eol=lf
-*.txt text eol=crlf
+*.txt text eol=lf
 *.py text eol=lf
 *.sh text eol=lf
-*.bat text eol=crlf
-*.ps1 text eol=crlf
+*.bat text eol=lf
+*.ps1 text eol=lf
 
 # Blueprint files (binary but sometimes treated as text)
 *.uasset filter=lfs diff=lfs merge=lfs -text
@@ -94,41 +94,41 @@
 *.blend binary
 
 # Shader files
-*.usf text eol=crlf
-*.ush text eol=crlf
-*.hlsl text eol=crlf
+*.usf text eol=lf
+*.ush text eol=lf
+*.hlsl text eol=lf
 *.glsl text eol=lf
 
 # Config files
-*.ini text eol=crlf
-*.cfg text eol=crlf
+*.ini text eol=lf
+*.cfg text eol=lf
 
 # Project files
-*.uproject text eol=crlf
-*.uplugin text eol=crlf
+*.uproject text eol=lf
+*.uplugin text eol=lf
 
 # Build files
-*.Build.cs text eol=crlf
-*.Target.cs text eol=crlf
+*.Build.cs text eol=lf
+*.Target.cs text eol=lf
 
 # Python files
 *.py text eol=lf
 
 # Shell scripts
 *.sh text eol=lf
-*.bat text eol=crlf
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+*.bat text eol=lf
+*.cmd text eol=lf
+*.ps1 text eol=lf
 
 # Documentation
 *.md text eol=lf
-*.txt text eol=crlf
+*.txt text eol=lf
 *.rst text eol=lf
 
 # Data files
-*.csv text eol=crlf
-*.tsv text eol=crlf
-*.xml text eol=crlf
+*.csv text eol=lf
+*.tsv text eol=lf
+*.xml text eol=lf
 *.json text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
@@ -136,4 +136,4 @@
 # Default: auto-detect text, preserve native line endings on checkout.
 # Per-extension rules above take precedence (json/md/sh/py stay LF;
 # cpp/cs/ini/bat stay CRLF for editor tooling).
-* text=auto
+* text=auto eol=lf
