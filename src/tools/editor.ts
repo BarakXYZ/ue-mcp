@@ -20,8 +20,8 @@ export const editorTool: ToolDef = categoryTool(
     },
     stop_editor: {
       description: "Close Unreal Editor gracefully",
-      handler: async () => {
-        return stopEditor();
+      handler: async (ctx: ToolContext) => {
+        return stopEditor(ctx.project);
       },
     },
     restart_editor: {

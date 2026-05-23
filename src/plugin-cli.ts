@@ -70,22 +70,38 @@ function findProjectDir(startDir: string): ProjectInfo {
   );
 }
 
+function npmCommand(): string {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function npmArgsWithSafety(args: string[]): string[] {
+  const subcommand = args[0];
+  const shouldBlockLifecycle =
+    process.env.UE_MCP_PLUGIN_ALLOW_SCRIPTS !== "1" &&
+    (subcommand === "install" || subcommand === "update");
+  if (!shouldBlockLifecycle) return args;
+  return [subcommand, "--ignore-scripts", ...args.slice(1)];
+}
+
 function runNpm(args: string[], cwd: string): void {
-  // On Windows, npm is `npm.cmd`. Node's child_process with `shell: false`
-  // cannot launch a `.cmd` file directly (it expects a real executable), so
-  // spawnSync returns status=null and an ENOENT-style error. Setting
-  // `shell: true` routes through cmd.exe which resolves the .cmd correctly.
-  // On POSIX `shell: true` is also safe; `npm` is a plain binary.
-  const r = spawnSync("npm", args, {
+  const effectiveArgs = npmArgsWithSafety(args);
+  if (effectiveArgs.includes("--ignore-scripts")) {
+    note(
+      "npm lifecycle scripts are blocked for plugin install/update. " +
+        "Set UE_MCP_PLUGIN_ALLOW_SCRIPTS=1 only for a plugin you have audited.",
+    );
+  }
+
+  const r = spawnSync(npmCommand(), effectiveArgs, {
     cwd,
     stdio: "inherit",
-    shell: true,
+    shell: false,
   });
   if (r.error) {
-    fail(`npm ${args.join(" ")} failed to start: ${r.error.message}`);
+    fail(`npm ${effectiveArgs.join(" ")} failed to start: ${r.error.message}`);
   }
   if (r.status !== 0) {
-    fail(`npm ${args.join(" ")} exited ${r.status ?? "(killed by signal)"}`);
+    fail(`npm ${effectiveArgs.join(" ")} exited ${r.status ?? "(killed by signal)"}`);
   }
 }
 

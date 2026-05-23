@@ -17,6 +17,7 @@ interface PendingRequest {
 /** Minimal interface for tool handlers — enables mocking in tests. */
 export interface IBridge {
   readonly isConnected: boolean;
+  configure?(host: string, port: number): void;
   call(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
   connect(timeoutMs?: number): Promise<void>;
 }
@@ -26,9 +27,10 @@ export class EditorBridge implements IBridge {
   private pending = new Map<string, PendingRequest>();
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
   private idCounter = 0;
+  private connectionGeneration = 0;
 
   constructor(
-    public host = "localhost",
+    public host = "127.0.0.1",
     public port = 9877,
   ) {}
 
@@ -36,31 +38,68 @@ export class EditorBridge implements IBridge {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
+  configure(host: string, port: number): void {
+    if (this.host === host && this.port === port) return;
+
+    this.connectionGeneration++;
+    this.host = host;
+    this.port = port;
+    this.rejectPending("Bridge endpoint changed");
+
+    if (this.ws) {
+      const oldSocket = this.ws;
+      this.ws = null;
+      oldSocket.terminate();
+    }
+  }
+
   async connect(timeoutMs = 3000): Promise<void> {
     if (this.isConnected) return;
 
-    this.ws?.terminate();
+    if (this.ws) {
+      const oldSocket = this.ws;
+      this.ws = null;
+      oldSocket.terminate();
+    }
 
+    const generation = this.connectionGeneration;
     const url = `ws://${this.host}:${this.port}`;
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let ws: WebSocket | null = null;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      };
+      const succeed = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
       const timer = setTimeout(() => {
-        ws.terminate();
-        reject(new McpError(ErrorCode.BRIDGE_TIMEOUT, `Connection to editor bridge timed out (${url})`));
+        ws?.terminate();
+        fail(new McpError(ErrorCode.BRIDGE_TIMEOUT, `Connection to editor bridge timed out (${url})`));
       }, timeoutMs);
 
-      const ws = new WebSocket(url);
+      ws = new WebSocket(url);
 
       ws.on("open", () => {
-        clearTimeout(timer);
+        if (generation !== this.connectionGeneration) {
+          ws.terminate();
+          fail(new McpError(ErrorCode.CONNECTION_LOST, "Bridge endpoint changed"));
+          return;
+        }
         this.ws = ws;
-        this.setupListeners(ws);
-        resolve();
+        this.setupListeners(ws, generation);
+        succeed();
       });
 
       ws.on("error", (err) => {
-        clearTimeout(timer);
-        reject(
+        fail(
           new McpError(
             ErrorCode.NOT_CONNECTED,
             `Failed to connect to editor bridge at ${url}: ${err.message}`,
@@ -112,20 +151,27 @@ export class EditorBridge implements IBridge {
   }
 
   disconnect(): void {
+    this.connectionGeneration++;
     this.stopReconnecting();
-    for (const [, pending] of this.pending) {
-      clearTimeout(pending.timer);
-      pending.reject(new McpError(ErrorCode.CONNECTION_LOST, "Bridge disconnected"));
-    }
-    this.pending.clear();
+    this.rejectPending("Bridge disconnected");
     if (this.ws) {
-      this.ws.close();
+      const oldSocket = this.ws;
       this.ws = null;
+      oldSocket.close();
     }
   }
 
-  private setupListeners(ws: WebSocket): void {
+  private rejectPending(message: string): void {
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new McpError(ErrorCode.CONNECTION_LOST, message));
+    }
+    this.pending.clear();
+  }
+
+  private setupListeners(ws: WebSocket, generation: number): void {
     ws.on("message", (data) => {
+      if (this.ws !== ws || generation !== this.connectionGeneration) return;
       try {
         const msg = JSON.parse(data.toString()) as BridgeResponse;
         const pending = this.pending.get(msg.id);
@@ -145,11 +191,8 @@ export class EditorBridge implements IBridge {
     });
 
     ws.on("close", () => {
-      for (const [, pending] of this.pending) {
-        clearTimeout(pending.timer);
-        pending.reject(new McpError(ErrorCode.CONNECTION_LOST, "Bridge connection lost"));
-      }
-      this.pending.clear();
+      if (this.ws !== ws || generation !== this.connectionGeneration) return;
+      this.rejectPending("Bridge connection lost");
       this.ws = null;
     });
 

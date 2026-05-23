@@ -5,7 +5,7 @@ UE-MCP has two main components: a **TypeScript MCP server** that handles the AI 
 ```mermaid
 flowchart LR
     AI[AI Assistant] -->|stdio / MCP protocol| MCP[MCP Server<br/>TypeScript / Node.js]
-    MCP -->|WebSocket<br/>JSON-RPC 2.0<br/>port 9877| Plugin[C++ Bridge Plugin<br/>UE_MCP_Bridge]
+    MCP -->|WebSocket<br/>JSON-RPC 2.0<br/>default port 9877| Plugin[C++ Bridge Plugin<br/>UE_MCP_Bridge]
     Plugin -->|UE C++ API| Engine[Editor Subsystems<br/>Asset Registry<br/>Blueprint Compiler<br/>etc.]
     MCP -->|direct filesystem| FS[Config INI<br/>C++ Headers<br/>Asset Directories]
 ```
@@ -58,7 +58,7 @@ export const levelTool: ToolDef = categoryTool(
 
 ### Bridge Communication
 
-The `EditorBridge` maintains a WebSocket connection to `ws://localhost:9877`.
+The `EditorBridge` maintains a WebSocket connection to `ws://127.0.0.1:9877` by default, or the loopback endpoint configured in `ue-mcp.yml` under `ue-mcp.bridge`.
 
 **Protocol:** JSON-RPC 2.0
 

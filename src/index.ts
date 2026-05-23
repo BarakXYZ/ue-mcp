@@ -33,6 +33,13 @@ function withUpgradeNotice(content: TextBlock[]): TextBlock[] {
 async function main() {
   const bridge = new EditorBridge();
   const project = new ProjectContext();
+  const serverArgs = parseServerCliArgs(process.argv.slice(2));
+  if (serverArgs.bridgeHost || serverArgs.bridgePort) {
+    project.setBridgeOverride({
+      host: serverArgs.bridgeHost,
+      port: serverArgs.bridgePort,
+    });
+  }
 
   // Kick off the npm registry check in the background; the next tool response
   // injects the notice if a newer version is published.
@@ -44,11 +51,12 @@ async function main() {
   // ── Project init ─────────────────────────────────────────────────
   // Moved ahead of tool registration so plugin resolution can walk the
   // project's node_modules.
-  const projectArg = process.argv.find((a) => !a.startsWith("-") && a !== process.argv[0] && a !== process.argv[1]);
+  const projectArg = serverArgs.projectArg;
 
   if (projectArg) {
     try {
       project.setProject(projectArg);
+      bridge.configure(project.bridgeHost, project.bridgePort);
       console.error(`[ue-mcp] Project loaded: ${project.projectName} (engine ${project.engineAssociation ?? "unknown"})`);
 
       // Non-destructive attach — never overwrites local bridge source.
@@ -348,6 +356,56 @@ function isUePluginEnabled(project: ProjectContext, name: string): boolean | und
   }
 }
 
+interface ServerCliArgs {
+  projectArg?: string;
+  bridgeHost?: "localhost" | "127.0.0.1";
+  bridgePort?: number;
+}
+
+function parseServerCliArgs(args: string[]): ServerCliArgs {
+  const parsed: ServerCliArgs = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--bridge-port") {
+      parsed.bridgePort = parseBridgePort(requireFlagValue(args, ++i, "--bridge-port"));
+    } else if (arg.startsWith("--bridge-port=")) {
+      parsed.bridgePort = parseBridgePort(arg.slice("--bridge-port=".length));
+    } else if (arg === "--bridge-host") {
+      parsed.bridgeHost = parseBridgeHost(requireFlagValue(args, ++i, "--bridge-host"));
+    } else if (arg.startsWith("--bridge-host=")) {
+      parsed.bridgeHost = parseBridgeHost(arg.slice("--bridge-host=".length));
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown server argument "${arg}".`);
+    } else if (!parsed.projectArg) {
+      parsed.projectArg = arg;
+    } else {
+      throw new Error(`Unexpected extra project argument "${arg}".`);
+    }
+  }
+  return parsed;
+}
+
+function requireFlagValue(args: string[], index: number, flag: string): string {
+  const value = args[index];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
+}
+
+function parseBridgePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`--bridge-port must be an integer from 1 to 65535, got "${value}".`);
+  }
+  return port;
+}
+
+function parseBridgeHost(value: string): "localhost" | "127.0.0.1" {
+  if (value === "localhost" || value === "127.0.0.1") return value;
+  throw new Error("--bridge-host is limited to localhost or 127.0.0.1 because the bridge has no network auth.");
+}
+
 // Route subcommands
 const subcmd = process.argv[2];
 if (subcmd === "init") {
@@ -372,6 +430,9 @@ if (subcmd === "init") {
 } else if (subcmd === "plugin") {
   process.argv.splice(2, 1);
   import("./plugin-cli.js");
+} else if (subcmd === "projects") {
+  process.argv.splice(2, 1);
+  import("./projects-cli.js");
 } else if (subcmd === "version" || subcmd === "--version" || subcmd === "-v") {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);

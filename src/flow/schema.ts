@@ -12,7 +12,12 @@ import { EngineConfigSchema } from "@db-lyon/flowkit";
  *     contentRoots: ["/Game/"]
  *     disable: ["gas"]
  *     http: { enabled: false, port: 7723 }
+ *     bridge: { host: "127.0.0.1", port: 9877 }
  */
+const LoopbackBridgeHostSchema = z.string().optional().transform((host) => (
+  host === "localhost" || host === "127.0.0.1" ? host : undefined
+));
+
 export const FlowVersionSchema = z.object({
   version: z.literal(1),
   contentRoots: z.array(z.string()).optional(),
@@ -22,6 +27,12 @@ export const FlowVersionSchema = z.object({
       enabled: z.boolean().optional(),
       port: z.number().int().min(1).max(65535).optional(),
       host: z.string().optional(),
+    })
+    .optional(),
+  bridge: z
+    .object({
+      host: LoopbackBridgeHostSchema.optional(),
+      port: z.number().int().min(1).max(65535).optional(),
     })
     .optional(),
 }).passthrough();

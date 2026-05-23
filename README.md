@@ -60,6 +60,7 @@ If you prefer to configure manually, add to your MCP client config:
 - [Tool Reference](https://db-lyon.github.io/ue-mcp/tool-reference/) - All <!-- count:tools -->21<!-- /count --> tools with <!-- count:actions -->525+<!-- /count --> actions
 - [Flows](https://db-lyon.github.io/ue-mcp/flows/) - YAML flow engine, custom tasks, rollback, hooks
 - [Configuration](https://db-lyon.github.io/ue-mcp/configuration/) — `.ue-mcp.json` and MCP client config
+- [Project Registry](docs/project-registry.md) - Cross-platform multi-project MCP config generation
 - [Neon Shrine Demo](https://db-lyon.github.io/ue-mcp/neon-shrine-demo/) — Interactive guided demo
 - [Feedback](https://db-lyon.github.io/ue-mcp/feedback/) — Agent feedback system
 - [Troubleshooting](https://db-lyon.github.io/ue-mcp/troubleshooting/) — Common issues and fixes

@@ -29,6 +29,11 @@ describe("PluginManifestSchema", () => {
       actionPrefix: "vpp",
       minServerVersion: "1.0.0",
       uePluginDependency: "VoxelPro",
+      nativeModule: {
+        uePluginName: "VoxelPCGBridge",
+        minBridgeApi: 1,
+        source: "ue/Plugins/VoxelPCGBridge",
+      },
       inject: {
         pcg: {
           scatter_on_terrain: {
@@ -53,6 +58,34 @@ describe("PluginManifestSchema", () => {
       },
     });
     expect(r.success).toBe(true);
+  });
+
+  it("rejects nativeModule source paths that escape the package", () => {
+    for (const source of ["../outside", "/tmp/outside", "C:/tmp/outside"]) {
+      const r = PluginManifestSchema.safeParse({
+        actionPrefix: "vpp",
+        nativeModule: {
+          uePluginName: "VoxelPCGBridge",
+          minBridgeApi: 1,
+          source,
+        },
+      });
+      expect(r.success).toBe(false);
+    }
+  });
+
+  it("rejects nativeModule plugin names that are not simple identifiers", () => {
+    for (const uePluginName of ["../Escape", "Bad-Name", ""]) {
+      const r = PluginManifestSchema.safeParse({
+        actionPrefix: "vpp",
+        nativeModule: {
+          uePluginName,
+          minBridgeApi: 1,
+          source: "ue/Plugins/VoxelPCGBridge",
+        },
+      });
+      expect(r.success).toBe(false);
+    }
   });
 });
 

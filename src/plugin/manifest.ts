@@ -65,6 +65,14 @@ const FlowEntrySchema = z.object({
   steps: z.record(FlowStepEntrySchema),
 });
 
+const UE_PLUGIN_NAME_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+function isSafePackageRelativePath(value: string): boolean {
+  const normalized = value.replace(/\\/g, "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) return false;
+  return normalized.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
 /**
  * Native UE C++ module that ships with this plugin. When present, the CLI
  * copies `source/` into the user's project Plugins/ at install time and
@@ -81,9 +89,13 @@ const FlowEntrySchema = z.object({
  *       voxel.sample_density: { description: "..." }
  */
 const NativeModuleSchema = z.object({
-  uePluginName: z.string().min(1),
+  uePluginName: z.string().regex(UE_PLUGIN_NAME_RE, {
+    message: "uePluginName must be a simple Unreal plugin identifier",
+  }),
   minBridgeApi: z.number().int().nonnegative(),
-  source: z.string().min(1),
+  source: z.string().min(1).refine(isSafePackageRelativePath, {
+    message: "nativeModule.source must be a relative path inside the plugin package",
+  }),
   supportedEngineVersions: z.array(z.string().min(1)).default([]),
   handlers: z
     .record(

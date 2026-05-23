@@ -37,7 +37,7 @@ The wizard then:
 1. Open your project.
 2. When the editor asks whether to compile `UE_MCP_Bridge`, say yes. First-time compile takes ~30-60 seconds.
 
-The bridge starts automatically once the editor finishes loading, listening on `ws://localhost:9877`.
+The bridge starts automatically once the editor finishes loading, listening on `ws://127.0.0.1:9877` unless `ue-mcp.yml` sets a different `ue-mcp.bridge.port`.
 
 ### Verify the bridge
 
@@ -46,7 +46,7 @@ The bridge starts automatically once the editor finishes loading, listening on `
 3. Confirm this line appears:
 
    ```
-   LogMCPBridge: [UE-MCP] Bridge listening on ws://localhost:9877
+   LogMCPBridge: [UE-MCP] Bridge server started on port 9877
    ```
 
 If it's not there, see [Troubleshooting](troubleshooting.md).

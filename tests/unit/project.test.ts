@@ -50,6 +50,15 @@ describe("ProjectContext.resolveContentPath", () => {
 });
 
 describe("ProjectContext config loading", () => {
+  it("defaults to the standard editor bridge endpoint", () => {
+    const uproject = makeTempProject();
+
+    const ctx = new ProjectContext();
+    ctx.setProject(uproject);
+    expect(ctx.bridgeHost).toBe("127.0.0.1");
+    expect(ctx.bridgePort).toBe(9877);
+  });
+
   it("ignores a malformed ue-mcp.yml without throwing", () => {
     const uproject = makeTempProject();
     const projectDir = path.dirname(uproject);
@@ -70,6 +79,7 @@ describe("ProjectContext config loading", () => {
           version: 1,
           disable: ["gas"],
           http: { enabled: true, port: 7723 },
+          bridge: { host: "127.0.0.1", port: 9878 },
         },
       }),
     );
@@ -78,6 +88,28 @@ describe("ProjectContext config loading", () => {
     ctx.setProject(uproject);
     expect(ctx.config.disable).toEqual(["gas"]);
     expect(ctx.config.http?.port).toBe(7723);
+    expect(ctx.config.bridge?.port).toBe(9878);
+    expect(ctx.bridgeHost).toBe("127.0.0.1");
+    expect(ctx.bridgePort).toBe(9878);
+  });
+
+  it("ignores a ue-mcp.yml bridge host outside loopback while preserving bridge.port", () => {
+    const uproject = makeTempProject();
+    const projectDir = path.dirname(uproject);
+    fs.writeFileSync(
+      path.join(projectDir, "ue-mcp.yml"),
+      yaml.dump({
+        "ue-mcp": {
+          version: 1,
+          bridge: { host: "example.com", port: 9878 },
+        },
+      }),
+    );
+
+    const ctx = new ProjectContext();
+    ctx.setProject(uproject);
+    expect(ctx.bridgeHost).toBe("127.0.0.1");
+    expect(ctx.bridgePort).toBe(9878);
   });
 
   it("migrates a 1.0.29-era ue-mcp.local.yml into ~/.ue-mcp/state.json", () => {
@@ -141,6 +173,7 @@ describe("ProjectContext config loading", () => {
         JSON.stringify({
           contentRoots: ["/Game/", "/MyPlugin/"],
           disable: ["gas"],
+          bridge: { host: "127.0.0.1", port: 9878 },
           installedHooks: ["C:/some/settings.json"],
           feedback: { mode: "defer" },
         }),
@@ -159,6 +192,7 @@ describe("ProjectContext config loading", () => {
       ) as { "ue-mcp": Record<string, unknown> };
       expect(yml["ue-mcp"].disable).toEqual(["gas"]);
       expect(yml["ue-mcp"].contentRoots).toEqual(["/Game/", "/MyPlugin/"]);
+      expect(yml["ue-mcp"].bridge).toEqual({ host: "127.0.0.1", port: 9878 });
       expect(yml["ue-mcp"].feedback).toBeUndefined();
       expect(yml["ue-mcp"].installedHooks).toBeUndefined();
 
@@ -175,6 +209,8 @@ describe("ProjectContext config loading", () => {
       // The config that the context exposes is project-tracked only.
       // No feedback / installedHooks fields on UeMcpConfig anymore.
       expect(ctx.config.disable).toEqual(["gas"]);
+      expect(ctx.bridgeHost).toBe("127.0.0.1");
+      expect(ctx.bridgePort).toBe(9878);
       expect((ctx.config as { feedback?: unknown }).feedback).toBeUndefined();
       expect((ctx.config as { installedHooks?: unknown }).installedHooks).toBeUndefined();
     } finally {

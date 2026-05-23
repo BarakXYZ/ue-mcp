@@ -29,6 +29,18 @@ The easiest way to configure UE-MCP is to run `npx ue-mcp init` — it detects y
 
 You can start the server without a `.uproject` argument. It will run in a limited mode — you can then use `project(action="set_project", projectPath="...")` at runtime to attach to a project.
 
+For production multi-project setups, prefer the [Project Registry](project-registry.md). It emits one MCP server entry per project with unique bridge ports, which avoids mutating a live server process after plugin, flow, disabled-tool, and HTTP state have already been loaded.
+
+### Multiple Projects
+
+UE-MCP scales to multiple projects by running one MCP server process per active project. Put a `ue-mcp.projects.yml` registry in your repo or `~/.ue-mcp/projects.yml`, then emit client config:
+
+```bash
+npx ue-mcp projects emit --client codex
+```
+
+Each generated server entry points at a single `.uproject` and passes `--bridge-port <port>` so the TypeScript server and Unreal bridge use an isolated endpoint. See [Project Registry](project-registry.md) for the cross-platform schema and validation commands.
+
 ## Project Configuration (`ue-mcp.yml`)
 
 Project-level config lives under the `ue-mcp:` block at the top of `ue-mcp.yml`, next to your `.uproject`. The file is meant to be tracked in git so every collaborator sees the same project surface. `npx ue-mcp init` creates and maintains it for you, but hand-editing is fine — there's nothing in it the server treats as opaque machine state.
@@ -44,6 +56,9 @@ ue-mcp:
     - networking
   http:
     enabled: false
+  bridge:
+    host: 127.0.0.1
+    port: 9877
 
 tasks: {}
 flows: {}
@@ -67,6 +82,7 @@ plugins: []
 | `contentRoots` | `string[]` | `["/Game/"]` | Content paths to search when using `asset(action="search")`. Add plugin content roots here if your project uses plugins with their own assets. |
 | `disable` | `string[]` | `[]` | Tool categories to disable. Disabled categories are not registered with the MCP server, reducing context noise for the AI. Use `"feedback"` here to opt out of the feedback tool entirely. |
 | `http` | `object` | `undefined` (HTTP server off) | Optional REST surface for the flow engine. Object with `enabled` (bool), `port` (default `7723`), `host` (default `127.0.0.1`). When `enabled: true`, the MCP server also serves `GET /flows`, `GET /flows/<name>/plan`, `POST /flows/<name>/run`, and the Server-Sent Events stream at `GET /flows/events` (live per-step lifecycle events; see [Live Observation](flows.md#live-observation-sse)) over HTTP so external tools can drive and observe flows without an MCP client. |
+| `bridge` | `object` | `{ host: "127.0.0.1", port: 9877 }` | Editor WebSocket endpoint for this project. Set a unique `port` when multiple Unreal projects are open at once. `host` is restricted to `127.0.0.1` or `localhost` because the bridge has no network auth; other values are ignored. `editor(action="start_editor")` launches Unreal with `-MCPBridgePort=<port>`; manual editor launches read `ue-mcp.yml` or legacy `.ue-mcp.json`. |
 
 The feedback approval mode (`interactive` / `auto-approve` / `defer`) is intentionally **not** in `ue-mcp.yml` — it varies per developer and per machine, so it lives in `~/.ue-mcp/state.json` and is managed with `npx ue-mcp feedback mode ...` or the `UE_MCP_FEEDBACK_MODE` env var. See [Feedback → modes](feedback.md#feedback-modes).
 
@@ -112,7 +128,17 @@ For example, `ue-mcp-plugin-voxel-plugin` declares `uePluginDependency: Voxel`. 
 
 ## Bridge Connection
 
-The C++ plugin listens on **`ws://localhost:9877`** (currently hardcoded). The MCP server auto-connects on startup and reconnects every 15 seconds if the connection drops.
+The C++ plugin listens on **`ws://127.0.0.1:9877`** by default. Override the port per project with:
+
+```yaml
+ue-mcp:
+  version: 1
+  bridge:
+    host: 127.0.0.1
+    port: 9878
+```
+
+The MCP server auto-connects on startup and reconnects every 15 seconds if the connection drops. The C++ bridge binds to loopback, and `bridge.host` is intentionally limited to `127.0.0.1` or `localhost`; other host values are ignored while the configured port is still honored. Prefer `127.0.0.1` for the most deterministic behavior because the native bridge binds IPv4 loopback.
 
 ### Connection States
 
@@ -160,6 +186,7 @@ The C++ bridge plugin enables these UE plugins (adding them to `.uproject` if mi
 | `npx ue-mcp plugin install <name>` | Install a ue-mcp plugin from npm and register it in `ue-mcp.yml`. See [Configuration → Plugins](#plugins). |
 | `npx ue-mcp plugin uninstall <name>` | Inverse of install. |
 | `npx ue-mcp plugin create <name>` | Scaffold a new plugin package. See [Plugins](plugins.md). |
+| `npx ue-mcp projects list \| doctor \| emit` | Validate a cross-platform project registry and emit one MCP server entry per project. See [Project Registry](project-registry.md). |
 
 ## Editor Lifecycle
 

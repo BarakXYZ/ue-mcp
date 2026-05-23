@@ -11,6 +11,10 @@ export const Quat = z.object({ x: z.number(), y: z.number(), z: z.number(), w: z
 // ── Project / tooling file shapes ────────────────────────────────────────────
 // Validated at trust boundaries (JSON.parse on files the user can hand-edit).
 
+const LoopbackBridgeHostSchema = z.string().optional().transform((host) => (
+  host === "localhost" || host === "127.0.0.1" ? host : undefined
+));
+
 export const UProjectSchema = z
   .object({
     EngineAssociation: z.string().optional(),
@@ -37,6 +41,12 @@ export const UeMcpConfigSchema = z
         enabled: z.boolean().optional(),
         port: z.number().int().min(1).max(65535).optional(),
         host: z.string().optional(),
+      })
+      .optional(),
+    bridge: z
+      .object({
+        port: z.number().int().min(1).max(65535).optional(),
+        host: LoopbackBridgeHostSchema.optional(),
       })
       .optional(),
   })

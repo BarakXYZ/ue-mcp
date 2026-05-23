@@ -41,11 +41,12 @@ describe("UeMcpConfigSchema", () => {
     expect(UeMcpConfigSchema.safeParse({}).success).toBe(true);
   });
 
-  it("accepts contentRoots / disable / http", () => {
+  it("accepts contentRoots / disable / http / bridge", () => {
     const r = UeMcpConfigSchema.safeParse({
       contentRoots: ["/Game/", "/MyPlugin/"],
       disable: ["gas"],
       http: { enabled: true, port: 7723, host: "127.0.0.1" },
+      bridge: { host: "127.0.0.1", port: 9878 },
     });
     expect(r.success).toBe(true);
   });
@@ -53,6 +54,20 @@ describe("UeMcpConfigSchema", () => {
   it("rejects http.port out of range", () => {
     const r = UeMcpConfigSchema.safeParse({ http: { port: 99999 } });
     expect(r.success).toBe(false);
+  });
+
+  it("rejects bridge.port out of range", () => {
+    const r = UeMcpConfigSchema.safeParse({ bridge: { port: 99999 } });
+    expect(r.success).toBe(false);
+  });
+
+  it("ignores bridge.host outside loopback while preserving bridge.port", () => {
+    const r = UeMcpConfigSchema.safeParse({ bridge: { host: "example.com", port: 9877 } });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.bridge?.host).toBeUndefined();
+      expect(r.data.bridge?.port).toBe(9877);
+    }
   });
 
   it("rejects disable as non-array", () => {

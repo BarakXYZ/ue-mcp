@@ -37,6 +37,7 @@ export const projectTool: ToolDef = categoryTool(
       description: "Switch project. Params: projectPath",
       handler: async (ctx, p) => {
         ctx.project.setProject(p.projectPath as string);
+        ctx.bridge.configure?.(ctx.project.bridgeHost, ctx.project.bridgePort);
         const result = deploy(ctx.project);
         try { await ctx.bridge.connect(); } catch { /* editor might not be running */ }
         return { success: true, projectName: ctx.project.projectName, contentDir: ctx.project.contentDir, engineAssociation: ctx.project.engineAssociation, editorConnected: ctx.bridge.isConnected, bridgeSetup: deploySummary(result) };

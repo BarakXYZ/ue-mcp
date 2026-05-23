@@ -5,7 +5,7 @@
  * Fetches a GitHub issue, creates a branch, launches Claude Code to
  * implement the fix, then pushes and opens a PR.  Never merges to main.
  */
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -27,24 +27,35 @@ const fail = (msg: string) => {
 
 function hasCommand(cmd: string): boolean {
   try {
-    execSync(`${cmd} --version`, { stdio: "ignore" });
+    execFileSync(cmd, ["--version"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
 }
 
-function run(cmd: string): string {
-  return execSync(cmd, { encoding: "utf-8" }).trim();
+function run(cmd: string, args: string[]): string {
+  return execFileSync(cmd, args, { encoding: "utf-8" }).trim();
+}
+
+function runQuiet(cmd: string, args: string[]): void {
+  execFileSync(cmd, args, { stdio: "ignore" });
 }
 
 function currentBranch(): string {
-  return run("git rev-parse --abbrev-ref HEAD");
+  return run("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
 }
 
 /* ── Main ────────────────────────────────────────────────────────── */
 
 async function resolve() {
+  if (process.env.UE_MCP_ENABLE_RESOLVE !== "1") {
+    fail(
+      "The experimental 'resolve' automation is disabled by default. " +
+        "Set UE_MCP_ENABLE_RESOLVE=1 only after auditing this workflow for your machine.",
+    );
+  }
+
   const args = process.argv.slice(3);
   const ciMode = args.includes("--ci") || !!process.env.CI;
   const issueArg = args.find((a) => !a.startsWith("-"));
@@ -64,7 +75,7 @@ async function resolve() {
   if (!hasCommand("claude")) fail("Claude Code is required. Install: npm i -g @anthropic-ai/claude-code");
 
   try {
-    run("git rev-parse --git-dir");
+    run("git", ["rev-parse", "--git-dir"]);
   } catch {
     fail("Not a git repository. Clone ue-mcp first.");
   }
@@ -75,7 +86,7 @@ async function resolve() {
   const YELLOW = "\x1b[33m";
   let repo: string;
   try {
-    const remote = run("git remote get-url origin");
+    const remote = run("git", ["remote", "get-url", "origin"]);
     const match = remote.match(/[/:]([^/]+\/[^/.]+?)(?:\.git)?$/);
     if (match) {
       repo = match[1];
@@ -95,9 +106,15 @@ async function resolve() {
 
   let issue: { title: string; body: string; labels: { name: string }[] };
   try {
-    const raw = run(
-      `gh issue view ${issueNum} --repo db-lyon/ue-mcp --json title,body,labels`,
-    );
+    const raw = run("gh", [
+      "issue",
+      "view",
+      String(issueNum),
+      "--repo",
+      "db-lyon/ue-mcp",
+      "--json",
+      "title,body,labels",
+    ]);
     issue = JSON.parse(raw);
   } catch {
     fail(`Could not fetch issue #${issueNum} from db-lyon/ue-mcp`);
@@ -112,12 +129,12 @@ async function resolve() {
 
   try {
     // Make sure we branch from latest main
-    execSync("git fetch origin main", { stdio: "ignore" });
-    execSync(`git checkout -b ${branch} origin/main`, { stdio: "pipe" });
+    runQuiet("git", ["fetch", "origin", "main"]);
+    execFileSync("git", ["checkout", "-b", branch, "origin/main"], { stdio: "pipe" });
   } catch {
     // Branch might already exist
     try {
-      execSync(`git checkout ${branch}`, { stdio: "pipe" });
+      execFileSync("git", ["checkout", branch], { stdio: "pipe" });
     } catch {
       fail(`Could not create or switch to branch ${branch}`);
     }
@@ -155,7 +172,10 @@ async function resolve() {
   const promptFile = path.join(os.tmpdir(), `ue-mcp-resolve-${issueNum}.md`);
   fs.writeFileSync(promptFile, prompt);
 
-  const claudeArgs = ["--print", "--dangerously-skip-permissions"];
+  const claudeArgs = ["--print"];
+  if (process.env.UE_MCP_RESOLVE_SKIP_PERMISSIONS === "1") {
+    claudeArgs.push("--dangerously-skip-permissions");
+  }
 
   console.log(`  ${DIM}Launching Claude Code${ciMode ? " (CI mode)" : ""}...${RESET}`);
   console.log("");
@@ -163,7 +183,7 @@ async function resolve() {
   const exitCode = await new Promise<number | null>((resolve) => {
     const child = spawn("claude", claudeArgs, {
       stdio: ["pipe", "inherit", "inherit"],
-      shell: true,
+      shell: false,
     });
     child.stdin!.write(prompt);
     child.stdin!.end();
@@ -185,7 +205,7 @@ async function resolve() {
   // Check if there are commits on this branch beyond main
   let commitCount: number;
   try {
-    const log = run(`git log origin/main..HEAD --oneline`);
+    const log = run("git", ["log", "origin/main..HEAD", "--oneline"]);
     commitCount = log ? log.split("\n").length : 0;
   } catch {
     commitCount = 0;
@@ -201,7 +221,7 @@ async function resolve() {
 
   // Push and create PR
   try {
-    execSync(`git push -u origin ${branch}`, { stdio: "pipe" });
+    execFileSync("git", ["push", "-u", "origin", branch], { stdio: "pipe" });
     ok("Pushed to origin");
   } catch (e) {
     fail(`Push failed: ${e instanceof Error ? e.message : e}`);
@@ -216,9 +236,18 @@ async function resolve() {
       `*Automated with \`npx ue-mcp resolve ${issueNum}\`*`,
     ].join("\n");
 
-    const prUrl = run(
-      `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body "${prBody.replace(/"/g, '\\"')}" --repo db-lyon/ue-mcp --head ${branch}`,
-    );
+    const prUrl = run("gh", [
+      "pr",
+      "create",
+      "--title",
+      prTitle,
+      "--body",
+      prBody,
+      "--repo",
+      repo,
+      "--head",
+      branch,
+    ]);
     console.log("");
     ok(`PR created: ${prUrl}`);
   } catch {

@@ -49,12 +49,136 @@
 #endif
 
 #include "Misc/Base64.h"
+#if WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <wincrypt.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 #pragma comment(lib, "advapi32.lib")
 #endif
+
+namespace
+{
+int32 FindFirstSeparator(const FString& Value, const TCHAR* Separators)
+{
+	int32 Best = INDEX_NONE;
+	for (const TCHAR* Cursor = Separators; *Cursor != TEXT('\0'); ++Cursor)
+	{
+		int32 Index = INDEX_NONE;
+		if (Value.FindChar(*Cursor, Index) && (Best == INDEX_NONE || Index < Best))
+		{
+			Best = Index;
+		}
+	}
+	return Best;
+}
+
+bool IsPortSuffixValid(const FString& Suffix)
+{
+	if (Suffix.IsEmpty())
+	{
+		return true;
+	}
+	if (!Suffix.StartsWith(TEXT(":")))
+	{
+		return false;
+	}
+
+	const FString PortText = Suffix.Mid(1);
+	if (PortText.IsEmpty())
+	{
+		return false;
+	}
+
+	for (int32 Index = 0; Index < PortText.Len(); ++Index)
+	{
+		if (!FChar::IsDigit(PortText[Index]))
+		{
+			return false;
+		}
+	}
+
+	const int32 Port = FCString::Atoi(*PortText);
+	return Port >= 1 && Port <= 65535;
+}
+
+bool IsLoopbackWebSocketOrigin(const FString& Origin)
+{
+	const FString Trimmed = Origin.TrimStartAndEnd();
+	const int32 SchemeEnd = Trimmed.Find(TEXT("://"), ESearchCase::IgnoreCase);
+	if (SchemeEnd == INDEX_NONE)
+	{
+		return false;
+	}
+
+	const FString Scheme = Trimmed.Left(SchemeEnd);
+	if (!Scheme.Equals(TEXT("http"), ESearchCase::IgnoreCase) &&
+		!Scheme.Equals(TEXT("https"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	FString Authority = Trimmed.Mid(SchemeEnd + 3);
+	const int32 PathStart = FindFirstSeparator(Authority, TEXT("/?#"));
+	if (PathStart != INDEX_NONE)
+	{
+		Authority = Authority.Left(PathStart);
+	}
+	Authority = Authority.TrimStartAndEnd();
+	if (Authority.IsEmpty() || Authority.Contains(TEXT("@")))
+	{
+		return false;
+	}
+
+	if (Authority.StartsWith(TEXT("[")))
+	{
+		const int32 CloseBracket = Authority.Find(TEXT("]"));
+		if (CloseBracket == INDEX_NONE)
+		{
+			return false;
+		}
+
+		const FString Host = Authority.Left(CloseBracket + 1);
+		const FString PortSuffix = Authority.Mid(CloseBracket + 1);
+		return Host.Equals(TEXT("[::1]"), ESearchCase::IgnoreCase) && IsPortSuffixValid(PortSuffix);
+	}
+
+	FString Host = Authority;
+	FString PortSuffix;
+	int32 PortSeparator = INDEX_NONE;
+	if (Authority.FindChar(TEXT(':'), PortSeparator))
+	{
+		Host = Authority.Left(PortSeparator);
+		PortSuffix = Authority.Mid(PortSeparator);
+	}
+
+	const bool bHostIsLoopback =
+		Host.Equals(TEXT("localhost"), ESearchCase::IgnoreCase) ||
+		Host.Equals(TEXT("127.0.0.1"), ESearchCase::IgnoreCase);
+	return bHostIsLoopback && IsPortSuffixValid(PortSuffix);
+}
+
+#if WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMCPBridgeOriginValidationTest, "UE_MCP.Bridge.OriginValidation", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMCPBridgeOriginValidationTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("accept localhost"), IsLoopbackWebSocketOrigin(TEXT("http://localhost")));
+	TestTrue(TEXT("accept localhost port"), IsLoopbackWebSocketOrigin(TEXT("https://localhost:9877")));
+	TestTrue(TEXT("accept IPv4 loopback"), IsLoopbackWebSocketOrigin(TEXT("http://127.0.0.1:9877")));
+	TestTrue(TEXT("accept IPv6 loopback"), IsLoopbackWebSocketOrigin(TEXT("http://[::1]:9877")));
+
+	TestFalse(TEXT("reject localhost suffix"), IsLoopbackWebSocketOrigin(TEXT("http://localhost.evil.com")));
+	TestFalse(TEXT("reject IPv4 loopback suffix"), IsLoopbackWebSocketOrigin(TEXT("http://127.0.0.1.evil.com")));
+	TestFalse(TEXT("reject non-loopback host"), IsLoopbackWebSocketOrigin(TEXT("https://example.com")));
+	TestFalse(TEXT("reject missing scheme"), IsLoopbackWebSocketOrigin(TEXT("localhost:9877")));
+	TestFalse(TEXT("reject invalid port"), IsLoopbackWebSocketOrigin(TEXT("http://localhost:bad")));
+	return true;
+}
+#endif
+} // namespace
 
 FMCPBridgeServer::FMCPBridgeServer(int32 Port)
 	: ServerPort(Port)
@@ -512,15 +636,7 @@ FString FMCPBridgeServer::PerformWebSocketHandshake(int32 ClientSocketFD)
 				? Request.Mid(ValueStart).TrimStartAndEnd()
 				: Request.Mid(ValueStart, ValueEnd - ValueStart).TrimStartAndEnd();
 
-			const bool bIsLoopback =
-				Origin.StartsWith(TEXT("http://localhost"), ESearchCase::IgnoreCase) ||
-				Origin.StartsWith(TEXT("https://localhost"), ESearchCase::IgnoreCase) ||
-				Origin.StartsWith(TEXT("http://127.0.0.1"), ESearchCase::IgnoreCase) ||
-				Origin.StartsWith(TEXT("https://127.0.0.1"), ESearchCase::IgnoreCase) ||
-				Origin.StartsWith(TEXT("http://[::1]"), ESearchCase::IgnoreCase) ||
-				Origin.StartsWith(TEXT("https://[::1]"), ESearchCase::IgnoreCase);
-
-			if (!bIsLoopback)
+			if (!IsLoopbackWebSocketOrigin(Origin))
 			{
 				UE_LOG(LogMCPBridge, Warning, TEXT("[UE-MCP] Rejected WebSocket upgrade from Origin: %s"), *Origin);
 				return TEXT("");

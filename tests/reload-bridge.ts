@@ -1,7 +1,7 @@
 import { EditorBridge } from "../src/bridge.js";
 
 async function main() {
-  const bridge = new EditorBridge("localhost", 9877);
+  const bridge = new EditorBridge("127.0.0.1", 9877);
   await bridge.connect(5000);
 
   const reloadCode = `

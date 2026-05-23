@@ -8,6 +8,9 @@ import { UProjectSchema, UeMcpConfigSchema } from "./schemas.js";
 import { findEngineInstall } from "./deployer.js";
 import { setInstalledHooks, setFeedbackMode, type FeedbackMode } from "./user-state.js";
 
+export const DEFAULT_BRIDGE_HOST = "127.0.0.1";
+export const DEFAULT_BRIDGE_PORT = 9877;
+
 export interface PluginInfo {
   name: string;
   contentDir: string;
@@ -27,6 +30,13 @@ export interface UeMcpConfig {
     /** Override bind host. Defaults to 127.0.0.1 — do not expose externally. */
     host?: string;
   };
+  /** Editor bridge endpoint. Use a unique port for each concurrently-open UE project. */
+  bridge?: {
+    /** Loopback only. Default 127.0.0.1. */
+    host?: string;
+    /** Default 9877. */
+    port?: number;
+  };
 }
 
 export class ProjectContext {
@@ -35,9 +45,22 @@ export class ProjectContext {
   contentDir: string | null = null;
   engineAssociation: string | null = null;
   config: UeMcpConfig = {};
+  private bridgeOverride: UeMcpConfig["bridge"] | undefined;
 
   get isLoaded(): boolean {
     return this.projectPath !== null;
+  }
+
+  get bridgeHost(): string {
+    return this.bridgeOverride?.host ?? this.config.bridge?.host ?? DEFAULT_BRIDGE_HOST;
+  }
+
+  get bridgePort(): number {
+    return this.bridgeOverride?.port ?? this.config.bridge?.port ?? DEFAULT_BRIDGE_PORT;
+  }
+
+  setBridgeOverride(bridge: UeMcpConfig["bridge"] | undefined): void {
+    this.bridgeOverride = bridge;
   }
 
   setProject(inputPath: string): void {
@@ -214,6 +237,7 @@ export class ProjectContext {
 
   private loadConfig(): void {
     if (!this.projectDir) return;
+    this.config = {};
 
     // One-time migrations:
     //   - .ue-mcp.json (pre-1.0.29) → ue-mcp.yml + ~/.ue-mcp/state.json
