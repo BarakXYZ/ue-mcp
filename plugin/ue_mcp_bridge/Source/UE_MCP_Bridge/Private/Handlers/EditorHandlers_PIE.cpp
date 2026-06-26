@@ -28,6 +28,7 @@
 #include "UObject/Package.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "PlayInEditorDataTypes.h"
 #include "Settings/LevelEditorPlaySettings.h"
 
 namespace
@@ -124,15 +125,28 @@ TSharedPtr<FJsonValue> FEditorHandlers::PieControl(const TSharedPtr<FJsonObject>
 
 	if (Action == TEXT("status"))
 	{
-		bool bIsPlaying = (GEditor->PlayWorld != nullptr);
+		const bool bIsPieWorldActive = (GEditor->PlayWorld != nullptr);
+		const bool bIsPlaySessionInProgress = GEditor->IsPlaySessionInProgress();
+		const bool bIsStandaloneProcessActive = GEditor->IsPlayingOnLocalPCSession();
+		const bool bIsPlaying = bIsPieWorldActive || bIsPlaySessionInProgress || bIsStandaloneProcessActive;
+
 		Result->SetBoolField(TEXT("isPlaying"), bIsPlaying);
+		Result->SetBoolField(TEXT("isPieWorldActive"), bIsPieWorldActive);
+		Result->SetBoolField(TEXT("isPlaySessionInProgress"), bIsPlaySessionInProgress);
+		Result->SetBoolField(TEXT("isStandaloneProcessActive"), bIsStandaloneProcessActive);
+		Result->SetStringField(
+			TEXT("mode"),
+			bIsStandaloneProcessActive ? TEXT("PlayMode_InNewProcess") :
+			bIsPieWorldActive ? TEXT("pie") :
+			bIsPlaySessionInProgress ? TEXT("queued") :
+			TEXT("stopped"));
 		Result->SetStringField(TEXT("action"), Action);
 	}
 	else if (Action == TEXT("start"))
 	{
-		if (GEditor->PlayWorld != nullptr)
+		if (GEditor->PlayWorld != nullptr || GEditor->IsPlaySessionInProgress() || GEditor->IsPlayingOnLocalPCSession())
 		{
-			return MCPError(TEXT("PIE session already active"));
+			return MCPError(TEXT("Play session already active"));
 		}
 
 		// AssetRegistry must be done with its initial scan before PIE can start.
@@ -168,19 +182,65 @@ TSharedPtr<FJsonValue> FEditorHandlers::PieControl(const TSharedPtr<FJsonObject>
 			Result->SetBoolField(TEXT("waitedForAssetRegistry"), true);
 		}
 
+		const FString RequestedPlayMode = OptionalString(Params, TEXT("playMode"));
+		const FString NormalizedPlayMode = RequestedPlayMode.ToLower();
 		FRequestPlaySessionParams SessionParams;
+		FString SessionDestination = TEXT("DefaultFRequestPlaySessionParams");
+		if (NormalizedPlayMode == TEXT("playmode_innewprocess"))
+		{
+			SessionParams.SessionDestination = EPlaySessionDestinationType::NewProcess;
+			SessionDestination = TEXT("EPlaySessionDestinationType::NewProcess");
+		}
+		else if (NormalizedPlayMode == TEXT("playmode_ineditorfloating"))
+		{
+			SessionParams.SessionDestination = EPlaySessionDestinationType::InProcess;
+			SessionDestination = TEXT("EPlaySessionDestinationType::InProcess");
+		}
+		else if (RequestedPlayMode.IsEmpty())
+		{
+			SessionDestination = TEXT("DefaultFRequestPlaySessionParams");
+		}
+		else
+		{
+			return MCPError(FString::Printf(
+				TEXT("Unknown playMode: %s. Expected 'PlayMode_InEditorFloating' or 'PlayMode_InNewProcess', or omit playMode for Unreal's default FRequestPlaySessionParams path."),
+				*RequestedPlayMode));
+		}
+
 		GEditor->RequestPlaySession(SessionParams);
 		Result->SetStringField(TEXT("action"), Action);
+		Result->SetStringField(TEXT("playMode"), RequestedPlayMode.IsEmpty() ? TEXT("DefaultFRequestPlaySessionParams") : RequestedPlayMode);
+		Result->SetStringField(TEXT("sessionDestination"), SessionDestination);
+		Result->SetBoolField(TEXT("requestedNewProcess"), SessionParams.SessionDestination == EPlaySessionDestinationType::NewProcess);
 	}
 	else if (Action == TEXT("stop"))
 	{
-		if (GEditor->PlayWorld == nullptr)
+		const bool bIsPieWorldActive = (GEditor->PlayWorld != nullptr);
+		const bool bIsInEditorSession = GEditor->IsPlayingSessionInEditor();
+		const bool bIsRequestQueued = GEditor->IsPlaySessionRequestQueued();
+		const bool bIsStandaloneProcessActive = GEditor->IsPlayingOnLocalPCSession();
+
+		if (!bIsPieWorldActive && !bIsInEditorSession && !bIsRequestQueued && !bIsStandaloneProcessActive)
 		{
-			return MCPError(TEXT("No PIE session active"));
+			return MCPError(TEXT("No play session active"));
 		}
 
-		GEditor->RequestEndPlayMap();
+		if (bIsPieWorldActive || bIsInEditorSession)
+		{
+			GEditor->RequestEndPlayMap();
+		}
+		if (bIsStandaloneProcessActive)
+		{
+			GEditor->EndPlayOnLocalPc();
+		}
+		if (bIsRequestQueued)
+		{
+			GEditor->CancelRequestPlaySession();
+		}
 		Result->SetStringField(TEXT("action"), Action);
+		Result->SetBoolField(TEXT("requestedEndPie"), bIsPieWorldActive || bIsInEditorSession);
+		Result->SetBoolField(TEXT("endedStandaloneProcess"), bIsStandaloneProcessActive);
+		Result->SetBoolField(TEXT("canceledQueuedRequest"), bIsRequestQueued);
 	}
 	else
 	{

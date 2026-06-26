@@ -1004,10 +1004,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 	{
 		for (const auto& Pair : (*PropsObj)->Values)
 		{
-			FProperty* Prop = DataClass->FindPropertyByName(FName(*Pair.Key));
+			const FString Key(Pair.Key.ToView());
+			FProperty* Prop = DataClass->FindPropertyByName(FName(*Key));
 			if (!Prop)
 			{
-				PropErrors.Add(FString::Printf(TEXT("Property not found: %s"), *Pair.Key));
+				PropErrors.Add(FString::Printf(TEXT("Property not found: %s"), *Key));
 				continue;
 			}
 			void* Addr = Prop->ContainerPtrToValuePtr<void>(NewAsset);
@@ -1018,7 +1019,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 			}
 			else
 			{
-				PropErrors.Add(FString::Printf(TEXT("Failed to set %s: %s"), *Pair.Key, *SetErr));
+				PropErrors.Add(FString::Printf(TEXT("Failed to set %s: %s"), *Key, *SetErr));
 			}
 		}
 	}

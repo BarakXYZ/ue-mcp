@@ -475,7 +475,8 @@ static void SetInstancePropertiesFromJson(FInstancedStruct& Instance, const TSha
 
 	for (const auto& Pair : Properties->Values)
 	{
-		FProperty* Prop = Struct->FindPropertyByName(*Pair.Key);
+		const FString Key(Pair.Key.ToView());
+		FProperty* Prop = Struct->FindPropertyByName(*Key);
 		if (!Prop) continue;
 
 		void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Memory);

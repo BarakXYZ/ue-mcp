@@ -111,7 +111,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::PieReplayArm(const TSharedPtr<FJsonObj
 				double TD = 0;
 				if (KV.Value.IsValid() && KV.Value->TryGetNumber(TD))
 				{
-					Cfg.TrackedThresholds.Add(KV.Key, static_cast<float>(TD));
+					Cfg.TrackedThresholds.Add(FString(KV.Key.ToView()), static_cast<float>(TD));
 				}
 			}
 		}

@@ -1328,8 +1328,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		return MCPError(FString::Printf(TEXT("Property '%s' not found on component"), *PropertyName));
 	}
 
-	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
-	if (!ValueField || !(*ValueField).IsValid())
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
 	{
 		return MCPError(TEXT("Missing 'value' parameter"));
 	}
@@ -1340,7 +1340,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
 
 	FString ValueStr;
-	if ((*ValueField)->TryGetString(ValueStr))
+	if (ValueField->TryGetString(ValueStr))
 	{
 		// #121: resolve bare actor labels (e.g. TargetActor=BP_Portcullis) to full object paths
 		// so ImportText_Direct can resolve TObjectPtr<AActor> fields in struct arrays.
@@ -1393,7 +1393,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 	else
 	{
 		double NumValue;
-		if ((*ValueField)->TryGetNumber(NumValue))
+		if (ValueField->TryGetNumber(NumValue))
 		{
 			ValueStr = FString::SanitizeFloat(NumValue);
 			Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
@@ -1401,7 +1401,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		else
 		{
 			bool BoolValue;
-			if ((*ValueField)->TryGetBool(BoolValue))
+			if (ValueField->TryGetBool(BoolValue))
 			{
 				ValueStr = BoolValue ? TEXT("true") : TEXT("false");
 				Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetComp), TargetComp, PPF_None);
@@ -1455,10 +1455,11 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 	TSharedPtr<FJsonObject> PreviousValues = MakeShared<FJsonObject>();
 	for (auto& Pair : Params->Values)
 	{
-		if (Pair.Key == TEXT("actorLabel") || Pair.Key == TEXT("action"))
+		const FString Key(Pair.Key.ToView());
+		if (Key == TEXT("actorLabel") || Key == TEXT("action"))
 			continue;
 
-		FProperty* Prop = TargetActor->GetClass()->FindPropertyByName(*Pair.Key);
+		FProperty* Prop = TargetActor->GetClass()->FindPropertyByName(*Key);
 		if (Prop)
 		{
 			FString PrevStr;
@@ -1485,8 +1486,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 
 			if (bApplied)
 			{
-				Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
-				PreviousValues->SetStringField(Pair.Key, PrevStr);
+				Changes.Add(MakeShared<FJsonValueString>(Key));
+				PreviousValues->SetStringField(Key, PrevStr);
 			}
 		}
 	}
@@ -1503,7 +1504,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 		Payload->SetStringField(TEXT("actorLabel"), ActorLabel);
 		for (auto& Prev : PreviousValues->Values)
 		{
-			Payload->SetField(Prev.Key, Prev.Value);
+			Payload->SetField(Prev.Key.ToView(), Prev.Value);
 		}
 		MCPSetRollback(Result, TEXT("set_volume_properties"), Payload);
 	}

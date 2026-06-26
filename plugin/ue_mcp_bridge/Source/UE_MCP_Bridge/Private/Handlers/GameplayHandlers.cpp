@@ -460,7 +460,8 @@ TSharedPtr<FJsonValue> FGameplayHandlers::AddSmartObjectSlotBehavior(const TShar
 	{
 		for (const auto& Pair : (*InstObj)->Values)
 		{
-			FProperty* P = BehaviorAsset->GetClass()->FindPropertyByName(FName(*Pair.Key));
+			const FString Key(Pair.Key.ToView());
+			FProperty* P = BehaviorAsset->GetClass()->FindPropertyByName(FName(*Key));
 			if (!P) continue;
 			FString E;
 			MCPJsonProperty::SetJsonOnProperty(P, P->ContainerPtrToValuePtr<void>(BehaviorAsset), Pair.Value, E);

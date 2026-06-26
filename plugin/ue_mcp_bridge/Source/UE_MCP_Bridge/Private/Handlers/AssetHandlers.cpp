@@ -1607,10 +1607,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 	{
 		for (const auto& Pair : (*PropsObj)->Values)
 		{
-			FProperty* Prop = DataClass->FindPropertyByName(FName(*Pair.Key));
+			const FString Key(Pair.Key.ToView());
+			FProperty* Prop = DataClass->FindPropertyByName(FName(*Key));
 			if (!Prop)
 			{
-				PropErrors.Add(FString::Printf(TEXT("Property not found: %s"), *Pair.Key));
+				PropErrors.Add(FString::Printf(TEXT("Property not found: %s"), *Key));
 				continue;
 			}
 			void* Addr = Prop->ContainerPtrToValuePtr<void>(NewAsset);
@@ -1621,7 +1622,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 			}
 			else
 			{
-				PropErrors.Add(FString::Printf(TEXT("Failed to set %s: %s"), *Pair.Key, *SetErr));
+				PropErrors.Add(FString::Printf(TEXT("Failed to set %s: %s"), *Key, *SetErr));
 			}
 		}
 	}
@@ -2226,8 +2227,8 @@ TSharedPtr<FJsonValue> FAssetHandlers::SetAssetProperty(const TSharedPtr<FJsonOb
 	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
 	FString PropertyName;
 	if (auto Err = RequireString(Params, TEXT("propertyName"), PropertyName)) return Err;
-	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
-	if (!ValueField || !(*ValueField).IsValid())
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
 	{
 		return MCPError(TEXT("Missing 'value' parameter"));
 	}
@@ -2284,7 +2285,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::SetAssetProperty(const TSharedPtr<FJsonOb
 
 	Asset->Modify();
 	FString SetErr;
-	if (!MCPJsonProperty::SetJsonOnProperty(FinalProp, ValuePtr, *ValueField, SetErr))
+	if (!MCPJsonProperty::SetJsonOnProperty(FinalProp, ValuePtr, ValueField, SetErr))
 	{
 		return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
 	}
@@ -2347,7 +2348,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::SetTextureSettingsByType(const TSharedPtr
 
 	for (const auto& Pair : (*GroupsObj)->Values)
 	{
-		const FString& Group = Pair.Key;
+		const FString Group(Pair.Key.ToView());
 		const FProfile* Profile = Profiles.Find(Group);
 		if (!Profile)
 		{
@@ -2499,7 +2500,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateInterchangePipeline(const TSharedPt
 		for (const auto& Pair : (*OptionsObj)->Values)
 		{
 			// Caller key is a dotted path: "MeshPipeline.bImportSkeletalMeshes" etc.
-			const FString& Key = Pair.Key;
+			const FString Key(Pair.Key.ToView());
 			int32 Dot = INDEX_NONE;
 			Key.FindLastChar('.', Dot);
 			if (Dot == INDEX_NONE)

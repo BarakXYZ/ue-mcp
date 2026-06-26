@@ -1161,8 +1161,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		}
 	}
 
-	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
-	if (!ValueField || !(*ValueField).IsValid())
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
 	{
 		return MCPError(TEXT("Missing 'value' parameter"));
 	}
@@ -1174,7 +1174,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 	Prop->ExportText_Direct(PreviousValueStr, ValuePtr, ValuePtr, TargetComp, PPF_None);
 
 	FString ValueStr;
-	if ((*ValueField)->TryGetString(ValueStr))
+	if (ValueField->TryGetString(ValueStr))
 	{
 		// #121: resolve bare actor labels (e.g. TargetActor=BP_Portcullis) to full object paths
 		// so ImportText_Direct can resolve TObjectPtr<AActor> fields in struct arrays.
@@ -1223,7 +1223,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 	else
 	{
 		double NumValue;
-		if ((*ValueField)->TryGetNumber(NumValue))
+		if (ValueField->TryGetNumber(NumValue))
 		{
 			ValueStr = FString::SanitizeFloat(NumValue);
 			Prop->ImportText_Direct(*ValueStr, ValuePtr, TargetComp, PPF_None);
@@ -1231,7 +1231,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		else
 		{
 			bool BoolValue;
-			if ((*ValueField)->TryGetBool(BoolValue))
+			if (ValueField->TryGetBool(BoolValue))
 			{
 				ValueStr = BoolValue ? TEXT("true") : TEXT("false");
 				Prop->ImportText_Direct(*ValueStr, ValuePtr, TargetComp, PPF_None);
@@ -1241,7 +1241,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 				// #216: structured JSON values (objects/arrays). Drives UObject
 				// asset paths, FVector {x,y,z}, nested struct fields, etc.
 				FString SetErr;
-				if (!MCPJsonProperty::SetJsonOnProperty(Prop, ValuePtr, *ValueField, SetErr))
+				if (!MCPJsonProperty::SetJsonOnProperty(Prop, ValuePtr, ValueField, SetErr))
 				{
 					return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
 				}
@@ -1761,8 +1761,8 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetActorProperty(const TSharedPtr<FJsonOb
 	FString PropertyName;
 	if (auto Err = RequireString(Params, TEXT("propertyName"), PropertyName)) return Err;
 
-	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
-	if (!ValueField || !(*ValueField).IsValid())
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
 	{
 		return MCPError(TEXT("Missing 'value' parameter"));
 	}
@@ -1857,7 +1857,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetActorProperty(const TSharedPtr<FJsonOb
 	// If the JSON value is a string and the property is an object reference,
 	// try resolving the string as an actor label first so callers can write
 	// {value: "Hopper_01"} for AHopper* references.
-	TSharedPtr<FJsonValue> Value = *ValueField;
+	TSharedPtr<FJsonValue> Value = ValueField;
 	if (Value->Type == EJson::String)
 	{
 		FString S = Value->AsString();

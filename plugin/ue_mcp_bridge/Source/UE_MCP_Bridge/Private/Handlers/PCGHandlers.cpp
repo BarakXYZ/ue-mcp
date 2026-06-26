@@ -102,13 +102,14 @@ namespace
 			{
 				for (const auto& Pair : (*SubObj)->Values)
 				{
-					FProperty* SubProp = StructProp->Struct->FindPropertyByName(FName(*Pair.Key));
-					if (!SubProp) { OutError = FString::Printf(TEXT("struct field '%s' not found"), *Pair.Key); return false; }
+					const FString Key(Pair.Key.ToView());
+					FProperty* SubProp = StructProp->Struct->FindPropertyByName(FName(*Key));
+					if (!SubProp) { OutError = FString::Printf(TEXT("struct field '%s' not found"), *Key); return false; }
 					void* SubAddr = SubProp->ContainerPtrToValuePtr<void>(ValueAddr);
 					FString E;
 					if (!SetJsonOnProperty(SubProp, SubAddr, Pair.Value, E))
 					{
-						OutError = FString::Printf(TEXT("%s.%s: %s"), *StructProp->GetName(), *Pair.Key, *E); return false;
+						OutError = FString::Printf(TEXT("%s.%s: %s"), *StructProp->GetName(), *Key, *E); return false;
 					}
 				}
 				return true;
@@ -994,7 +995,7 @@ TSharedPtr<FJsonValue> FPCGHandlers::SetPCGNodeSettings(const TSharedPtr<FJsonOb
 	{
 		for (const auto& Pair : (*SettingsObj)->Values)
 		{
-			PropertiesToSet.Add(TPair<FString, TSharedPtr<FJsonValue>>(Pair.Key, Pair.Value));
+			PropertiesToSet.Emplace(FString(Pair.Key.ToView()), Pair.Value);
 		}
 	}
 	else
@@ -1750,13 +1751,14 @@ TSharedPtr<FJsonValue> FPCGHandlers::ImportGraph(const TSharedPtr<FJsonObject>& 
 			for (const auto& Pair : (*SettingsObj)->Values)
 			{
 				FString SubErr;
-				if (SetDottedPropertyFromJson(DefaultSettings, Pair.Key, Pair.Value, SubErr))
+				const FString SettingName(Pair.Key.ToView());
+				if (SetDottedPropertyFromJson(DefaultSettings, SettingName, Pair.Value, SubErr))
 				{
 					++SettingsApplied;
 				}
 				else
 				{
-					Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s' setting '%s': %s"), *LocalName, *Pair.Key, *SubErr)));
+					Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("node '%s' setting '%s': %s"), *LocalName, *SettingName, *SubErr)));
 				}
 			}
 			DefaultSettings->PostEditChange();
