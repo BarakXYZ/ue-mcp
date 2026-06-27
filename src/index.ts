@@ -59,8 +59,13 @@ async function main() {
       bridge.configure(project.bridgeHost, project.bridgePort);
       console.error(`[ue-mcp] Project loaded: ${project.projectName} (engine ${project.engineAssociation ?? "unknown"})`);
 
+      // #492: pass the .uproject path to the bridge so it can read the
+      // per-project port lockfile when connecting (lets multiple editors
+      // coexist on adjacent ports).
+      bridge.projectPathForLockfile = project.projectPath;
+
       // Non-destructive attach — never overwrites local bridge source.
-      // Source deployment is reserved for `ue-mcp init` / `ue-mcp update`.
+      // Source deployment is reserved for `ue-mcp init` / `ue-mcp deploy`.
       const result = attach(project);
       console.error(`[ue-mcp] ${attachSummary(result)}`);
     } catch (e) {
@@ -414,6 +419,12 @@ if (subcmd === "init") {
 } else if (subcmd === "update") {
   process.argv.splice(2, 1);
   import("./update.js");
+} else if (subcmd === "doctor") {
+  process.argv.splice(2, 1);
+  import("./doctor.js").then((m) => m.runDoctorCli());
+} else if (subcmd === "deploy") {
+  process.argv.splice(2, 1);
+  import("./deploy-cli.js");
 } else if (subcmd === "hook") {
   import("./hook-handler.js");
 } else if (subcmd === "uninstall-hooks") {
@@ -421,12 +432,20 @@ if (subcmd === "init") {
   import("./uninstall-hooks.js");
 } else if (subcmd === "auth") {
   process.argv.splice(2, 1);
-  import("./auth-cli.js");
+  // #620: invoked via the index.js bin, argv[1] is index.js so auth-cli's
+  // own "am I the entry point" guard never fires. Call the export directly.
+  import("./auth-cli.js").then((m) => m.runFeedbackAuthStep()).catch((e) => {
+    console.error(`[ue-mcp] auth failed: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
+  });
 } else if (subcmd === "feedback") {
   process.argv.splice(2, 1);
   import("./feedback-cli.js");
 } else if (subcmd === "resolve") {
   import("./resolve.js");
+} else if (subcmd === "build") {
+  process.argv.splice(2, 1);
+  import("./build-cli.js");
 } else if (subcmd === "plugin") {
   process.argv.splice(2, 1);
   import("./plugin-cli.js");

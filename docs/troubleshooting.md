@@ -91,6 +91,45 @@ UE-MCP expects Unreal-style asset paths:
     - Including file extensions (`.uasset`) — omit the extension
     - Missing the leading slash — `/Game/Foo`, not `Game/Foo`
 
+## Updates Don't Take Effect (server stuck on an old version)
+
+If `ue-mcp update` reports "already up to date" but the running server keeps reporting an old version, a project-local `node_modules/ue-mcp` is shadowing the global install:
+
+```bash
+ue-mcp doctor
+```
+
+```
+local shadow:   ./node_modules/ue-mcp @ 1.0.64   <-- WARN npx runs THIS, not global
+effective (npx):1.0.64  (behind latest 1.0.76)
+```
+
+When `ue-mcp` is a dependency in the project's `package.json`, `npx ue-mcp` runs the local copy, so `npm i -g ue-mcp@latest` updates a copy npx never uses. Fixes:
+
+- `ue-mcp update --build` aligns the local copy to latest automatically, or
+- remove `ue-mcp` from the project's `package.json` and delete `node_modules/ue-mcp`, or
+- pin `.mcp.json` to `npx -y ue-mcp@latest` so the server self-heals to latest on every launch.
+
+Then quit and relaunch your MCP client so it spawns the updated server.
+
+## A Fix Shipped but the Editor Behaves the Same (stale compiled plugin)
+
+Different from the case above. Here the version is correct - `ue-mcp doctor` shows latest, the server is up to date - but a fix that changes **editor behavior** (a dialog being auto-cancelled, an actor placed wrong, anything the C++ plugin does) still happens.
+
+Cause: the bridge's editor-side half is a C++ plugin shipped as source. Your editor runs the **compiled** version of it, and a plain `ue-mcp update` neither deploys the new source into your project nor recompiles it. The version `doctor` reports is the npm/server half, so it looks up to date while the loaded plugin is stale. The fix never reaches the editor.
+
+Fix: rebuild the plugin, then restart the editor so the new binary loads.
+
+```bash
+ue-mcp update --build
+```
+
+If `--build` reports success but the behavior still persists, force a clean rebuild (incremental builds and Live Coding can load stale patches over a fresh build):
+
+1. Delete `<Project>/Plugins/UE_MCP_Bridge/Binaries/` and `<Project>/Plugins/UE_MCP_Bridge/Intermediate/`.
+2. Delete any `*.patch_*.{dll,pdb,lib,exp}` under `<Project>/Binaries/Win64/`.
+3. Run `ue-mcp update --build` again, then restart the editor.
+
 ## Search Not Finding Assets
 
 If `asset(action="search")` misses assets in plugin directories:

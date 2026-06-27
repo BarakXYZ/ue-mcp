@@ -27,7 +27,7 @@ The wizard then:
 3. Copies the C++ bridge plugin into `<YourProject>/Plugins/UE_MCP_Bridge/`.
 4. Enables the plugins it needs in your `.uproject`: `UE_MCP_Bridge`, `PythonScriptPlugin`, plus any of `Niagara`, `PCG`, `GameplayAbilities`, `EnhancedInput` required by the categories you kept.
 5. Scaffolds an empty `ue-mcp.yml` (for custom flows) if missing.
-6. Detects installed MCP clients (Claude Code project + global, Claude Desktop, Cursor) and writes the config for each you confirm. Global/Desktop configs default unchecked since opting them in affects every project on the machine.
+6. Detects installed MCP clients (Claude Code project + global, Claude Desktop, Cursor, Codex) and writes the config for each you confirm. Global/Desktop configs default unchecked since opting them in affects every project on the machine.
 7. Asks about **agent behavior** (all default off on fresh installs — blasting through with Enter adds no surprises): enable the `feedback(submit)` tool, install the Claude-Code-only PostToolUse hook that nudges the agent to offer feedback after `execute_python`, install bundled Claude Code workflow skills.
 8. If you opted into the feedback prompt hook, optionally runs the **GitHub OAuth device flow** so `feedback(submit)` can author issues as your real GitHub user (default `author="user"`). The token is cached at `~/.ue-mcp/auth.json` (mode 600) and reused. Skip if you don't want it now — you can run `npx ue-mcp auth` later, or call `feedback(submit)` with `author="bot"` to post anonymously instead.
 9. Writes the final `ue-mcp.yml` and prints a recap of every file or directory init touched. Per-machine state (e.g. the list of Claude Code settings files where the feedback hook was installed) is kept under `~/.ue-mcp/`, not in the project tree.
@@ -99,11 +99,35 @@ See the [Tool Reference](tool-reference.md) for everything available.
 
 ## Updating
 
-Run from your project directory whenever a new UE-MCP version ships:
+Always update with `--build`, from a **plain terminal** (not your MCP client):
 
 ```bash
-npx ue-mcp update
+ue-mcp update --build          # update npm package, deploy plugin, rebuild editor
 ```
+
+The editor half is a C++ plugin that has to be recompiled, which `--build` handles. A bare `ue-mcp update` only bumps the npm package, so editor-side fixes never load until you rebuild.
+
+Then quit your MCP client and relaunch so it picks up the new server, and restart the editor so the rebuilt plugin loads.
+
+### `ue-mcp doctor`
+
+If an update "succeeds" but the running server keeps reporting an old version, run:
+
+```bash
+ue-mcp doctor
+```
+
+It prints every version source - registry latest, npm global, the running server(s), the deployed bridge plugin - and, crucially, flags a project-local `node_modules/ue-mcp` that **shadows** the global install. With `ue-mcp` pinned in a project's `package.json`, `npx ue-mcp` runs the local copy, so global updates do nothing. `doctor` surfaces that one-line root cause (and suggests pinning `.mcp.json` to `npx -y ue-mcp@latest` so the server self-heals on each launch). `ue-mcp update --build` aligns a stale local copy automatically.
+
+## Building the project
+
+To build your project's C++ code from the command line:
+
+```bash
+npx ue-mcp build
+```
+
+Stop the editor first. Pass a `.uproject` path if you're not in the project directory. AI agents can also trigger builds via `editor(action="build_project")`.
 
 ## Unattended agent sessions
 
@@ -182,7 +206,18 @@ If you'd rather skip `npx ue-mcp init`, edit the MCP client config yourself.
     }
     ```
 
-The first run auto-deploys the C++ plugin. To deploy explicitly: `npx ue-mcp update <path>`, then restart the editor.
+=== "Codex"
+
+    `~/.codex/config.toml`:
+    ```toml
+    [mcp_servers.ue-mcp]
+    command = "npx"
+    args = ["ue-mcp", "C:/path/to/MyGame.uproject"]
+    cwd = "C:/path/to"
+    enabled = true
+    ```
+
+The first run auto-deploys the C++ plugin. To deploy explicitly: `npx ue-mcp deploy`, then restart the editor.
 
 ## Where to next
 

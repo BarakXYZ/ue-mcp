@@ -1455,7 +1455,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 	TSharedPtr<FJsonObject> PreviousValues = MakeShared<FJsonObject>();
 	for (auto& Pair : Params->Values)
 	{
-		const FString Key(Pair.Key.ToView());
+		const FString Key(Pair.Key);
 		if (Key == TEXT("actorLabel") || Key == TEXT("action"))
 			continue;
 
@@ -1504,7 +1504,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 		Payload->SetStringField(TEXT("actorLabel"), ActorLabel);
 		for (auto& Prev : PreviousValues->Values)
 		{
-			Payload->SetField(Prev.Key.ToView(), Prev.Value);
+			Payload->SetField(Prev.Key, Prev.Value);
 		}
 		MCPSetRollback(Result, TEXT("set_volume_properties"), Payload);
 	}

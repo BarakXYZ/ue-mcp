@@ -167,11 +167,12 @@ uint32 FMCPBridgeServer::Run()
 	int32 NoDelay = 1;
 	setsockopt(ServerSocketFD, IPPROTO_TCP, TCP_NODELAY, (char*)&NoDelay, sizeof(NoDelay));
 
-	// Bind socket
+	// Bind socket to loopback only. The bridge exposes editor mutation tools and
+	// has no network authentication, so it must not listen on every interface.
 	sockaddr_in ServerAddr;
 	FMemory::Memset(&ServerAddr, 0, sizeof(ServerAddr));
 	ServerAddr.sin_family = AF_INET;
-	ServerAddr.sin_addr.s_addr = INADDR_ANY;
+	ServerAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	ServerAddr.sin_port = htons(ServerPort);
 
 	if (bind(ServerSocketFD, (sockaddr*)&ServerAddr, sizeof(ServerAddr)) < 0)
@@ -205,7 +206,7 @@ uint32 FMCPBridgeServer::Run()
 		return 1;
 	}
 
-	UE_LOG(LogMCPBridge, Log, TEXT("[UE-MCP] Bridge listening on ws://localhost:%d"), ServerPort);
+	UE_LOG(LogMCPBridge, Log, TEXT("[UE-MCP] Bridge listening on ws://127.0.0.1:%d (loopback only)"), ServerPort);
 	bIsRunning = true;
 
 	// Accept connections

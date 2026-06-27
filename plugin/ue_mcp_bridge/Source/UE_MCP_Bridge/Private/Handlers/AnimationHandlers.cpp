@@ -11,6 +11,8 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/BlendSpace.h"
+#include "Animation/BlendSpace1D.h"
+#include "Factories/BlendSpaceFactory1D.h"
 #include "Animation/AnimComposite.h"
 #include "PoseSearch/PoseSearchDatabase.h"
 #include "PoseSearch/PoseSearchSchema.h"
@@ -57,6 +59,7 @@
 
 // Control Rig (#11) — ControlRigBlueprint removed in UE 5.7, use reflection
 #include "ControlRig.h"
+#include "Rigs/RigHierarchy.h"
 
 // Curve identifiers for UE5 animation data controller
 #include "Animation/AnimCurveTypes.h"
@@ -72,15 +75,23 @@ void FAnimationHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("read_anim_blueprint"), &ReadAnimBlueprint);
 	Registry.RegisterHandler(TEXT("read_anim_montage"), &ReadAnimMontage);
 	Registry.RegisterHandler(TEXT("read_anim_sequence"), &ReadAnimSequence);
+	Registry.RegisterHandler(TEXT("scan_animation_tracks"), &ScanAnimationTracks);
 	Registry.RegisterHandler(TEXT("create_anim_blueprint"), &CreateAnimBlueprint);
 	Registry.RegisterHandler(TEXT("create_anim_montage"), &CreateMontage);
 	Registry.RegisterHandler(TEXT("create_blendspace"), &CreateBlendspace);
+	Registry.RegisterHandler(TEXT("create_blendspace_1d"), &CreateBlendspace1D);
 	Registry.RegisterHandler(TEXT("add_blend_sample"), &AddBlendSample);
 	Registry.RegisterHandler(TEXT("set_blend_sample"), &SetBlendSample);
 	Registry.RegisterHandler(TEXT("read_blendspace"), &ReadBlendspace);
+	// #459: configure axis params + bulk-add samples in one call.
+	Registry.RegisterHandler(TEXT("populate_blendspace"), &PopulateBlendspace);
+	Registry.RegisterHandler(TEXT("populate_blendspace_1d"), &PopulateBlendspace);
 	Registry.RegisterHandler(TEXT("add_anim_notify"), &AddAnimNotify);
+	Registry.RegisterHandler(TEXT("remove_anim_notify"), &RemoveAnimNotify);
+	Registry.RegisterHandler(TEXT("remove_animation_notify"), &RemoveAnimNotify);
 	Registry.RegisterHandler(TEXT("create_sequence"), &CreateSequence);
 	Registry.RegisterHandler(TEXT("set_bone_keyframes"), &SetBoneKeyframes);
+	Registry.RegisterHandler(TEXT("bake_keyframes_batch"), &BakeKeyframesBatch);
 	Registry.RegisterHandler(TEXT("get_bone_transforms"), &GetBoneTransforms);
 	Registry.RegisterHandler(TEXT("set_montage_sequence"), &SetMontageSequence);
 	Registry.RegisterHandler(TEXT("set_montage_properties"), &SetMontageProperties);
@@ -109,6 +120,7 @@ void FAnimationHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 
 	// Control Rig (#11)
 	Registry.RegisterHandler(TEXT("list_control_rig_variables"), &ListControlRigVariables);
+	Registry.RegisterHandler(TEXT("read_control_rig_hierarchy"), &ReadControlRigHierarchy);
 
 	// v0.7.11 — depth
 	Registry.RegisterHandler(TEXT("set_root_motion_settings"), &SetRootMotionSettings);
@@ -266,14 +278,14 @@ TSharedPtr<FJsonValue> FAnimationHandlers::ListSockets(const TSharedPtr<FJsonObj
 	auto Result = MCPSuccess();
 
 	TArray<TSharedPtr<FJsonValue>> SocketsArray;
-	const TArray<USkeletalMeshSocket*>& Sockets = Skeleton->Sockets;
-	for (const USkeletalMeshSocket* Socket : Sockets)
+	auto AppendSocket = [&SocketsArray](const USkeletalMeshSocket* Socket, const TCHAR* Source)
 	{
-		if (!Socket) continue;
+		if (!Socket) return;
 
 		TSharedPtr<FJsonObject> SocketObj = MakeShared<FJsonObject>();
 		SocketObj->SetStringField(TEXT("name"), Socket->SocketName.ToString());
 		SocketObj->SetStringField(TEXT("boneName"), Socket->BoneName.ToString());
+		SocketObj->SetStringField(TEXT("source"), Source);
 
 		TSharedPtr<FJsonObject> LocationObj = MakeShared<FJsonObject>();
 		LocationObj->SetNumberField(TEXT("x"), Socket->RelativeLocation.X);
@@ -294,6 +306,16 @@ TSharedPtr<FJsonValue> FAnimationHandlers::ListSockets(const TSharedPtr<FJsonObj
 		SocketObj->SetObjectField(TEXT("relativeScale"), ScaleObj);
 
 		SocketsArray.Add(MakeShared<FJsonValueObject>(SocketObj));
+	};
+
+	for (const USkeletalMeshSocket* Socket : SkeletalMesh->GetMeshOnlySocketList())
+	{
+		AppendSocket(Socket, TEXT("mesh"));
+	}
+
+	for (const USkeletalMeshSocket* Socket : Skeleton->Sockets)
+	{
+		AppendSocket(Socket, TEXT("skeleton"));
 	}
 
 	Result->SetArrayField(TEXT("sockets"), SocketsArray);
@@ -743,9 +765,24 @@ TSharedPtr<FJsonValue> FAnimationHandlers::AddAnimNotify(const TSharedPtr<FJsonO
 	if (NewNotify)
 	{
 		NewEvent.Notify = NewNotify;
+
+		// #528: UAnimNotify_PlayMontageNotify::BranchingPointNotify broadcasts the
+		// NOTIFY OBJECT's own NotifyName, not the FAnimNotifyEvent's. We only set
+		// the event name above, so any name-based routing in user code received
+		// 'None'. Mirror the requested name onto the notify object's NotifyName
+		// property (present on PlayMontageNotify / PlayMontageNotifyWindow) so
+		// OnPlayMontageNotifyBegin broadcasts the correct name.
+		if (FNameProperty* NameProp = CastField<FNameProperty>(NewNotify->GetClass()->FindPropertyByName(TEXT("NotifyName"))))
+		{
+			NameProp->SetPropertyValue_InContainer(NewNotify, NotifyFName);
+		}
 	}
 
 	AnimAsset->SortNotifies();
+
+	// #528: PostEditChange + save rebuilds the montage's branching-point markers
+	// from the notifies (RefreshBranchingPointMarkers itself is private), so the
+	// notify fires as a branching point with the name just written.
 	AnimAsset->PostEditChange();
 	AnimAsset->MarkPackageDirty();
 
@@ -761,8 +798,87 @@ TSharedPtr<FJsonValue> FAnimationHandlers::AddAnimNotify(const TSharedPtr<FJsonO
 	{
 		Result->SetStringField(TEXT("notifyClass"), NewNotify->GetClass()->GetName());
 	}
-	// No rollback: no paired remove_anim_notify handler yet.
+	// #471: paired remove handler now exists.
+	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("assetPath"), AssetPath);
+	Payload->SetStringField(TEXT("notifyName"), NotifyName);
+	MCPSetRollback(Result, TEXT("remove_anim_notify"), Payload);
 
+	return MCPResult(Result);
+}
+
+// #471: remove notifies by name (and optionally by class). Idempotent -
+// returns alreadyDeleted=true if no matching notifies exist. Useful for
+// ability/montage migration scripts that need to prune obsolete notify
+// instances (AuraFireLoopReady, AuraFire, etc.) before adding new ones.
+//
+// Params: assetPath, notifyName? (string), notifyClass? (string class name
+//         or AnimNotify_ prefixed). Pass either or both - both filters
+//         apply (AND). Returns the count and timestamps of removed
+//         instances.
+TSharedPtr<FJsonValue> FAnimationHandlers::RemoveAnimNotify(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	FString NotifyName = OptionalString(Params, TEXT("notifyName"));
+	FString NotifyClassName = OptionalString(Params, TEXT("notifyClass"));
+	if (NotifyName.IsEmpty() && NotifyClassName.IsEmpty())
+	{
+		return MCPError(TEXT("Pass at least one of 'notifyName' or 'notifyClass'"));
+	}
+
+	UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UAnimSequenceBase* AnimAsset = Cast<UAnimSequenceBase>(LoadedAsset);
+	if (!AnimAsset)
+	{
+		return MCPError(FString::Printf(TEXT("Failed to load AnimSequenceBase at '%s'"), *AssetPath));
+	}
+
+	UClass* MatchClass = nullptr;
+	if (!NotifyClassName.IsEmpty())
+	{
+		MatchClass = FindFirstObject<UClass>(*NotifyClassName);
+		if (!MatchClass) MatchClass = FindFirstObject<UClass>(*(TEXT("AnimNotify_") + NotifyClassName));
+	}
+
+	const FName NotifyFName(*NotifyName);
+	TArray<TSharedPtr<FJsonValue>> RemovedTimes;
+	for (int32 i = AnimAsset->Notifies.Num() - 1; i >= 0; --i)
+	{
+		const FAnimNotifyEvent& E = AnimAsset->Notifies[i];
+		const bool bNameMatches = NotifyName.IsEmpty() || E.NotifyName == NotifyFName;
+		const bool bClassMatches = NotifyClassName.IsEmpty() ||
+			(E.Notify && MatchClass && E.Notify->GetClass()->IsChildOf(MatchClass));
+		if (bNameMatches && bClassMatches)
+		{
+			RemovedTimes.Add(MakeShared<FJsonValueNumber>(E.GetTime()));
+			AnimAsset->Notifies.RemoveAt(i);
+		}
+	}
+
+	if (RemovedTimes.Num() == 0)
+	{
+		auto Noop = MCPSuccess();
+		Noop->SetBoolField(TEXT("alreadyDeleted"), true);
+		Noop->SetStringField(TEXT("assetPath"), AssetPath);
+		Noop->SetStringField(TEXT("notifyName"), NotifyName);
+		Noop->SetStringField(TEXT("notifyClass"), NotifyClassName);
+		return MCPResult(Noop);
+	}
+
+	AnimAsset->SortNotifies();
+	AnimAsset->PostEditChange();
+	AnimAsset->MarkPackageDirty();
+	UEditorAssetLibrary::SaveAsset(AssetPath);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("notifyName"), NotifyName);
+	Result->SetStringField(TEXT("notifyClass"), NotifyClassName);
+	Result->SetNumberField(TEXT("removedCount"), RemovedTimes.Num());
+	Result->SetArrayField(TEXT("removedTimes"), RemovedTimes);
 	return MCPResult(Result);
 }
 
@@ -822,6 +938,183 @@ TSharedPtr<FJsonValue> FAnimationHandlers::CreateBlendspace(const TSharedPtr<FJs
 	Result->SetStringField(TEXT("axisVertical"), AxisVertical);
 	MCPSetDeleteAssetRollback(Result, BlendSpace->GetPathName());
 
+	return MCPResult(Result);
+}
+
+// #459: explicit BlendSpace1D creation. Single-axis locomotion blendspaces
+// (speed → walk/run) are the most common authoring path; the 2D create
+// handler creates a UBlendSpace which won't behave as 1D.
+TSharedPtr<FJsonValue> FAnimationHandlers::CreateBlendspace1D(const TSharedPtr<FJsonObject>& Params)
+{
+	FString Name;
+	if (auto Err = RequireString(Params, TEXT("name"), Name)) return Err;
+	FString SkeletonPath;
+	if (auto Err = RequireString(Params, TEXT("skeletonPath"), SkeletonPath)) return Err;
+
+	FString PackagePath = OptionalString(Params, TEXT("packagePath"), TEXT("/Game/Animations"));
+	FString AxisName = OptionalString(Params, TEXT("axisName"), TEXT("Speed"));
+	const FString OnConflict = OptionalString(Params, TEXT("onConflict"), TEXT("skip"));
+
+	const double AxisMin = OptionalNumber(Params, TEXT("axisMin"), 0.0);
+	const double AxisMax = OptionalNumber(Params, TEXT("axisMax"), 500.0);
+	const int32 GridNum = (int32)OptionalNumber(Params, TEXT("gridNum"), 4.0);
+
+	USkeleton* Skeleton = Cast<USkeleton>(UEditorAssetLibrary::LoadAsset(SkeletonPath));
+	if (!Skeleton) return MCPError(FString::Printf(TEXT("Failed to load Skeleton at '%s'"), *SkeletonPath));
+
+	UBlendSpaceFactory1D* Factory = NewObject<UBlendSpaceFactory1D>();
+	Factory->TargetSkeleton = Skeleton;
+
+	auto Created = MCPCreateAssetIdempotent<UBlendSpace1D>(Name, PackagePath, OnConflict, TEXT("BlendSpace1D"), Factory);
+	if (Created.EarlyReturn) return Created.EarlyReturn;
+
+	UBlendSpace1D* BS = Created.Asset;
+	FBlendParameter& BlendParam0 = const_cast<FBlendParameter&>(BS->GetBlendParameter(0));
+	BlendParam0.DisplayName = AxisName;
+	BlendParam0.Min = AxisMin;
+	BlendParam0.Max = AxisMax;
+	BlendParam0.GridNum = GridNum;
+
+	UEditorAssetLibrary::SaveAsset(BS->GetPathName());
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("path"), BS->GetPathName());
+	Result->SetStringField(TEXT("name"), BS->GetName());
+	Result->SetStringField(TEXT("class"), BS->GetClass()->GetName());
+	Result->SetStringField(TEXT("axisName"), AxisName);
+	MCPSetDeleteAssetRollback(Result, BS->GetPathName());
+	return MCPResult(Result);
+}
+
+// #459: one-call axis-params + samples authoring. Replaces the
+// "for each sample, call add_blend_sample" loop and the separate axis
+// configuration in CreateBlendspace - the canonical locomotion authoring
+// flow is "set axis name/range, plot samples at coordinates, save". Works
+// for both UBlendSpace (1D and 2D) and UBlendSpace1D.
+//
+// Params: assetPath, axis (object: { name?, min?, max?, gridNum? }) OR
+//         axisHorizontal/axisVertical with min/max/gridNum (2D-only),
+//         samples: [{ animationPath, x, y? }], clearExisting? (default true).
+TSharedPtr<FJsonValue> FAnimationHandlers::PopulateBlendspace(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	UBlendSpace* BS = LoadAssetByPath<UBlendSpace>(AssetPath);
+	if (!BS) return MCPError(FString::Printf(TEXT("BlendSpace not found at '%s'"), *AssetPath));
+
+	BS->Modify();
+
+	// Apply axis params. Three accepted shapes:
+	// 1. `axis: { name?, min?, max?, gridNum? }` - applies to axis 0 (or pass `axisIndex`).
+	// 2. `axes: [ {...}, {...} ]` - per-axis array.
+	// 3. Top-level axisHorizontal/axisVertical + horizontalMin/horizontalMax/gridNumHorizontal etc.
+	auto ApplyAxis = [&](int32 AxisIdx, const TSharedPtr<FJsonObject>& AxisObj)
+	{
+		FBlendParameter& BP = const_cast<FBlendParameter&>(BS->GetBlendParameter(AxisIdx));
+		FString S; double D = 0; int32 I = 0;
+		if (AxisObj->TryGetStringField(TEXT("name"), S)) BP.DisplayName = S;
+		if (AxisObj->TryGetNumberField(TEXT("min"), D)) BP.Min = D;
+		if (AxisObj->TryGetNumberField(TEXT("max"), D)) BP.Max = D;
+		if (AxisObj->TryGetNumberField(TEXT("gridNum"), I)) BP.GridNum = I;
+	};
+
+	const TArray<TSharedPtr<FJsonValue>>* AxesArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("axes"), AxesArr) && AxesArr)
+	{
+		for (int32 i = 0; i < AxesArr->Num(); ++i)
+		{
+			const TSharedPtr<FJsonObject>* AxisObj = nullptr;
+			if ((*AxesArr)[i]->TryGetObject(AxisObj) && *AxisObj) ApplyAxis(i, *AxisObj);
+		}
+	}
+	const TSharedPtr<FJsonObject>* AxisObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("axis"), AxisObj) && *AxisObj)
+	{
+		int32 AxisIdx = (int32)OptionalNumber(Params, TEXT("axisIndex"), 0.0);
+		ApplyAxis(AxisIdx, *AxisObj);
+	}
+
+	// Top-level back-compat shape (same keys as create_blendspace).
+	{
+		FBlendParameter& BP0 = const_cast<FBlendParameter&>(BS->GetBlendParameter(0));
+		FString S; double D = 0;
+		if (Params->TryGetStringField(TEXT("axisHorizontal"), S)) BP0.DisplayName = S;
+		if (Params->TryGetNumberField(TEXT("horizontalMin"), D)) BP0.Min = D;
+		if (Params->TryGetNumberField(TEXT("horizontalMax"), D)) BP0.Max = D;
+		int32 I = 0;
+		if (Params->TryGetNumberField(TEXT("gridNumHorizontal"), I)) BP0.GridNum = I;
+
+		// Only touch axis 1 if the asset has one (BlendSpace1D returns a stub for index 1 in some versions).
+		const bool bIs1D = BS->IsA<UBlendSpace1D>();
+		if (!bIs1D)
+		{
+			FBlendParameter& BP1 = const_cast<FBlendParameter&>(BS->GetBlendParameter(1));
+			if (Params->TryGetStringField(TEXT("axisVertical"), S)) BP1.DisplayName = S;
+			if (Params->TryGetNumberField(TEXT("verticalMin"), D)) BP1.Min = D;
+			if (Params->TryGetNumberField(TEXT("verticalMax"), D)) BP1.Max = D;
+			if (Params->TryGetNumberField(TEXT("gridNumVertical"), I)) BP1.GridNum = I;
+		}
+	}
+
+	// Clear existing samples (default true) so partial-replace edits don't
+	// pile up stale entries. Set clearExisting=false to append-only.
+	const bool bClear = OptionalBool(Params, TEXT("clearExisting"), true);
+	if (bClear)
+	{
+		const int32 SampleCount = BS->GetNumberOfBlendSamples();
+		for (int32 i = SampleCount - 1; i >= 0; --i)
+		{
+			BS->DeleteSample(i);
+		}
+	}
+
+	// Add samples.
+	TArray<TSharedPtr<FJsonValue>> AddedIndices;
+	TArray<TSharedPtr<FJsonValue>> Failed;
+	const TArray<TSharedPtr<FJsonValue>>* SamplesArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("samples"), SamplesArr) && SamplesArr)
+	{
+		for (const TSharedPtr<FJsonValue>& V : *SamplesArr)
+		{
+			const TSharedPtr<FJsonObject>* SObj = nullptr;
+			if (!V->TryGetObject(SObj) || !*SObj) continue;
+			FString AnimPath;
+			if (!(*SObj)->TryGetStringField(TEXT("animationPath"), AnimPath))
+				if (!(*SObj)->TryGetStringField(TEXT("animation"), AnimPath))
+					(*SObj)->TryGetStringField(TEXT("path"), AnimPath);
+			if (AnimPath.IsEmpty()) continue;
+			UAnimSequence* Anim = LoadAssetByPath<UAnimSequence>(AnimPath);
+			if (!Anim)
+			{
+				Failed.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("anim not found: %s"), *AnimPath)));
+				continue;
+			}
+			double X = 0, Y = 0;
+			(*SObj)->TryGetNumberField(TEXT("x"), X);
+			(*SObj)->TryGetNumberField(TEXT("y"), Y);
+			const int32 Idx = BS->AddSample(Anim, FVector((float)X, (float)Y, 0.0f));
+			if (Idx < 0)
+			{
+				Failed.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("rejected (%.3f, %.3f) for %s"), X, Y, *AnimPath)));
+				continue;
+			}
+			AddedIndices.Add(MakeShared<FJsonValueNumber>(Idx));
+		}
+	}
+
+	BS->PostEditChange();
+	BS->MarkPackageDirty();
+	UEditorAssetLibrary::SaveLoadedAsset(BS, /*bOnlyIfIsDirty*/ true);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("assetPath"), BS->GetPathName());
+	Result->SetStringField(TEXT("class"), BS->GetClass()->GetName());
+	Result->SetArrayField(TEXT("sampleIndices"), AddedIndices);
+	Result->SetNumberField(TEXT("sampleCount"), BS->GetNumberOfBlendSamples());
+	if (Failed.Num() > 0) Result->SetArrayField(TEXT("failed"), Failed);
 	return MCPResult(Result);
 }
 
@@ -1409,6 +1702,48 @@ TSharedPtr<FJsonValue> FAnimationHandlers::ListControlRigVariables(const TShared
 	}
 	Result->SetArrayField(TEXT("graphs"), GraphsArray);
 
+	return MCPResult(Result);
+}
+
+// #619 read_control_rig_hierarchy - per-element hierarchy metadata (name, type,
+// index, parent) from a Control Rig asset's URigHierarchy. ControlRigBlueprint
+// is gone in 5.7, so reach the 'Hierarchy' UPROPERTY via reflection.
+TSharedPtr<FJsonValue> FAnimationHandlers::ReadControlRigHierarchy(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UBlueprint* CRBlueprint = Cast<UBlueprint>(LoadedAsset);
+	if (!CRBlueprint) return MCPError(FString::Printf(TEXT("Failed to load Blueprint at '%s'"), *AssetPath));
+
+	FObjectProperty* HierProp = CastField<FObjectProperty>(CRBlueprint->GetClass()->FindPropertyByName(TEXT("Hierarchy")));
+	if (!HierProp) return MCPError(TEXT("Asset has no 'Hierarchy' property - is this a Control Rig?"));
+
+	URigHierarchy* Hierarchy = Cast<URigHierarchy>(HierProp->GetObjectPropertyValue_InContainer(CRBlueprint));
+	if (!Hierarchy) return MCPError(TEXT("Control Rig Hierarchy is null"));
+
+	const UEnum* TypeEnum = StaticEnum<ERigElementType>();
+	TArray<TSharedPtr<FJsonValue>> Elements;
+	for (const FRigElementKey& Key : Hierarchy->GetAllKeys(/*bTraverse=*/true))
+	{
+		TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+		E->SetStringField(TEXT("name"), Key.Name.ToString());
+		E->SetStringField(TEXT("type"), TypeEnum ? TypeEnum->GetNameStringByValue((int64)Key.Type) : FString::FromInt((int32)Key.Type));
+		E->SetNumberField(TEXT("index"), Hierarchy->GetIndex(Key));
+		const FRigElementKey Parent = Hierarchy->GetFirstParent(Key);
+		if (Parent.IsValid())
+		{
+			E->SetStringField(TEXT("parent"), Parent.Name.ToString());
+			E->SetStringField(TEXT("parentType"), TypeEnum ? TypeEnum->GetNameStringByValue((int64)Parent.Type) : FString());
+		}
+		Elements.Add(MakeShared<FJsonValueObject>(E));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetNumberField(TEXT("elementCount"), Elements.Num());
+	Result->SetArrayField(TEXT("elements"), Elements);
 	return MCPResult(Result);
 }
 

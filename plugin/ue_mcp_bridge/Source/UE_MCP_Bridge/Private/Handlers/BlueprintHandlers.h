@@ -35,6 +35,10 @@ private:
 	static TSharedPtr<FJsonValue> SetNodeProperty(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ListGraphs(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetComponentProperty(const TSharedPtr<FJsonObject>& Params);
+	// #442: dedicated OverrideMaterials writer for mesh-component templates.
+	static TSharedPtr<FJsonValue> SetComponentOverrideMaterials(const TSharedPtr<FJsonObject>& Params);
+	// #457: timeline track authoring (float / vector / linear-color / event).
+	static TSharedPtr<FJsonValue> AddTimelineTrack(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetClassDefault(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> RemoveComponent(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> DeleteVariable(const TSharedPtr<FJsonObject>& Params);
@@ -67,6 +71,8 @@ private:
 
 	// v0.7.18 issue #138: reparent a Blueprint to a new parent class.
 	static TSharedPtr<FJsonValue> ReparentBlueprint(const TSharedPtr<FJsonObject>& Params);
+	// #580 flush orphaned InheritableComponentHandler override records
+	static TSharedPtr<FJsonValue> FlushInheritableComponentHandler(const TSharedPtr<FJsonObject>& Params);
 
 	// issues #182/#183: C++ class CDO property access
 	static TSharedPtr<FJsonValue> SetCdoProperty(const TSharedPtr<FJsonObject>& Params);

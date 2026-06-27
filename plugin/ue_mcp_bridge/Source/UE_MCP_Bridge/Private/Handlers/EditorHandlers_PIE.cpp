@@ -498,6 +498,24 @@ namespace
 		if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop)) { Out->SetNumberField(Field, DP->GetPropertyValue(ValuePtr)); return true; }
 		if (FNameProperty* NP = CastField<FNameProperty>(Prop))   { Out->SetStringField(Field, NP->GetPropertyValue(ValuePtr).ToString()); return true; }
 		if (FTextProperty* TP = CastField<FTextProperty>(Prop))   { Out->SetStringField(Field, TP->GetPropertyValue(ValuePtr).ToString()); return true; }
+		// #598: soft refs derive from FObjectPropertyBase but GetObjectPropertyValue
+		// returns null when the target is not loaded - reporting a false "None".
+		// Read the soft path string instead so unloaded soft refs report their path.
+		if (FSoftObjectProperty* SoftObjP = CastField<FSoftObjectProperty>(Prop))
+		{
+			const FSoftObjectPtr& Ptr = SoftObjP->GetPropertyValue(ValuePtr);
+			const FString PathStr = Ptr.ToString();
+			if (PathStr.IsEmpty()) { Out->SetField(Field, MakeShared<FJsonValueNull>()); }
+			else { Out->SetStringField(Field, PathStr); }
+			return true;
+		}
+		if (FSoftClassProperty* SoftClsP = CastField<FSoftClassProperty>(Prop))
+		{
+			const FString PathStr = SoftClsP->GetPropertyValue(ValuePtr).ToString();
+			if (PathStr.IsEmpty()) { Out->SetField(Field, MakeShared<FJsonValueNull>()); }
+			else { Out->SetStringField(Field, PathStr); }
+			return true;
+		}
 		if (FObjectPropertyBase* OP = CastField<FObjectPropertyBase>(Prop))
 		{
 			UObject* Obj = OP->GetObjectPropertyValue(ValuePtr);
@@ -677,15 +695,26 @@ TSharedPtr<FJsonValue> FEditorHandlers::GetRuntimeValues(const TSharedPtr<FJsonO
 		AActor* Actor = *It;
 		if (!Actor) continue;
 
-		// classFilter empty => every actor. Match against actor class OR any
-		// component class so callers can target component types directly.
-		bool bActorMatch = ClassFilter.IsEmpty() || Actor->GetClass()->GetName() == ClassFilter;
+		// classFilter empty => every actor. #569: match by substring (not exact)
+		// against actor class OR any component class, walking the parent-class
+		// chain, so a filter like "Character" matches "BP_MyCharacter_C" and a
+		// base-class filter matches subclasses. Exact match never hit PIE _C names.
+		auto ClassMatches = [&ClassFilter](UClass* Cls) -> bool
+		{
+			if (ClassFilter.IsEmpty()) return true;
+			for (UClass* C = Cls; C; C = C->GetSuperClass())
+			{
+				if (C->GetName().Contains(ClassFilter)) return true;
+			}
+			return false;
+		};
+		bool bActorMatch = ClassFilter.IsEmpty() || ClassMatches(Actor->GetClass());
 		UActorComponent* ComponentMatch = nullptr;
 		if (!bActorMatch)
 		{
 			for (UActorComponent* Comp : Actor->GetComponents())
 			{
-				if (Comp && Comp->GetClass()->GetName() == ClassFilter)
+				if (Comp && ClassMatches(Comp->GetClass()))
 				{
 					ComponentMatch = Comp;
 					bActorMatch = true;
@@ -1010,6 +1039,185 @@ TSharedPtr<FJsonValue> FEditorHandlers::InvokeFunction(const TSharedPtr<FJsonObj
 	{
 		It->DestroyValue_InContainer(ParamBuf.GetData());
 	}
+	return MCPResult(Result);
+}
+
+// Call a static UFUNCTION on a UBlueprintFunctionLibrary, with no actor
+// instance. invoke_function can only reach functions that live on an actor or
+// component; the static *_BlueprintOnly libraries (Voxel sculpt/query/stamp,
+// GeometryScript, Kismet math, etc.) have no instance to target, which
+// previously forced execute_python. This resolves the library class, runs the
+// call on its CDO, and reuses the same arg/return marshalling as InvokeFunction.
+//
+// Params: className (short name or /Script/Module.Class path), functionName,
+// args? (name -> JSON value), actorArgs? (name -> actor label, for UObject*
+// params that are actors), worldContextParam? (name of a UObject* param to fill
+// with the editor/PIE world; auto-detected for params named WorldContextObject),
+// world? (editor|pie). Returns return/out params under returnValues.
+TSharedPtr<FJsonValue> FEditorHandlers::InvokeStaticFunction(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ClassName;
+	if (auto Err = RequireString(Params, TEXT("className"), ClassName)) return Err;
+	FString FunctionName;
+	if (auto Err = RequireString(Params, TEXT("functionName"), FunctionName)) return Err;
+
+	const FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor")).ToLower();
+	UWorld* World = nullptr;
+	if (WorldScope == TEXT("pie"))
+	{
+		FWorldContext* PieCtx = GEditor ? GEditor->GetPIEWorldContext() : nullptr;
+		World = PieCtx ? PieCtx->World() : nullptr;
+		if (!World) return MCPError(TEXT("PIE not running - cannot invoke against PIE world"));
+	}
+	else
+	{
+		World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+		if (!World) return MCPError(TEXT("No editor world available"));
+	}
+
+	// Resolve the function-library class: a /Script/Module.Class path, or a bare
+	// class name (with or without the leading U).
+	UClass* LibClass = nullptr;
+	if (ClassName.Contains(TEXT(".")) || ClassName.StartsWith(TEXT("/")))
+	{
+		LibClass = LoadObject<UClass>(nullptr, *ClassName);
+	}
+	if (!LibClass)
+	{
+		FString Bare = ClassName;
+		Bare.RemoveFromStart(TEXT("U"));
+		LibClass = FindFirstObject<UClass>(*Bare, EFindFirstObjectOptions::NativeFirst);
+	}
+	if (!LibClass)
+	{
+		return MCPError(FString::Printf(TEXT("Function library class not found: %s"), *ClassName));
+	}
+
+	UObject* CDO = LibClass->GetDefaultObject();
+	if (!CDO) return MCPError(FString::Printf(TEXT("No CDO for class %s"), *LibClass->GetName()));
+
+	UFunction* Func = LibClass->FindFunctionByName(FName(*FunctionName));
+	if (!Func) return MCPError(FString::Printf(TEXT("Static function '%s' not found on %s"), *FunctionName, *LibClass->GetName()));
+
+	TArray<uint8> ParamBuf;
+	ParamBuf.SetNumZeroed(Func->ParmsSize);
+	for (TFieldIterator<FProperty> It(Func); It && (It->PropertyFlags & CPF_Parm); ++It)
+	{
+		It->InitializeValue_InContainer(ParamBuf.GetData());
+	}
+
+	auto Cleanup = [&]()
+	{
+		for (TFieldIterator<FProperty> It(Func); It && (It->PropertyFlags & CPF_Parm); ++It)
+		{
+			It->DestroyValue_InContainer(ParamBuf.GetData());
+		}
+	};
+
+	const TSharedPtr<FJsonObject>* ArgObj = nullptr;
+	Params->TryGetObjectField(TEXT("args"), ArgObj);
+	if (ArgObj && (*ArgObj).IsValid())
+	{
+		for (TFieldIterator<FProperty> It(Func); It && (It->PropertyFlags & CPF_Parm); ++It)
+		{
+			FProperty* P = *It;
+			if (P->PropertyFlags & CPF_ReturnParm) continue;
+			if ((P->PropertyFlags & CPF_OutParm) && !(P->PropertyFlags & CPF_ReferenceParm)) continue;
+			TSharedPtr<FJsonValue> Val = (*ArgObj)->TryGetField(P->GetName());
+			if (!Val.IsValid()) continue;
+			void* PtrAddr = P->ContainerPtrToValuePtr<void>(ParamBuf.GetData());
+			FString E;
+			if (!MCPJsonProperty::SetJsonOnProperty(P, PtrAddr, Val, E))
+			{
+				Cleanup();
+				return MCPError(FString::Printf(TEXT("Argument '%s': %s"), *P->GetName(), *E));
+			}
+		}
+	}
+
+	// actorArgs: UObject* params resolved from live actor labels (e.g. the sculpt
+	// actor that a Voxel sculpt op operates on).
+	const TSharedPtr<FJsonObject>* ActorArgObj = nullptr;
+	Params->TryGetObjectField(TEXT("actorArgs"), ActorArgObj);
+	if (ActorArgObj && (*ActorArgObj).IsValid())
+	{
+		for (TFieldIterator<FProperty> It(Func); It && (It->PropertyFlags & CPF_Parm); ++It)
+		{
+			FProperty* P = *It;
+			if (P->PropertyFlags & CPF_ReturnParm) continue;
+			FObjectProperty* OP = CastField<FObjectProperty>(P);
+			if (!OP) continue;
+			FString ActorArgLabel;
+			if (!(*ActorArgObj)->TryGetStringField(P->GetName(), ActorArgLabel) || ActorArgLabel.IsEmpty()) continue;
+			AActor* RefActor = FindActorByLabel(World, ActorArgLabel);
+			if (!RefActor)
+			{
+				Cleanup();
+				return MCPError(FString::Printf(TEXT("actorArgs[%s]: actor '%s' not found in %s world"), *P->GetName(), *ActorArgLabel, WorldScope == TEXT("pie") ? TEXT("PIE") : TEXT("editor")));
+			}
+			if (!RefActor->IsA(OP->PropertyClass))
+			{
+				if (OP->PropertyClass->IsChildOf(UActorComponent::StaticClass()))
+				{
+					UActorComponent* MatchedComp = nullptr;
+					for (UActorComponent* Comp : RefActor->GetComponents())
+					{
+						if (Comp && Comp->IsA(OP->PropertyClass)) { MatchedComp = Comp; break; }
+					}
+					if (MatchedComp)
+					{
+						OP->SetObjectPropertyValue(P->ContainerPtrToValuePtr<void>(ParamBuf.GetData()), MatchedComp);
+						continue;
+					}
+				}
+				Cleanup();
+				return MCPError(FString::Printf(TEXT("actorArgs[%s]: actor '%s' (%s) is not assignable to expected type %s"), *P->GetName(), *ActorArgLabel, *RefActor->GetClass()->GetName(), *OP->PropertyClass->GetName()));
+			}
+			OP->SetObjectPropertyValue(P->ContainerPtrToValuePtr<void>(ParamBuf.GetData()), RefActor);
+		}
+	}
+
+	// World-context injection: static library functions commonly take a UObject*
+	// WorldContextObject. Fill any unset object param matching worldContextParam
+	// (or named WorldContextObject) with the resolved world.
+	const FString WcParam = OptionalString(Params, TEXT("worldContextParam"), TEXT(""));
+	for (TFieldIterator<FProperty> It(Func); It && (It->PropertyFlags & CPF_Parm); ++It)
+	{
+		FProperty* P = *It;
+		if (P->PropertyFlags & CPF_ReturnParm) continue;
+		FObjectProperty* OP = CastField<FObjectProperty>(P);
+		if (!OP) continue;
+		const FString PName = P->GetName();
+		const bool bIsWc = (!WcParam.IsEmpty() && PName == WcParam) || PName.Contains(TEXT("WorldContext"));
+		if (!bIsWc) continue;
+		void* Addr = P->ContainerPtrToValuePtr<void>(ParamBuf.GetData());
+		if (OP->GetObjectPropertyValue(Addr) != nullptr) continue;
+		if (World->IsA(OP->PropertyClass) || OP->PropertyClass == UObject::StaticClass())
+		{
+			OP->SetObjectPropertyValue(Addr, World);
+		}
+	}
+
+	CDO->ProcessEvent(Func, ParamBuf.GetData());
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("className"), LibClass->GetName());
+	Result->SetStringField(TEXT("functionName"), FunctionName);
+
+	TSharedPtr<FJsonObject> OutVals = MakeShared<FJsonObject>();
+	for (TFieldIterator<FProperty> It(Func); It && (It->PropertyFlags & CPF_Parm); ++It)
+	{
+		FProperty* P = *It;
+		if (P->PropertyFlags & (CPF_ReturnParm | CPF_OutParm))
+		{
+			FString S;
+			P->ExportTextItem_Direct(S, P->ContainerPtrToValuePtr<void>(ParamBuf.GetData()), nullptr, CDO, PPF_None);
+			OutVals->SetStringField(P->GetName(), S);
+		}
+	}
+	Result->SetObjectField(TEXT("returnValues"), OutVals);
+
+	Cleanup();
 	return MCPResult(Result);
 }
 

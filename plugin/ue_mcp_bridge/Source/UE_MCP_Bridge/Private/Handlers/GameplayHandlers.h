@@ -18,8 +18,18 @@ private:
 	static TSharedPtr<FJsonValue> ListEqsQueries(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ListStateTrees(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ProjectPointToNavigation(const TSharedPtr<FJsonObject>& Params);
+	// Enhanced Input asset authoring lives here (core authoring, not test
+	// automation). pie-studio handles PIE record/replay/inject of inputs.
 	static TSharedPtr<FJsonValue> CreateInputAction(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateInputMappingContext(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadImc(const TSharedPtr<FJsonObject>& Params);
+	// #604 read a live PIE player's applied Input Mapping Contexts
+	static TSharedPtr<FJsonValue> GetAppliedImcs(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddImcMapping(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetMappingModifiers(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> RemoveImcMapping(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetImcMappingKey(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetImcMappingAction(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateBlackboard(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateBehaviorTree(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateEqsQuery(const TSharedPtr<FJsonObject>& Params);
@@ -36,6 +46,13 @@ private:
 	static TSharedPtr<FJsonValue> ListNavInvokers(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetWorldGameMode(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> AddBlackboardKey(const TSharedPtr<FJsonObject>& Params);
+	// #469: child-of-parent blackboard pattern + per-key removal + read.
+	static TSharedPtr<FJsonValue> SetBlackboardParent(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> RemoveBlackboardKey(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadBlackboard(const TSharedPtr<FJsonObject>& Params);
+	// #494: discover available BT node classes so authoring scripts can
+	// build asset-specific BTs without grepping the engine source.
+	static TSharedPtr<FJsonValue> ListBTNodeClasses(const TSharedPtr<FJsonObject>& Params);
 	// #250: rebind a BehaviorTree asset's BlackboardAsset (the C++ field is
 	// protected, so reflection is the only way to write it cleanly).
 	static TSharedPtr<FJsonValue> SetBehaviorTreeBlackboard(const TSharedPtr<FJsonObject>& Params);
@@ -52,23 +69,7 @@ private:
 	static TSharedPtr<FJsonValue> ListSmartObjectSlots(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> AddSmartObjectSlotBehavior(const TSharedPtr<FJsonObject>& Params);
 
-	// IMC read/write (#57 / #60 / #75 / #158)
-	static TSharedPtr<FJsonValue> ReadImc(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> AddImcMapping(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> SetMappingModifiers(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> RemoveImcMapping(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> SetImcMappingKey(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> SetImcMappingAction(const TSharedPtr<FJsonObject>& Params);
-
-	// PIE inspection (#54 / #89 / #90)
-	static TSharedPtr<FJsonValue> InspectPie(const TSharedPtr<FJsonObject>& Params);
-
-	// PIE anim state (#26)
-	static TSharedPtr<FJsonValue> GetPieAnimState(const TSharedPtr<FJsonObject>& Params);
-
-	// PIE inspection (#139) — arbitrary UPROPERTY reads on AnimInstance + subsystems
-	static TSharedPtr<FJsonValue> GetPieAnimProperties(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> GetPieSubsystemState(const TSharedPtr<FJsonObject>& Params);
+	// IMC read/write, PIE inspection, anim state, subsystem state — moved to pie-studio
 
 	// Helper to create a blueprint with a given parent class
 	static TSharedPtr<FJsonValue> CreateBlueprintWithParent(const FString& Name, const FString& PackagePath, const FString& ParentClassPath, const FString& FriendlyTypeName);
@@ -79,35 +80,6 @@ private:
 	// #163 — detailed navmesh configuration
 	static TSharedPtr<FJsonValue> GetNavmeshDetails(const TSharedPtr<FJsonObject>& Params);
 
-	// #186 — apply damage to PIE actor
-	static TSharedPtr<FJsonValue> ApplyDamageInPie(const TSharedPtr<FJsonObject>& Params);
+	// ApplyDamageInPie moved to pie-studio
 
-	// PIE input injection (inject_input + continuous + tape).
-	static TSharedPtr<FJsonValue> InjectInput(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> InjectInputStart(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> InjectInputUpdate(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> InjectInputStop(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> InjectInputTape(const TSharedPtr<FJsonObject>& Params);
-
-	// PIE record (arm/disarm/stop/status/list/read/delete/mark).
-	static TSharedPtr<FJsonValue> PieRecordArm(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieRecordDisarm(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieRecordStop(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieRecordStatus(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieRecordList(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieRecordRead(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieRecordDelete(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieMark(const TSharedPtr<FJsonObject>& Params);
-
-	// PIE replay (arm/disarm/stop/status).
-	static TSharedPtr<FJsonValue> PieReplayArm(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieReplayDisarm(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieReplayStop(const TSharedPtr<FJsonObject>& Params);
-	static TSharedPtr<FJsonValue> PieReplayStatus(const TSharedPtr<FJsonObject>& Params);
-
-	// Offline pawn-state diff of two recordings.
-	static TSharedPtr<FJsonValue> PieRecordDiff(const TSharedPtr<FJsonObject>& Params);
-
-	// Full UProperty dump of a live PIE actor to JSON (snapshots/<name>.json).
-	static TSharedPtr<FJsonValue> PieSnapshot(const TSharedPtr<FJsonObject>& Params);
 };

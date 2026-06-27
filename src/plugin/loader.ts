@@ -5,7 +5,14 @@ import type { TaskConstructor, TaskDefinition, FlowDefinition } from "@db-lyon/f
 import type { ToolDef } from "../types.js";
 import type { FlowConfig, PluginEntry } from "../flow/schema.js";
 import { warn, info } from "../log.js";
-import { loadManifest, type PluginManifest } from "./manifest.js";
+import {
+  loadManifest,
+  type PluginManifest,
+  type ManifestInjectAction,
+  type ManifestProvidedAction,
+  type ManifestProvidedCategory,
+} from "./manifest.js";
+import { bridgeTaskClass } from "../flow/task-factory.js";
 import { resolvePackage, type ResolvedPackage } from "./resolver.js";
 import { satisfiesMinimum } from "./version.js";
 import { mergeInjectionsIntoTool, type InjectionPlan } from "./injection.js";
@@ -165,6 +172,33 @@ export async function loadPlugins(
       }
     }
 
+    // Native handler auto-surfacing: when `nativeModule.category` is set, every
+    // declared handler becomes an MCP action dispatching to the bare bridge
+    // method the C++ module registers. No TS task class is needed — a generic
+    // BridgeTask carries the method. A built-in category is injected into;
+    // a new category is provisioned as a tool the plugin owns. Without
+    // `category`, handlers stay bridge-only (back-compat).
+    const nativeSurface = nativeHandlerSurface(manifest, pkg.name, builtInCategories);
+    if (nativeSurface?.kind === "inject") {
+      taskRegistrations.push(...nativeSurface.taskRegistrations);
+      const list = plansByCategory.get(nativeSurface.plan.category) ?? [];
+      list.push(nativeSurface.plan);
+      plansByCategory.set(nativeSurface.plan.category, list);
+    } else if (nativeSurface?.kind === "provide") {
+      const cat = nativeSurface.plan.category;
+      const existing = provisionByCategory.get(cat);
+      if (existing) {
+        warn(
+          "plugin",
+          `${pkg.name}: nativeModule.category '${cat}' already claimed by '${existing.pluginName}'; skipping this provider`,
+        );
+      } else {
+        provisionByCategory.set(cat, nativeSurface.plan);
+        taskRegistrations.push(...nativeSurface.taskRegistrations);
+        record.record.provided[cat] = Object.keys(nativeSurface.plan.spec.actions);
+      }
+    }
+
     // Provided categories: claim each name (first writer wins). Subsequent
     // plugins that try to provide the same name are skipped with a clear
     // reason. Actions land in the task registry under `<category>.<action>`
@@ -314,12 +348,12 @@ async function loadOne(
     if (bridgeApiVersion === null) {
       warn(
         "plugin",
-        `${entry.name}: declares nativeModule but no UE_MCP_Bridge is deployed yet — run \`ue-mcp init\` or \`ue-mcp update\` to deploy the bridge before invoking its native actions`,
+        `${entry.name}: declares nativeModule but no UE_MCP_Bridge is deployed yet — run \`ue-mcp init\` or \`ue-mcp deploy\` to deploy the bridge before invoking its native actions`,
       );
     } else if (manifest.nativeModule.minBridgeApi > bridgeApiVersion) {
       return skip(
         base,
-        `nativeModule requires bridge ABI >= ${manifest.nativeModule.minBridgeApi} (deployed bridge is ${bridgeApiVersion}). Run \`ue-mcp update\` to refresh the bridge.`,
+        `nativeModule requires bridge ABI >= ${manifest.nativeModule.minBridgeApi} (deployed bridge is ${bridgeApiVersion}). Run \`ue-mcp deploy\` to refresh the bridge.`,
       );
     }
   }
@@ -332,6 +366,22 @@ async function loadOne(
         `inject target '${target}' is not a registered category. Valid: ${[...builtInCategories].sort().join(", ")}`,
       );
     }
+  }
+
+  // The native-handler surfacing target is either a built-in category (handlers
+  // inject into it) or a new category the plugin provisions. A new category must
+  // be a legal category name; cross-plugin collisions are resolved first-wins in
+  // loadPlugins.
+  const nativeCategory = manifest.nativeModule?.category;
+  if (
+    nativeCategory &&
+    !builtInCategories.has(nativeCategory) &&
+    !/^[a-z][a-z0-9_]*$/.test(nativeCategory)
+  ) {
+    return skip(
+      base,
+      `nativeModule.category '${nativeCategory}' must be a built-in category or a valid new category name (lowercase identifier, /^[a-z][a-z0-9_]*$/)`,
+    );
   }
 
   // Provided categories must not collide with built-in category names.
@@ -409,6 +459,102 @@ function skip(rec: PluginRecord, reason: string): LoadOneResult {
   rec.status = "skipped";
   rec.statusReason = reason;
   return { record: rec };
+}
+
+type TaskReg = { name: string; ctor: TaskConstructor };
+
+/**
+ * What a native module's handlers surface into. `inject` merges into an
+ * existing built-in category (actions prefixed with `actionPrefix`); `provide`
+ * provisions a new top-level category the plugin owns (actions unprefixed - the
+ * category is the namespace).
+ */
+export type NativeHandlerSurface =
+  | { kind: "inject"; plan: InjectionPlan; taskRegistrations: TaskReg[] }
+  | { kind: "provide"; plan: ProvisionPlan; taskRegistrations: TaskReg[] };
+
+/**
+ * Surface a native module's handlers as MCP actions. Returns null when the
+ * manifest declares no `nativeModule.category` (handlers stay bridge-only).
+ *
+ * When `category` is a built-in (per `builtInCategories`) the result is an
+ * `inject` plan: each handler `h` becomes `<category>(action="<prefix>_h")`.
+ * Otherwise it's a `provide` plan that owns a new `<category>` tool with
+ * unprefixed actions `<category>(action="h")`. Either way `h` dispatches to the
+ * bare bridge method `h` via a generic BridgeTask, carrying the handler's
+ * `timeoutSeconds`. Pure and disk-free so it can be unit-tested directly.
+ */
+export function nativeHandlerSurface(
+  manifest: PluginManifest,
+  pluginName: string,
+  builtInCategories: Set<string>,
+): NativeHandlerSurface | null {
+  const native = manifest.nativeModule;
+  if (!native?.category) return null;
+
+  const cat = native.category;
+  const taskRegistrations: TaskReg[] = [];
+
+  // One flat schema backs every action in a category, so a schema-level
+  // required param would be forced onto unrelated actions. Native handlers
+  // validate their own params (RequireString), so force every surfaced param
+  // optional regardless of what the manifest declares.
+  const optionalSchema = (schema: ManifestInjectAction["schema"]) =>
+    schema
+      ? Object.fromEntries(
+          Object.entries(schema).map(([k, f]) => [k, { ...f, required: false }]),
+        )
+      : undefined;
+
+  const timeoutMs = (seconds?: number) =>
+    seconds ? seconds * 1000 : undefined;
+
+  if (builtInCategories.has(cat)) {
+    const actions: Record<string, ManifestInjectAction> = {};
+    for (const [hName, hSpec] of Object.entries(native.handlers)) {
+      // `task` is synthetic — mergeInjectionsIntoTool reads only description
+      // and schema; dispatch is wired through the registry registration below.
+      actions[hName] = {
+        task: `${manifest.actionPrefix}.${hName}`,
+        description: hSpec.description,
+        schema: optionalSchema(hSpec.schema),
+      };
+      const dispatchName = `${cat}.${manifest.actionPrefix}_${hName}`;
+      taskRegistrations.push({
+        name: dispatchName,
+        ctor: bridgeTaskClass(dispatchName, hName, undefined, timeoutMs(hSpec.timeoutSeconds)),
+      });
+    }
+    return {
+      kind: "inject",
+      plan: { category: cat, prefix: manifest.actionPrefix, pluginName, actions },
+      taskRegistrations,
+    };
+  }
+
+  // New category: provision a tool the plugin owns; actions are unprefixed.
+  const actions: Record<string, ManifestProvidedAction> = {};
+  for (const [hName, hSpec] of Object.entries(native.handlers)) {
+    actions[hName] = {
+      task: `${cat}.${hName}`, // synthetic; buildProvidedTool ignores it
+      description: hSpec.description,
+      schema: optionalSchema(hSpec.schema),
+    };
+    const dispatchName = `${cat}.${hName}`;
+    taskRegistrations.push({
+      name: dispatchName,
+      ctor: bridgeTaskClass(dispatchName, hName, undefined, timeoutMs(hSpec.timeoutSeconds)),
+    });
+  }
+  const spec: ManifestProvidedCategory = {
+    description: native.categoryDescription,
+    actions,
+  };
+  return {
+    kind: "provide",
+    plan: { category: cat, pluginName, description: native.categoryDescription, spec },
+    taskRegistrations,
+  };
 }
 
 /**

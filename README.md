@@ -1,6 +1,6 @@
 # UE-MCP
 
-**Unreal Engine Model Context Protocol Server** - gives AI assistants deep read/write access to the Unreal Editor through <!-- count:tools -->21<!-- /count --> category tools covering <!-- count:actions -->525+<!-- /count --> actions, plus a YAML flow engine for multi-step workflows.
+**Unreal Engine Model Context Protocol Server** - gives AI assistants deep read/write access to the Unreal Editor through <!-- count:tools -->21<!-- /count --> category tools covering <!-- count:actions -->569+<!-- /count --> actions, plus a YAML flow engine for multi-step workflows.
 
 ```mermaid
 flowchart LR
@@ -24,7 +24,7 @@ The interactive setup will:
 2. Let you choose which tool categories to enable
 3. Deploy the C++ bridge plugin to your project
 4. Enable required UE plugins (Niagara, PCG, GAS, etc.)
-5. Detect and configure your MCP client (Claude Code, Claude Desktop, Cursor)
+5. Detect and configure your MCP client (Claude Code, Claude Desktop, Cursor, Codex)
 
 Restart the editor once after setup to load the bridge plugin. To update later: `npx ue-mcp update`
 
@@ -57,7 +57,7 @@ If you prefer to configure manually, add to your MCP client config:
 
 - [Getting Started](https://db-lyon.github.io/ue-mcp/getting-started/) — Installation, configuration, first run
 - [Architecture](https://db-lyon.github.io/ue-mcp/architecture/) — How the pieces fit together
-- [Tool Reference](https://db-lyon.github.io/ue-mcp/tool-reference/) - All <!-- count:tools -->21<!-- /count --> tools with <!-- count:actions -->525+<!-- /count --> actions
+- [Tool Reference](https://db-lyon.github.io/ue-mcp/tool-reference/) - All <!-- count:tools -->21<!-- /count --> tools with <!-- count:actions -->569+<!-- /count --> actions
 - [Flows](https://db-lyon.github.io/ue-mcp/flows/) - YAML flow engine, custom tasks, rollback, hooks
 - [Configuration](https://db-lyon.github.io/ue-mcp/configuration/) — `.ue-mcp.json` and MCP client config
 - [Project Registry](docs/project-registry.md) - Cross-platform multi-project MCP config generation
@@ -100,9 +100,6 @@ Issues and pull requests welcome. If an AI agent had to fall back to `execute_py
 
 ## License
 
-UE-MCP is licensed under the **Business Source License 1.1** with a **commercial license** available for production use outside the Additional Use Grant.
+UE-MCP is licensed under the **MIT License**. Use it freely in personal, educational, and commercial projects. See [LICENSE](LICENSE).
 
-- **Individuals, students, and educational institutions** use UE-MCP free under BUSL-1.1's Additional Use Grant. Each release converts to Apache 2.0 after four years. See [LICENSE](LICENSE).
-- **Game studios, publishers, contract developers, and commercial entities** using UE-MCP in proprietary products, internal pipelines, or paid services require a commercial license. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) and [ue-mcp.com/pricing](https://ue-mcp.com/pricing).
-
-Contributions are accepted under the terms of the Contributor License Agreement. See [CLA.md](CLA.md).
+Contributions are accepted under the same MIT License (inbound contributions are licensed under the project's outbound license).

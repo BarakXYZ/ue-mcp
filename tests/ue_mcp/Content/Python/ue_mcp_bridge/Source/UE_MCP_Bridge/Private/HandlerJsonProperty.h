@@ -63,7 +63,7 @@ namespace MCPJsonProperty
 			{
 				for (const auto& Pair : (*SubObj)->Values)
 				{
-					const FString Key(Pair.Key.ToView());
+					const FString Key(Pair.Key);
 					FProperty* SubProp = StructProp->Struct->FindPropertyByName(FName(*Key));
 					if (!SubProp) { OutError = FString::Printf(TEXT("struct field '%s' not found"), *Key); return false; }
 					void* SubAddr = SubProp->ContainerPtrToValuePtr<void>(ValueAddr);

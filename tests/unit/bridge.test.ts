@@ -1,47 +1,99 @@
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import { WebSocketServer } from "ws";
 import { describe, expect, it } from "vitest";
-import { AddressInfo } from "node:net";
-import WebSocket, { WebSocketServer } from "ws";
-import { EditorBridge } from "../../src/bridge.js";
 
-async function makeServer(): Promise<{ server: WebSocketServer; port: number }> {
+async function withBridgeServer(
+  onRequest: (request: Record<string, unknown>, socket: import("ws").WebSocket) => void,
+): Promise<{
+  close: () => Promise<void>;
+  connectionCount: () => number;
+  port: number;
+}> {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  return { server, port: (server.address() as AddressInfo).port };
-}
+  let connections = 0;
 
-describe("EditorBridge.configure", () => {
-  it("updates the websocket endpoint before connecting", () => {
-    const bridge = new EditorBridge();
-
-    bridge.configure("127.0.0.1", 9878);
-
-    expect(bridge.host).toBe("127.0.0.1");
-    expect(bridge.port).toBe(9878);
+  server.on("connection", (socket) => {
+    connections += 1;
+    socket.on("message", (data) => {
+      onRequest(JSON.parse(data.toString()) as Record<string, unknown>, socket);
+    });
   });
 
-  it("ignores stale close events after reconnecting to a new endpoint", async () => {
-    const first = await makeServer();
-    const second = await makeServer();
-    const firstConnection = new Promise<WebSocket>((resolve) => first.server.once("connection", resolve));
-    const secondConnection = new Promise<WebSocket>((resolve) => second.server.once("connection", resolve));
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  return {
+    port: address.port,
+    connectionCount: () => connections,
+    close: async () => {
+      for (const client of server.clients) {
+        client.terminate();
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    },
+  };
+}
 
-    const bridge = new EditorBridge("127.0.0.1", first.port);
+describe("EditorBridge connection handling", () => {
+  it("connects on the first bridge call when the editor bridge is reachable", async () => {
+    const server = await withBridgeServer((request, socket) => {
+      socket.send(JSON.stringify({ id: request.id, result: { method: request.method, params: request.params } }));
+    });
+
+    const { EditorBridge } = await import("../../src/bridge.js");
+    const bridge = new EditorBridge("127.0.0.1", server.port);
 
     try {
-      await bridge.connect(1000);
-      const oldSocket = await firstConnection;
-      bridge.configure("127.0.0.1", second.port);
-      await bridge.connect(1000);
-      await secondConnection;
+      const result = await bridge.call("ping", { ok: true }, 1000);
 
-      oldSocket.close();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
+      expect(result).toEqual({ method: "ping", params: { ok: true } });
       expect(bridge.isConnected).toBe(true);
     } finally {
       bridge.disconnect();
-      first.server.close();
-      second.server.close();
+      await server.close();
+    }
+  });
+
+  it("shares one in-flight connection for concurrent calls", async () => {
+    const server = await withBridgeServer((request, socket) => {
+      socket.send(JSON.stringify({ id: request.id, result: request.method }));
+    });
+
+    const { EditorBridge } = await import("../../src/bridge.js");
+    const bridge = new EditorBridge("127.0.0.1", server.port);
+
+    try {
+      await expect(Promise.all([
+        bridge.call("first", {}, 1000),
+        bridge.call("second", {}, 1000),
+      ])).resolves.toEqual(["first", "second"]);
+      expect(server.connectionCount()).toBe(1);
+    } finally {
+      bridge.disconnect();
+      await server.close();
+    }
+  });
+
+  it("terminates a timed-out socket so the next call can reconnect", async () => {
+    const server = await withBridgeServer((request, socket) => {
+      if (request.method === "hang") return;
+      socket.send(JSON.stringify({ id: request.id, result: "reconnected" }));
+    });
+
+    const { EditorBridge } = await import("../../src/bridge.js");
+    const bridge = new EditorBridge("127.0.0.1", server.port);
+
+    try {
+      await expect(bridge.call("hang", {}, 50)).rejects.toThrow("timed out");
+      expect(bridge.isConnected).toBe(false);
+
+      await expect(bridge.call("ping", {}, 1000)).resolves.toBe("reconnected");
+      expect(server.connectionCount()).toBe(2);
+    } finally {
+      bridge.disconnect();
+      await server.close();
     }
   });
 });

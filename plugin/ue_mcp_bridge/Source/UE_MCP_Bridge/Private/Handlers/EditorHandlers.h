@@ -116,6 +116,8 @@ private:
 	// #142: run a Python file with __file__/__name__ context populated
 	static TSharedPtr<FJsonValue> RunPythonFile(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetProperty(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> GetProperty(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> DescribeObject(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetConfig(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> GetViewportInfo(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> HitTestViewportPixel(const TSharedPtr<FJsonObject>& Params);
@@ -148,6 +150,8 @@ private:
 	static TSharedPtr<FJsonValue> OpenAsset(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> RunStatCommand(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetScalability(const TSharedPtr<FJsonObject>& Params);
+	// #591 bulk console-variable setter
+	static TSharedPtr<FJsonValue> SetCVars(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> BuildGeometry(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> BuildHlod(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ListCrashes(const TSharedPtr<FJsonObject>& Params);
@@ -161,10 +165,17 @@ private:
 	static TSharedPtr<FJsonValue> SetPieTimeScale(const TSharedPtr<FJsonObject>& Params);
 	// #148: Headless SceneCapture2D → PNG (works when editor is unfocused)
 	static TSharedPtr<FJsonValue> CaptureScenePng(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetRealtime(const TSharedPtr<FJsonObject>& Params);
 	// #228/#229: PIE pawn lookup + UFUNCTION invocation for PIE actors
 	static TSharedPtr<FJsonValue> GetPiePawn(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> InvokeFunction(const TSharedPtr<FJsonObject>& Params);
+	// Call a static UFUNCTION on a UBlueprintFunctionLibrary (no actor instance).
+	static TSharedPtr<FJsonValue> InvokeStaticFunction(const TSharedPtr<FJsonObject>& Params);
 	// #384: configure ULevelEditorPlaySettings (multi-client PIE, net mode, etc.)
 	static TSharedPtr<FJsonValue> ConfigurePie(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> GetPieConfig(const TSharedPtr<FJsonObject>& Params);
+	// #455: discover BlueprintFunctionLibrary classes (GeometryScript,
+	// Kismet*, AnimationLibrary, user-defined) so invoke_function callers
+	// can find the libraries that expose the ops they want.
+	static TSharedPtr<FJsonValue> ListFunctionLibraries(const TSharedPtr<FJsonObject>& Params);
 };

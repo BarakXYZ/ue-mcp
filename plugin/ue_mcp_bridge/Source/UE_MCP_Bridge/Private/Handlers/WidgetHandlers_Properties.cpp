@@ -249,6 +249,199 @@ TSharedPtr<FJsonValue> FWidgetHandlers::GetWidgetProperties(const TSharedPtr<FJs
 }
 
 
+// get_widget_properties -- full reflected property dump for a named widget,
+// unlike get_widget_details which returns only a curated subset. Returns every
+// UPROPERTY (RenderOpacity, Visibility, ColorAndOpacity, Border padding/colors,
+// Image brush fields, fonts, etc.) plus the slot block, so visual bugs can be
+// diagnosed without execute_python reflection. Optional includeSubtree walks
+// children. (#547)
+TSharedPtr<FJsonValue> FWidgetHandlers::GetWidgetFullProperties(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	FString WidgetName;
+	if (auto Err = RequireString(Params, TEXT("widgetName"), WidgetName)) return Err;
+
+	const bool bIncludeSubtree = OptionalBool(Params, TEXT("includeSubtree"), false);
+
+	UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(LoadedAsset);
+	if (!WidgetBP)
+	{
+		return MCPError(FString::Printf(TEXT("Failed to load WidgetBlueprint at '%s'"), *AssetPath));
+	}
+	if (!WidgetBP->WidgetTree)
+	{
+		return MCPError(TEXT("WidgetTree is null"));
+	}
+
+	UWidget* FoundWidget = nullptr;
+	WidgetBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+	{
+		if (Widget && Widget->GetName() == WidgetName) FoundWidget = Widget;
+	});
+	if (!FoundWidget)
+	{
+		return MCPError(FString::Printf(TEXT("Widget not found: '%s'"), *WidgetName));
+	}
+
+	// Reflect every UPROPERTY on a widget (and its slot) into a JSON object.
+	auto DumpWidget = [](UWidget* W) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), W->GetName());
+		Obj->SetStringField(TEXT("class"), W->GetClass()->GetName());
+
+		TSharedPtr<FJsonObject> Props = MakeShared<FJsonObject>();
+		for (TFieldIterator<FProperty> It(W->GetClass()); It; ++It)
+		{
+			FProperty* Prop = *It;
+			FString ValueStr;
+			const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(W);
+			Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, W, PPF_None);
+			Props->SetStringField(Prop->GetName(), ValueStr);
+		}
+		Obj->SetObjectField(TEXT("properties"), Props);
+
+		if (UPanelSlot* Slot = W->Slot)
+		{
+			TSharedPtr<FJsonObject> SlotObj = MakeShared<FJsonObject>();
+			SlotObj->SetStringField(TEXT("class"), Slot->GetClass()->GetName());
+			TSharedPtr<FJsonObject> SlotProps = MakeShared<FJsonObject>();
+			for (TFieldIterator<FProperty> It(Slot->GetClass()); It; ++It)
+			{
+				FProperty* Prop = *It;
+				FString ValueStr;
+				const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Slot);
+				Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, Slot, PPF_None);
+				SlotProps->SetStringField(Prop->GetName(), ValueStr);
+			}
+			SlotObj->SetObjectField(TEXT("properties"), SlotProps);
+			Obj->SetObjectField(TEXT("slot"), SlotObj);
+		}
+		return Obj;
+	};
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetObjectField(TEXT("widget"), DumpWidget(FoundWidget));
+
+	if (bIncludeSubtree)
+	{
+		TArray<TSharedPtr<FJsonValue>> Children;
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(FoundWidget))
+		{
+			TArray<UWidget*> Stack;
+			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+			{
+				if (UWidget* C = Panel->GetChildAt(i)) Stack.Add(C);
+			}
+			while (Stack.Num() > 0)
+			{
+				UWidget* W = Stack.Pop();
+				Children.Add(MakeShared<FJsonValueObject>(DumpWidget(W)));
+				if (UPanelWidget* CP = Cast<UPanelWidget>(W))
+				{
+					for (int32 i = 0; i < CP->GetChildrenCount(); ++i)
+					{
+						if (UWidget* GC = CP->GetChildAt(i)) Stack.Add(GC);
+					}
+				}
+			}
+		}
+		Result->SetArrayField(TEXT("subtree"), Children);
+	}
+
+	return MCPResult(Result);
+}
+
+// list_widget_bindings -- enumerate the designer property bindings stored on a
+// WidgetBlueprint (UWidgetBlueprint::Bindings), which the UE 5.7 Python API
+// keeps protected. Returns {widgetName, propertyName, functionName,
+// bindingType}. Optional filterWidgetName / filterProperty narrow the list.
+// (#530)
+TSharedPtr<FJsonValue> FWidgetHandlers::ListWidgetBindings(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	const FString FilterWidget = OptionalString(Params, TEXT("filterWidgetName"));
+	const FString FilterProperty = OptionalString(Params, TEXT("filterProperty"));
+
+	UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!WidgetBP)
+	{
+		return MCPError(FString::Printf(TEXT("Failed to load WidgetBlueprint at '%s'"), *AssetPath));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> BindingsArr;
+	for (const FDelegateEditorBinding& B : WidgetBP->Bindings)
+	{
+		const FString WidgetObj = B.ObjectName;
+		const FString PropName = B.PropertyName.ToString();
+		if (!FilterWidget.IsEmpty() && !WidgetObj.Equals(FilterWidget, ESearchCase::IgnoreCase)) continue;
+		if (!FilterProperty.IsEmpty() && !PropName.Equals(FilterProperty, ESearchCase::IgnoreCase)) continue;
+
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("widgetName"), WidgetObj);
+		Obj->SetStringField(TEXT("propertyName"), PropName);
+		Obj->SetStringField(TEXT("functionName"), B.FunctionName.ToString());
+		Obj->SetStringField(TEXT("bindingType"), B.Kind == EBindingKind::Function ? TEXT("Function") : TEXT("Property"));
+		BindingsArr.Add(MakeShared<FJsonValueObject>(Obj));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetNumberField(TEXT("bindingCount"), BindingsArr.Num());
+	Result->SetArrayField(TEXT("bindings"), BindingsArr);
+	return MCPResult(Result);
+}
+
+// clear_widget_binding -- remove designer binding(s) matching widgetName (and
+// optional propertyName) from a WidgetBlueprint, without opening the editor.
+// Idempotent: removing a non-existent binding reports removed=0. (#530)
+TSharedPtr<FJsonValue> FWidgetHandlers::ClearWidgetBinding(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("assetPath"), TEXT("path"), AssetPath)) return Err;
+
+	FString WidgetName;
+	if (auto Err = RequireString(Params, TEXT("widgetName"), WidgetName)) return Err;
+
+	const FString PropertyName = OptionalString(Params, TEXT("propertyName"));
+
+	UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
+	if (!WidgetBP)
+	{
+		return MCPError(FString::Printf(TEXT("Failed to load WidgetBlueprint at '%s'"), *AssetPath));
+	}
+
+	WidgetBP->Modify();
+	const int32 Removed = WidgetBP->Bindings.RemoveAll([&](const FDelegateEditorBinding& B)
+	{
+		if (!FString(B.ObjectName).Equals(WidgetName, ESearchCase::IgnoreCase)) return false;
+		if (!PropertyName.IsEmpty() && !B.PropertyName.ToString().Equals(PropertyName, ESearchCase::IgnoreCase)) return false;
+		return true;
+	});
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("assetPath"), AssetPath);
+	Result->SetStringField(TEXT("widgetName"), WidgetName);
+	Result->SetNumberField(TEXT("removed"), Removed);
+	if (Removed == 0)
+	{
+		MCPSetExisted(Result);
+		return MCPResult(Result);
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	UEditorAssetLibrary::SaveAsset(AssetPath);
+	MCPSetUpdated(Result);
+	return MCPResult(Result);
+}
+
 TSharedPtr<FJsonValue> FWidgetHandlers::SetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
 {
 	FString AssetPath;
@@ -504,9 +697,61 @@ TSharedPtr<FJsonValue> FWidgetHandlers::SetWidgetProperty(const TSharedPtr<FJson
 
 			FString SlotPropName = PropertyName.Mid(5); // strip "slot."
 
+			// #532: a UE struct-text value ("(Value=2,SizeRule=Fill)",
+			// "(Left=26,Top=22,Right=26,Bottom=24)") or a nested field path
+			// ("Size.Value", "Padding.Left") must write through the real struct,
+			// not the positional comma-parsers below — those split struct text on
+			// commas and silently wrote 0 to the numeric fields while reporting
+			// success. Resolve the path rooted at the SLOT and ImportText into the
+			// struct so every field persists. A genuine parse failure is surfaced
+			// as an error instead of falling through to the lossy parser.
+			{
+				const FString TrimmedVal = PropertyValue.TrimStartAndEnd();
+				const bool bStructText = TrimmedVal.StartsWith(TEXT("("));
+				const bool bNestedPath = SlotPropName.Contains(TEXT("."));
+				if (bStructText || bNestedPath)
+				{
+					TArray<FString> SlotParts;
+					SlotPropName.ParseIntoArray(SlotParts, TEXT("."));
+					UStruct* CurStruct = Slot->GetClass();
+					void* CurContainer = Slot;
+					FProperty* LeafProp = nullptr;
+					for (int32 i = 0; i < SlotParts.Num(); ++i)
+					{
+						FProperty* P = CurStruct->FindPropertyByName(FName(*SlotParts[i]));
+						if (!P) { LeafProp = nullptr; break; }
+						if (i < SlotParts.Num() - 1)
+						{
+							FStructProperty* SP = CastField<FStructProperty>(P);
+							if (!SP) { LeafProp = nullptr; break; }
+							CurContainer = SP->ContainerPtrToValuePtr<void>(CurContainer);
+							CurStruct = SP->Struct;
+						}
+						else
+						{
+							LeafProp = P;
+						}
+					}
+					if (LeafProp)
+					{
+						void* LeafAddr = LeafProp->ContainerPtrToValuePtr<void>(CurContainer);
+						if (LeafProp->ImportText_Direct(*PropertyValue, LeafAddr, Slot, PPF_None))
+						{
+							bPropertySet = true;
+						}
+						else
+						{
+							return MCPError(FString::Printf(
+								TEXT("Value '%s' is not valid for slot property '%s' (type %s). Use UE struct text, e.g. `(Value=1.0,SizeRule=Fill)` for Size or `(Left=8,Top=8,Right=8,Bottom=8)` for Padding."),
+								*PropertyValue, *SlotPropName, *LeafProp->GetCPPType()));
+						}
+					}
+				}
+			}
+
 			// Well-known CanvasPanelSlot properties
 			UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Slot);
-			if (CanvasSlot)
+			if (!bPropertySet && CanvasSlot)
 			{
 				if (SlotPropName == TEXT("anchors") || SlotPropName == TEXT("Anchors"))
 				{

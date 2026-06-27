@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { categoryTool, bp, type ToolDef } from "../../src/types.js";
 import { mergeInjectionsIntoTool, type InjectionPlan } from "../../src/plugin/injection.js";
-import { looksLikeBaseTask } from "../../src/plugin/loader.js";
+import { looksLikeBaseTask, nativeHandlerSurface } from "../../src/plugin/loader.js";
+import { PluginManifestSchema } from "../../src/plugin/manifest.js";
 
 function fakePcg(): ToolDef {
   return categoryTool(
@@ -31,7 +32,7 @@ describe("mergeInjectionsIntoTool", () => {
     const plan: InjectionPlan = {
       category: "pcg",
       prefix: "vpp",
-      pluginName: "ue-mcp-plugin-voxel-plugin-pro",
+      pluginName: "ue-mcp-voxel-pro",
       actions: {
         scatter_on_terrain: {
           task: "vpp.scatter_on_terrain",
@@ -97,6 +98,122 @@ describe("mergeInjectionsIntoTool", () => {
     const { added, skipped } = mergeInjectionsIntoTool(orig, [planA, planB]);
     expect(added).toEqual(["vpp_foo"]);
     expect(skipped).toHaveLength(1);
+  });
+});
+
+describe("nativeHandlerSurface", () => {
+  const BUILTINS = new Set(["gameplay", "pcg", "editor"]);
+  const manifestWith = (nativeModule: Record<string, unknown>) =>
+    PluginManifestSchema.parse({ actionPrefix: "pie", nativeModule });
+
+  it("returns null when nativeModule has no category (bridge-only, back-compat)", () => {
+    const manifest = manifestWith({
+      uePluginName: "PIE_Studio",
+      minBridgeApi: 1,
+      source: "ue/Plugins/PIE_Studio",
+      handlers: { record_arm: { description: "Arm" } },
+    });
+    expect(nativeHandlerSurface(manifest, "pie-studio", BUILTINS)).toBeNull();
+  });
+
+  it("returns null when there is no nativeModule at all", () => {
+    const manifest = PluginManifestSchema.parse({ actionPrefix: "pie" });
+    expect(nativeHandlerSurface(manifest, "pie-studio", BUILTINS)).toBeNull();
+  });
+
+  it("injects into a built-in category with prefixed actions", () => {
+    const manifest = manifestWith({
+      uePluginName: "PIE_Studio",
+      minBridgeApi: 1,
+      source: "ue/Plugins/PIE_Studio",
+      category: "gameplay",
+      handlers: {
+        record_arm: { description: "Arm the recorder" },
+        apply_damage: {
+          description: "Apply damage",
+          schema: { amount: { type: "number", required: true } },
+        },
+      },
+    });
+    const result = nativeHandlerSurface(manifest, "pie-studio", BUILTINS);
+    expect(result?.kind).toBe("inject");
+    if (result?.kind !== "inject") throw new Error("expected inject");
+    const { plan, taskRegistrations } = result;
+
+    expect(plan.category).toBe("gameplay");
+    expect(plan.prefix).toBe("pie");
+    // Plan actions are keyed by the BARE handler name; the prefix is applied
+    // by mergeInjectionsIntoTool, matching the rest of the inject pipeline.
+    expect(Object.keys(plan.actions).sort()).toEqual(["apply_damage", "record_arm"]);
+    // required is forced false (see the optional-params test below).
+    expect(plan.actions.apply_damage.schema).toEqual({
+      amount: { type: "number", required: false },
+    });
+    // Dispatch tasks register under `<category>.<prefix>_<handler>`.
+    expect(taskRegistrations.map((r) => r.name).sort()).toEqual([
+      "gameplay.pie_apply_damage",
+      "gameplay.pie_record_arm",
+    ]);
+  });
+
+  it("provisions a NEW category with unprefixed actions when category isn't built-in", () => {
+    const manifest = manifestWith({
+      uePluginName: "PIE_Studio",
+      minBridgeApi: 1,
+      source: "ue/Plugins/PIE_Studio",
+      category: "pie",
+      categoryDescription: "PIE test automation",
+      handlers: {
+        record_arm: { description: "Arm the recorder" },
+        replay_arm: { description: "Arm replay" },
+      },
+    });
+    const result = nativeHandlerSurface(manifest, "pie-studio", BUILTINS);
+    expect(result?.kind).toBe("provide");
+    if (result?.kind !== "provide") throw new Error("expected provide");
+    const { plan, taskRegistrations } = result;
+
+    expect(plan.category).toBe("pie");
+    expect(plan.description).toBe("PIE test automation");
+    // Provided-category actions are NOT prefixed - the category is the namespace.
+    expect(Object.keys(plan.spec.actions).sort()).toEqual(["record_arm", "replay_arm"]);
+    // Dispatch registers under `<category>.<handler>` (no prefix).
+    expect(taskRegistrations.map((r) => r.name).sort()).toEqual([
+      "pie.record_arm",
+      "pie.replay_arm",
+    ]);
+  });
+
+  it("forces surfaced params optional so they can't be required across a shared category", () => {
+    const manifest = manifestWith({
+      uePluginName: "PIE_Studio",
+      minBridgeApi: 1,
+      source: "ue/Plugins/PIE_Studio",
+      category: "gameplay",
+      handlers: {
+        inject_input: {
+          schema: { action_path: { type: "string", required: true } },
+        },
+      },
+    });
+    const result = nativeHandlerSurface(manifest, "pie-studio", BUILTINS);
+    if (result?.kind !== "inject") throw new Error("expected inject");
+    expect(result.plan.actions.inject_input.schema?.action_path.required).toBe(false);
+  });
+
+  it("inject plan merges into the host built-in category as pie_-prefixed", () => {
+    const manifest = manifestWith({
+      uePluginName: "PIE_Studio",
+      minBridgeApi: 1,
+      source: "ue/Plugins/PIE_Studio",
+      category: "pcg",
+      handlers: { record_arm: { description: "Arm the recorder" } },
+    });
+    const result = nativeHandlerSurface(manifest, "pie-studio", BUILTINS);
+    if (result?.kind !== "inject") throw new Error("expected inject");
+    const { tool, added } = mergeInjectionsIntoTool(fakePcg(), [result.plan]);
+    expect(added).toEqual(["pie_record_arm"]);
+    expect(tool.actions.pie_record_arm?.description).toBe("Arm the recorder");
   });
 });
 

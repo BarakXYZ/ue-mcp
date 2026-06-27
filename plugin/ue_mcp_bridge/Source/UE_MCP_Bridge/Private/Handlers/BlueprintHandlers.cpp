@@ -55,6 +55,7 @@
 #include "Engine/InheritableComponentHandler.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/ChildActorComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
 #include "EditorAssetLibrary.h"
@@ -67,6 +68,8 @@
 
 void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
+	constexpr float ReadBlueprintGraphTimeoutSeconds = 180.0f;
+
 	Registry.RegisterHandler(TEXT("create_blueprint"), &CreateBlueprint);
 	Registry.RegisterHandler(TEXT("read_blueprint"), &ReadBlueprint);
 	Registry.RegisterHandler(TEXT("add_variable"), &AddVariable);
@@ -80,7 +83,7 @@ void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("create_function"), &CreateFunction);
 	Registry.RegisterHandler(TEXT("list_blueprint_functions"), &ListBlueprintFunctions);
 	Registry.RegisterHandler(TEXT("add_node"), &AddNode);
-	Registry.RegisterHandler(TEXT("read_blueprint_graph"), &ReadBlueprintGraph);
+	Registry.RegisterHandlerWithTimeout(TEXT("read_blueprint_graph"), &ReadBlueprintGraph, ReadBlueprintGraphTimeoutSeconds);
 	Registry.RegisterHandler(TEXT("add_event_dispatcher"), &AddEventDispatcher);
 	Registry.RegisterHandler(TEXT("rename_function"), &RenameFunction);
 	Registry.RegisterHandler(TEXT("delete_function"), &DeleteFunction);
@@ -90,6 +93,11 @@ void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("set_node_property"), &SetNodeProperty);
 	Registry.RegisterHandler(TEXT("list_blueprint_graphs"), &ListGraphs);
 	Registry.RegisterHandler(TEXT("set_blueprint_component_property"), &SetComponentProperty);
+	// #442: dedicated OverrideMaterials writer that takes a materialPaths array
+	// directly, avoiding any value coercion concerns on the generic path.
+	Registry.RegisterHandler(TEXT("set_component_override_materials"), &SetComponentOverrideMaterials);
+	// #457: timeline track authoring (float/vector/color/event) on a Blueprint.
+	Registry.RegisterHandler(TEXT("add_timeline_track"), &AddTimelineTrack);
 	Registry.RegisterHandler(TEXT("set_capsule_size"), &SetCapsuleSize);
 	Registry.RegisterHandler(TEXT("set_class_default"), &SetClassDefault);
 	Registry.RegisterHandler(TEXT("remove_component"), &RemoveComponent);
@@ -113,6 +121,7 @@ void FBlueprintHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("read_node_property"), &ReadNodeProperty);
 	Registry.RegisterHandler(TEXT("reparent_component"), &ReparentComponent);
 	Registry.RegisterHandler(TEXT("reparent_blueprint"), &ReparentBlueprint);
+	Registry.RegisterHandler(TEXT("flush_inheritable_component_handler"), &FlushInheritableComponentHandler);
 	Registry.RegisterHandler(TEXT("set_actor_tick_settings"), &SetActorTickSettings);
 
 	// v0.7.12 — issue #128 — single-property read (inherited-aware)
@@ -147,6 +156,11 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ReadBlueprintGraphSummary(const TShar
 	FString AssetPath;
 	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
 	FString GraphName = OptionalString(Params, TEXT("graphName"), TEXT("EventGraph"));
+	// #560 optional node filters (case-insensitive substring); edges are left
+	// complete so a caller can still see what connects to a matched node.
+	const FString TitleFilter = OptionalString(Params, TEXT("titleFilter"), TEXT(""));
+	const FString ClassFilter = OptionalString(Params, TEXT("classFilter"), TEXT(""));
+	const bool bFiltering = !TitleFilter.IsEmpty() || !ClassFilter.IsEmpty();
 
 	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
 	if (!Blueprint) return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *AssetPath));
@@ -163,11 +177,19 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ReadBlueprintGraphSummary(const TShar
 	{
 		if (!Node) continue;
 
-		TSharedPtr<FJsonObject> N = MakeShared<FJsonObject>();
-		N->SetStringField(TEXT("id"), Node->NodeGuid.ToString(EGuidFormats::Short));
-		N->SetStringField(TEXT("class"), Node->GetClass()->GetName());
-		N->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
-		Nodes.Add(MakeShared<FJsonValueObject>(N));
+		const FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+		bool bIncludeNode = true;
+		if (!TitleFilter.IsEmpty() && !NodeTitle.Contains(TitleFilter, ESearchCase::IgnoreCase)) bIncludeNode = false;
+		if (!ClassFilter.IsEmpty() && !Node->GetClass()->GetName().Contains(ClassFilter, ESearchCase::IgnoreCase)) bIncludeNode = false;
+
+		if (bIncludeNode)
+		{
+			TSharedPtr<FJsonObject> N = MakeShared<FJsonObject>();
+			N->SetStringField(TEXT("id"), Node->NodeGuid.ToString(EGuidFormats::Short));
+			N->SetStringField(TEXT("class"), Node->GetClass()->GetName());
+			N->SetStringField(TEXT("title"), NodeTitle);
+			Nodes.Add(MakeShared<FJsonValueObject>(N));
+		}
 
 		// Walk output pins only (one edge per connection, no dup).
 		for (UEdGraphPin* Pin : Node->Pins)
@@ -212,6 +234,12 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ReadBlueprintGraphSummary(const TShar
 	Result->SetArrayField(TEXT("execEdges"), ExecEdges);
 	Result->SetArrayField(TEXT("dataEdges"), DataEdges);
 	Result->SetNumberField(TEXT("nodeCount"), Nodes.Num());
+	if (bFiltering)
+	{
+		Result->SetBoolField(TEXT("filtered"), true);
+		if (!TitleFilter.IsEmpty()) Result->SetStringField(TEXT("titleFilter"), TitleFilter);
+		if (!ClassFilter.IsEmpty()) Result->SetStringField(TEXT("classFilter"), ClassFilter);
+	}
 	return MCPResult(Result);
 }
 
@@ -1293,6 +1321,38 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::AddComponent(const TSharedPtr<FJsonOb
 				{
 					Subsystem->RenameSubobject(NewHandle, FText::FromString(ComponentName));
 				}
+
+				// #526: when adding a ChildActorComponent, let callers set its
+				// ChildActorClass in the same call. Accepts a Blueprint asset path
+				// (with or without the _C generated-class suffix) or a C++ class.
+				FString ChildActorClassPath;
+				if (Params->TryGetStringField(TEXT("childActorClass"), ChildActorClassPath) && !ChildActorClassPath.IsEmpty())
+				{
+					if (const FSubobjectData* NewData = NewHandle.GetData())
+					{
+						if (UChildActorComponent* CAC = Cast<UChildActorComponent>(const_cast<UObject*>(NewData->GetObject())))
+						{
+							UClass* ChildCls = LoadClass<AActor>(nullptr, *ChildActorClassPath);
+							if (!ChildCls && !ChildActorClassPath.EndsWith(TEXT("_C")))
+							{
+								ChildCls = LoadClass<AActor>(nullptr, *(ChildActorClassPath + TEXT("_C")));
+							}
+							if (!ChildCls)
+							{
+								if (UBlueprint* ChildBP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *ChildActorClassPath)))
+								{
+									ChildCls = ChildBP->GeneratedClass;
+								}
+							}
+							if (ChildCls)
+							{
+								CAC->Modify();
+								CAC->SetChildActorClass(ChildCls);
+							}
+						}
+					}
+				}
+
 				bSuccess = true;
 			}
 		}
@@ -1672,6 +1732,22 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::DuplicateBlueprint(const TSharedPtr<F
 	if (auto Err = RequireString(Params, TEXT("destinationPath"), DestinationPath)) return Err;
 
 	UObject* Dup = UEditorAssetLibrary::DuplicateAsset(SourcePath, DestinationPath);
+	if (!Dup)
+	{
+		// #441: DoesAssetExist can return false for valid Blueprint paths in
+		// 5.7. Fall back to loading the source and driving AssetTools directly.
+		UObject* SourceObj = UEditorAssetLibrary::LoadAsset(SourcePath);
+		if (!SourceObj) SourceObj = LoadObject<UObject>(nullptr, *SourcePath);
+		if (SourceObj)
+		{
+			FString DestPkg, DestName;
+			if (DestinationPath.Split(TEXT("/"), &DestPkg, &DestName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+			{
+				IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+				Dup = AssetTools.DuplicateAsset(DestName, DestPkg, SourceObj);
+			}
+		}
+	}
 	if (!Dup) return MCPError(FString::Printf(TEXT("Failed to duplicate '%s'"), *SourcePath));
 
 	TSharedPtr<FJsonObject> Result = MCPSuccess();
@@ -1931,6 +2007,63 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::ReparentBlueprint(const TSharedPtr<FJ
 	}
 	return MCPResult(Result);
 }
+
+// #580 flush orphaned InheritableComponentHandler records. Invalid override
+// records (e.g. for components removed from a parent) survive read/remove_
+// component because they're keyed by a now-dead component key. ValidateTemplates()
+// drops them; this exposes that cleanup natively.
+TSharedPtr<FJsonValue> FBlueprintHandlers::FlushInheritableComponentHandler(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AssetPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("path"), TEXT("assetPath"), AssetPath)) return Err;
+
+	UBlueprint* Blueprint = LoadBlueprint(AssetPath);
+	if (!Blueprint) return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *AssetPath));
+
+	UInheritableComponentHandler* ICH = Blueprint->GetInheritableComponentHandler(/*bCreateIfNecessary=*/false);
+	if (!ICH)
+	{
+		auto NoIch = MCPSuccess();
+		NoIch->SetStringField(TEXT("path"), AssetPath);
+		NoIch->SetBoolField(TEXT("hadInheritableComponentHandler"), false);
+		NoIch->SetBoolField(TEXT("flushed"), false);
+		return MCPResult(NoIch);
+	}
+
+	// Count override records before/after via reflection (Records is private).
+	auto CountRecords = [ICH]() -> int32
+	{
+		if (FArrayProperty* RP = CastField<FArrayProperty>(ICH->GetClass()->FindPropertyByName(TEXT("Records"))))
+		{
+			FScriptArrayHelper H(RP, RP->ContainerPtrToValuePtr<void>(ICH));
+			return H.Num();
+		}
+		return -1;
+	};
+
+	const int32 Before = CountRecords();
+	Blueprint->Modify();
+	ICH->ValidateTemplates();
+	const int32 After = CountRecords();
+
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+	SaveAssetPackage(Blueprint);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("path"), AssetPath);
+	Result->SetBoolField(TEXT("hadInheritableComponentHandler"), true);
+	Result->SetBoolField(TEXT("flushed"), true);
+	Result->SetBoolField(TEXT("isEmpty"), ICH->IsEmpty());
+	if (Before >= 0)
+	{
+		Result->SetNumberField(TEXT("recordsBefore"), Before);
+		Result->SetNumberField(TEXT("recordsAfter"), After);
+		Result->SetNumberField(TEXT("recordsRemoved"), FMath::Max(0, Before - After));
+	}
+	return MCPResult(Result);
+}
+
 TSharedPtr<FJsonValue> FBlueprintHandlers::RunConstructionScript(const TSharedPtr<FJsonObject>& Params)
 {
 	FString AssetPath;

@@ -23,7 +23,16 @@ private:
 	static TSharedPtr<FJsonValue> RecompileMaterial(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> CreateMaterialInstance(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetMaterialParameter(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadMaterialInstance(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetMaterialInstanceParent(const TSharedPtr<FJsonObject>& Params);
+	// #594 batch reparent + reassign params across many Material Instances
+	static TSharedPtr<FJsonValue> BatchSetInstances(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ClearMaterialInstanceParameters(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ListMaterialStaticSwitches(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetMaterialStaticSwitch(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetExpressionValue(const TSharedPtr<FJsonObject>& Params);
+	// #617 read/write a MaterialExpressionCustom's HLSL Code, inputs, output type
+	static TSharedPtr<FJsonValue> SetCustomExpression(const TSharedPtr<FJsonObject>& Params);
 
 	// Name-based handlers matching TS tool expectations
 	static TSharedPtr<FJsonValue> ConnectTextureToMaterial(const TSharedPtr<FJsonObject>& Params);
@@ -70,4 +79,11 @@ private:
 	// #225: single-call simple material authoring + EMaterialUsage flag
 	static TSharedPtr<FJsonValue> CreateMaterialSimple(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetMaterialUsage(const TSharedPtr<FJsonObject>& Params);
+
+	// #463: MaterialFunction creation + expression authoring inside functions.
+	// Material asset authoring API exists; MaterialFunction was the gap.
+	static TSharedPtr<FJsonValue> CreateMaterialFunction(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddMaterialFunctionExpression(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ConnectMaterialFunctionExpressions(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ListMaterialFunctionExpressions(const TSharedPtr<FJsonObject>& Params);
 };

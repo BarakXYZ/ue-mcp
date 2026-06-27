@@ -27,6 +27,10 @@ private:
 	static TSharedPtr<FJsonValue> GetSelectedActors(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ListVolumes(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> MoveActor(const TSharedPtr<FJsonObject>& Params);
+	// #566 point an actor at a target point or actor (computed look-at)
+	static TSharedPtr<FJsonValue> AimActorAt(const TSharedPtr<FJsonObject>& Params);
+	// #585 project a world point onto the navmesh
+	static TSharedPtr<FJsonValue> NavProjectPoint(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SelectActors(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SpawnLight(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetLightProperties(const TSharedPtr<FJsonObject>& Params);
@@ -36,6 +40,7 @@ private:
 	static TSharedPtr<FJsonValue> RemoveComponentFromActor(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> LoadLevel(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetComponentProperty(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> GetComponentDetails(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetVolumeProperties(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> GetWorldSettings(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetWorldSettings(const TSharedPtr<FJsonObject>& Params);
@@ -43,6 +48,8 @@ private:
 	// #94: Fog + sky helpers
 	static TSharedPtr<FJsonValue> SetFogProperties(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> GetActorsByClass(const TSharedPtr<FJsonObject>& Params);
+	// #582 find actors that own a component of a given class
+	static TSharedPtr<FJsonValue> GetActorsByComponentClass(const TSharedPtr<FJsonObject>& Params);
 	// v0.7.19 issue #146 — actor class histogram (counts by class name)
 	static TSharedPtr<FJsonValue> CountActorsByClass(const TSharedPtr<FJsonObject>& Params);
 	// v0.7.19 issue #150 — RuntimeVirtualTextureVolume / component summary
@@ -82,4 +89,9 @@ private:
 	// #420: raycast + #419 snap-to-floor (spatial level operations)
 	static TSharedPtr<FJsonValue> LineTrace(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SnapActorToFloor(const TSharedPtr<FJsonObject>& Params);
+	// #453: per-actor motion snapshot for telemetry / driving probes.
+	static TSharedPtr<FJsonValue> ReadActorMotion(const TSharedPtr<FJsonObject>& Params);
+	// #434: bulk-add transforms to an actor's HISMC/ISMC for foliage / debris
+	// authoring. Python's add_instance crashes in 5.7; the C++ path is fine.
+	static TSharedPtr<FJsonValue> AddHismcInstances(const TSharedPtr<FJsonObject>& Params);
 };

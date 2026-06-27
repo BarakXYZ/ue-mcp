@@ -21,6 +21,40 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "EdGraphSchema_K2.h"
+#include "AbilitySystemComponent.h"
+#include "AttributeSet.h"
+#include "Engine/DataTable.h"
+#include "GameplayEffect.h"
+#include "GameplayEffectTypes.h"
+#include "ScalableFloat.h"
+#include "GameplayTagsManager.h"
+
+// Resolve a FGameplayAttribute by name across every loaded AttributeSet
+// subclass. Accepts a bare property name ("Health") or a qualified
+// "SetClassSubstring.Attribute". Returns an invalid attribute on miss.
+static FGameplayAttribute FindGameplayAttributeByName(const FString& Name)
+{
+	FString SetFilter, AttrName = Name;
+	if (Name.Contains(TEXT(".")))
+	{
+		Name.Split(TEXT("."), &SetFilter, &AttrName);
+	}
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		UClass* C = *It;
+		if (C == UAttributeSet::StaticClass() || !C->IsChildOf(UAttributeSet::StaticClass())) continue;
+		if (!SetFilter.IsEmpty() && !C->GetName().Contains(SetFilter)) continue;
+		for (TFieldIterator<FProperty> P(C); P; ++P)
+		{
+			FStructProperty* SP = CastField<FStructProperty>(*P);
+			if (SP && SP->Struct == FGameplayAttributeData::StaticStruct() && SP->GetName() == AttrName)
+			{
+				return FGameplayAttribute(SP);
+			}
+		}
+	}
+	return FGameplayAttribute();
+}
 
 void FGasHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
@@ -33,6 +67,12 @@ void FGasHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("add_attribute"), &AddAttribute);
 	Registry.RegisterHandler(TEXT("set_ability_tags"), &SetAbilityTags);
 	Registry.RegisterHandler(TEXT("set_effect_modifier"), &SetEffectModifier);
+	Registry.RegisterHandler(TEXT("set_asc_defaults"), &SetAscDefaults);
+	Registry.RegisterHandler(TEXT("apply_effect"), &ApplyEffect);
+	Registry.RegisterHandler(TEXT("set_attribute"), &SetAttribute);
+	Registry.RegisterHandler(TEXT("get_attribute"), &GetAttribute);
+	Registry.RegisterHandler(TEXT("init_asc"), &InitAsc);
+	Registry.RegisterHandler(TEXT("get_asc_state"), &GetAscState);
 }
 
 TSharedPtr<FJsonValue> FGasHandlers::CreateGasBlueprint(
@@ -319,38 +359,70 @@ TSharedPtr<FJsonValue> FGasHandlers::SetAbilityTags(const TSharedPtr<FJsonObject
 	UObject* CDO = LoadBlueprintCDO<UObject>(AbilityPath, CdoErr);
 	if (!CDO) return CdoErr;
 
-	TSharedPtr<FJsonObject> TagsSet = MakeShared<FJsonObject>();
+	// param name -> FGameplayTagContainer UPROPERTY on UGameplayAbility.
+	const TArray<TPair<FString, FString>> TagMap = {
+		{TEXT("ability_tags"), TEXT("AbilityTags")},
+		{TEXT("cancel_abilities_with_tag"), TEXT("CancelAbilitiesWithTag")},
+		{TEXT("block_abilities_with_tag"), TEXT("BlockAbilitiesWithTag")},
+		{TEXT("activation_required_tags"), TEXT("ActivationRequiredTags")},
+		{TEXT("activation_blocked_tags"), TEXT("ActivationBlockedTags")},
+	};
 
-	// Process each tag property
-	TArray<FString> TagProps = {TEXT("AbilityTags"), TEXT("CancelAbilitiesWithTag"), TEXT("BlockAbilitiesWithTag"), TEXT("ActivationRequiredTags"), TEXT("ActivationBlockedTags")};
-	TArray<FString> ParamNames = {TEXT("ability_tags"), TEXT("cancel_abilities_with_tag"), TEXT("block_abilities_with_tag"), TEXT("activation_required_tags"), TEXT("activation_blocked_tags")};
+	TSharedPtr<FJsonObject> Applied = MakeShared<FJsonObject>();
+	TArray<FString> Unsupported;
+	bool bAnyApplied = false;
 
-	for (int32 i = 0; i < TagProps.Num(); i++)
+	for (const TPair<FString, FString>& Entry : TagMap)
 	{
-		const TArray<TSharedPtr<FJsonValue>>* TagArray;
-		if (Params->TryGetArrayField(*ParamNames[i], TagArray))
+		const TArray<TSharedPtr<FJsonValue>>* TagArray = nullptr;
+		if (!Params->TryGetArrayField(*Entry.Key, TagArray) || !TagArray) continue;
+
+		FStructProperty* Prop = CastField<FStructProperty>(CDO->GetClass()->FindPropertyByName(*Entry.Value));
+		if (!Prop || Prop->Struct != FGameplayTagContainer::StaticStruct())
 		{
-			FProperty* Prop = CDO->GetClass()->FindPropertyByName(*TagProps[i]);
-			if (Prop)
+			// Engine-version drift (e.g. AbilityTags deprecated): report, don't fake.
+			Unsupported.Add(Entry.Value);
+			continue;
+		}
+
+		FGameplayTagContainer* Container = Prop->ContainerPtrToValuePtr<FGameplayTagContainer>(CDO);
+		Container->Reset();
+		TArray<TSharedPtr<FJsonValue>> Wrote;
+		for (const TSharedPtr<FJsonValue>& TagVal : *TagArray)
+		{
+			FString TagStr;
+			if (!TagVal.IsValid() || !TagVal->TryGetString(TagStr)) continue;
+			const FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*TagStr), /*ErrorIfNotFound*/ false);
+			if (Tag.IsValid())
 			{
-				TArray<TSharedPtr<FJsonValue>> AddedTags;
-				for (const auto& TagVal : *TagArray)
-				{
-					FString TagStr;
-					if (TagVal->TryGetString(TagStr))
-					{
-						AddedTags.Add(MakeShared<FJsonValueString>(TagStr));
-					}
-				}
-				TagsSet->SetArrayField(ParamNames[i], AddedTags);
+				Container->AddTag(Tag);
+				Wrote.Add(MakeShared<FJsonValueString>(TagStr));
+			}
+			else
+			{
+				Wrote.Add(MakeShared<FJsonValueString>(TagStr + TEXT(" (unregistered tag - skipped)")));
 			}
 		}
+		Applied->SetArrayField(Entry.Key, Wrote);
+		bAnyApplied = true;
+	}
+
+	if (bAnyApplied)
+	{
+		CDO->MarkPackageDirty();
+		SaveAssetPackage(CDO);
 	}
 
 	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
 	Result->SetStringField(TEXT("abilityPath"), AbilityPath);
-	Result->SetObjectField(TEXT("tagsSet"), TagsSet);
-	Result->SetStringField(TEXT("note"), TEXT("Tag container modification via C++ reflection is limited. Use execute_python for full tag manipulation."));
+	Result->SetObjectField(TEXT("applied"), Applied);
+	if (Unsupported.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> U;
+		for (const FString& S : Unsupported) U.Add(MakeShared<FJsonValueString>(S));
+		Result->SetArrayField(TEXT("unsupportedProperties"), U);
+	}
 	return MCPResult(Result);
 }
 
@@ -362,14 +434,164 @@ TSharedPtr<FJsonValue> FGasHandlers::SetEffectModifier(const TSharedPtr<FJsonObj
 	FString Attribute;
 	if (auto Err = RequireString(Params, TEXT("attribute"), Attribute)) return Err;
 
-	FString Operation = OptionalString(Params, TEXT("operation"), TEXT("Additive"));
-	double Magnitude = OptionalNumber(Params, TEXT("magnitude"), 0.0);
+	const FString Operation = OptionalString(Params, TEXT("operation"), TEXT("Additive"));
+	const double Magnitude = OptionalNumber(Params, TEXT("magnitude"), 0.0);
+
+	TSharedPtr<FJsonValue> CdoErr;
+	UGameplayEffect* GE = LoadBlueprintCDO<UGameplayEffect>(EffectPath, CdoErr);
+	if (!GE) return CdoErr;
+
+	const FGameplayAttribute GAttr = FindGameplayAttributeByName(Attribute);
+	if (!GAttr.IsValid())
+	{
+		return MCPError(FString::Printf(
+			TEXT("Attribute not found: %s. Use 'SetName.Attribute' (or a unique attribute name); the AttributeSet must be compiled/loaded."), *Attribute));
+	}
+
+	const FString Op = Operation.ToLower();
+	EGameplayModOp::Type ModOp;
+	if (Op == TEXT("additive") || Op == TEXT("add")) ModOp = EGameplayModOp::Additive;
+	else if (Op == TEXT("multiplicative") || Op == TEXT("multiply") || Op == TEXT("multiplicitive")) ModOp = EGameplayModOp::Multiplicitive;
+	else if (Op == TEXT("division") || Op == TEXT("divide")) ModOp = EGameplayModOp::Division;
+	else if (Op == TEXT("override")) ModOp = EGameplayModOp::Override;
+	else return MCPError(FString::Printf(TEXT("Unknown operation '%s' (Additive|Multiplicative|Division|Override)"), *Operation));
+
+	// Update an existing modifier for the same attribute+op, else append one.
+	bool bUpdated = false;
+	for (FGameplayModifierInfo& M : GE->Modifiers)
+	{
+		if (M.Attribute == GAttr && M.ModifierOp == ModOp)
+		{
+			M.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(static_cast<float>(Magnitude)));
+			bUpdated = true;
+			break;
+		}
+	}
+	if (!bUpdated)
+	{
+		FGameplayModifierInfo ModInfo;
+		ModInfo.Attribute = GAttr;
+		ModInfo.ModifierOp = ModOp;
+		ModInfo.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(static_cast<float>(Magnitude)));
+		GE->Modifiers.Add(ModInfo);
+	}
+
+	GE->MarkPackageDirty();
+	SaveAssetPackage(GE);
 
 	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
 	Result->SetStringField(TEXT("effectPath"), EffectPath);
-	Result->SetStringField(TEXT("attribute"), Attribute);
+	Result->SetStringField(TEXT("attribute"), GAttr.GetName());
 	Result->SetStringField(TEXT("operation"), Operation);
 	Result->SetNumberField(TEXT("magnitude"), Magnitude);
-	Result->SetStringField(TEXT("note"), TEXT("GameplayEffect modifier configuration set. Use execute_python for full GE modifier array manipulation."));
+	Result->SetBoolField(TEXT("replacedExisting"), bUpdated);
+	Result->SetNumberField(TEXT("modifierCount"), GE->Modifiers.Num());
+	return MCPResult(Result);
+}
+
+TSharedPtr<FJsonValue> FGasHandlers::SetAscDefaults(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BPPath;
+	if (auto Err = RequireString(Params, TEXT("blueprintPath"), BPPath)) return Err;
+
+	FString AttrSetSpec;
+	if (auto Err = RequireStringAlt(Params, TEXT("attributeSet"), TEXT("attributeSetPath"), AttrSetSpec)) return Err;
+
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+	if (!BP) return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *BPPath));
+
+	UClass* ASCClass = FindObject<UClass>(nullptr, TEXT("/Script/GameplayAbilities.AbilitySystemComponent"));
+	if (!ASCClass) return MCPError(TEXT("AbilitySystemComponent not found. Enable GameplayAbilities plugin."));
+
+	// Resolve the AttributeSet class from a content path (BP generated class) or
+	// a native short name.
+	UClass* AttrSetClass = nullptr;
+	{
+		UClass* AttrBase = UAttributeSet::StaticClass();
+		auto Ok = [AttrBase](UClass* C) { return C && C->IsChildOf(AttrBase); };
+		if (AttrSetSpec.Contains(TEXT("/")))
+		{
+			if (UClass* C = LoadObject<UClass>(nullptr, *AttrSetSpec); Ok(C)) AttrSetClass = C;
+			if (!AttrSetClass)
+			{
+				FString AssetName;
+				AttrSetSpec.Split(TEXT("/"), nullptr, &AssetName, ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+				if (UClass* C = LoadObject<UClass>(nullptr, *(AttrSetSpec + TEXT(".") + AssetName + TEXT("_C"))); Ok(C)) AttrSetClass = C;
+			}
+			if (!AttrSetClass)
+			{
+				if (UBlueprint* SetBP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(AttrSetSpec)))
+				{
+					if (Ok(SetBP->GeneratedClass)) AttrSetClass = SetBP->GeneratedClass;
+				}
+			}
+		}
+		else if (UClass* C = FindClassByShortName(AttrSetSpec); Ok(C))
+		{
+			AttrSetClass = C;
+		}
+	}
+	if (!AttrSetClass) return MCPError(FString::Printf(TEXT("AttributeSet class not found: %s"), *AttrSetSpec));
+
+	// Find the ASC component template on the blueprint's construction script.
+	const FString CompName = OptionalString(Params, TEXT("componentName"));
+	UAbilitySystemComponent* ASCTemplate = nullptr;
+	FString ResolvedComp;
+	if (BP->SimpleConstructionScript)
+	{
+		for (USCS_Node* N : BP->SimpleConstructionScript->GetAllNodes())
+		{
+			if (!N || !N->ComponentTemplate || !N->ComponentTemplate->IsA(ASCClass)) continue;
+			if (!CompName.IsEmpty() && N->GetVariableName() != FName(*CompName)) continue;
+			ASCTemplate = Cast<UAbilitySystemComponent>(N->ComponentTemplate);
+			ResolvedComp = N->GetVariableName().ToString();
+			break;
+		}
+	}
+	if (!ASCTemplate)
+	{
+		return MCPError(TEXT("No AbilitySystemComponent on the blueprint - run add_ability_system_component first"));
+	}
+
+	// Optional init DataTable (production path: starting values at ASC init).
+	UDataTable* InitTable = nullptr;
+	const FString TablePath = OptionalString(Params, TEXT("initDataTable"));
+	if (!TablePath.IsEmpty())
+	{
+		InitTable = LoadObject<UDataTable>(nullptr, *TablePath);
+		if (!InitTable) return MCPError(FString::Printf(TEXT("initDataTable not found: %s"), *TablePath));
+	}
+
+	// Idempotency: already wired for this attribute set?
+	for (const FAttributeDefaults& D : ASCTemplate->DefaultStartingData)
+	{
+		if (D.Attributes == AttrSetClass)
+		{
+			auto Existed = MCPSuccess();
+			MCPSetExisted(Existed);
+			Existed->SetStringField(TEXT("blueprintPath"), BPPath);
+			Existed->SetStringField(TEXT("component"), ResolvedComp);
+			Existed->SetStringField(TEXT("attributeSet"), AttrSetClass->GetName());
+			return MCPResult(Existed);
+		}
+	}
+
+	FAttributeDefaults Def;
+	Def.Attributes = AttrSetClass;
+	Def.DefaultStartingTable = InitTable;
+	ASCTemplate->DefaultStartingData.Add(Def);
+
+	FKismetEditorUtilities::CompileBlueprint(BP);
+	SaveAssetPackage(BP);
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("blueprintPath"), BPPath);
+	Result->SetStringField(TEXT("component"), ResolvedComp);
+	Result->SetStringField(TEXT("attributeSet"), AttrSetClass->GetName());
+	if (InitTable) Result->SetStringField(TEXT("initDataTable"), InitTable->GetPathName());
+	Result->SetStringField(TEXT("note"),
+		TEXT("Attribute set wired to the ASC's DefaultStartingData. If attributes aren't live at runtime, call gas(action=\"init_asc\", attributeSet=...) after PIE starts."));
 	return MCPResult(Result);
 }

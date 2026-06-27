@@ -3,8 +3,12 @@
 #include "HandlerUtils.h"
 #include "HandlerJsonProperty.h"
 #include "HandlerAssetCreate.h"
+#include "JsonSerializer.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Engine/AssetManager.h"
+#include "Engine/AssetManagerTypes.h"
+#include "Engine/Blueprint.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Editor.h"
 #include "FileHelpers.h"
@@ -17,6 +21,7 @@
 #include "EditorFramework/AssetImportData.h"
 #include "UObject/Package.h"
 #include "Misc/PackageName.h"
+#include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -189,6 +194,7 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("create_interchange_pipeline"), &CreateInterchangePipeline);
 	Registry.RegisterHandler(TEXT("remove_socket"), &RemoveSocket);
 	Registry.RegisterHandler(TEXT("list_sockets"), &ListSockets);
+	Registry.RegisterHandler(TEXT("list_asset_sockets"), &ListSockets);
 	Registry.RegisterHandler(TEXT("reload_package"), &ReloadPackage);
 	// #279: detect/recover stuck-unloadable assets
 	Registry.RegisterHandler(TEXT("asset_health_check"), &HealthCheck);
@@ -198,10 +204,43 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("create_datatable"), &CreateDataTable);
 	Registry.RegisterHandler(TEXT("read_datatable"), &ReadDataTable);
 	Registry.RegisterHandler(TEXT("reimport_datatable"), &ReimportDataTable);
+	// #437: single-row mutation. Append a new row or overwrite an existing one
+	// without exporting and re-importing the whole table.
+	Registry.RegisterHandler(TEXT("set_datatable_row"), &SetDataTableRow);
+	Registry.RegisterHandler(TEXT("add_datatable_row"), &SetDataTableRow);
+	Registry.RegisterHandler(TEXT("update_datatable_row"), &SetDataTableRow);
+	Registry.RegisterHandler(TEXT("remove_datatable_row"), &RemoveDataTableRow);
+	Registry.RegisterHandler(TEXT("delete_datatable_row"), &RemoveDataTableRow);
+	// #535: single-row read, single-cell write, row rename, and bulk JSON fill.
+	Registry.RegisterHandler(TEXT("get_datatable_row"), &GetDataTableRow);
+	Registry.RegisterHandler(TEXT("set_datatable_cell"), &SetDataTableCell);
+	Registry.RegisterHandler(TEXT("rename_datatable_row"), &RenameDataTableRow);
+	Registry.RegisterHandler(TEXT("fill_datatable_from_json"), &FillDataTableFromJson);
+
+	// CurveTable handlers
+	Registry.RegisterHandler(TEXT("create_curvetable"), &CreateCurveTable);
+	Registry.RegisterHandler(TEXT("read_curvetable"), &ReadCurveTable);
+	Registry.RegisterHandler(TEXT("list_curvetable_rows"), &ReadCurveTable);
+	Registry.RegisterHandler(TEXT("import_curvetable"), &ImportCurveTable);
+	Registry.RegisterHandler(TEXT("add_curvetable_row"), &AddCurveTableRow);
+	Registry.RegisterHandler(TEXT("remove_curvetable_row"), &RemoveCurveTableRow);
+	Registry.RegisterHandler(TEXT("rename_curvetable_row"), &RenameCurveTableRow);
+	Registry.RegisterHandler(TEXT("get_curvetable_keys"), &GetCurveTableKeys);
+	Registry.RegisterHandler(TEXT("set_curvetable_keys"), &SetCurveTableKeys);
+	Registry.RegisterHandler(TEXT("add_curvetable_key"), &AddCurveTableKey);
 
 	// Generic reimport / export
 	Registry.RegisterHandler(TEXT("reimport_asset"), &ReimportAsset);
 	Registry.RegisterHandler(TEXT("export_asset"), &ExportAsset);
+
+	// StringTable handlers
+	Registry.RegisterHandler(TEXT("create_stringtable"), &CreateStringTable);
+	Registry.RegisterHandler(TEXT("read_stringtable"), &ReadStringTable);
+	Registry.RegisterHandler(TEXT("list_stringtable_keys"), &ListStringTableKeys);
+	Registry.RegisterHandler(TEXT("get_stringtable_entry"), &GetStringTableEntry);
+	Registry.RegisterHandler(TEXT("set_stringtable_entry"), &SetStringTableEntry);
+	Registry.RegisterHandler(TEXT("remove_stringtable_entry"), &RemoveStringTableEntry);
+	Registry.RegisterHandler(TEXT("import_stringtable"), &ImportStringTable);
 
 	// v0.7.8 stubs — FTS5-backed asset search
 	Registry.RegisterHandler(TEXT("search_assets_fts"), &SearchAssetsFTS);
@@ -209,6 +248,9 @@ void FAssetHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 
 	// v0.7.19 #150 — AssetRegistry referencers
 	Registry.RegisterHandler(TEXT("get_asset_referencers"), &GetReferencers);
+	Registry.RegisterHandler(TEXT("get_asset_dependencies"), &GetDependencies);
+	Registry.RegisterHandler(TEXT("list_skeleton_bones"), &ListSkeletonBones);
+	Registry.RegisterHandler(TEXT("get_primary_asset_ids"), &GetPrimaryAssetIds);
 
 	// v1.0.0-rc.2 — #155 (asset gaps)
 	Registry.RegisterHandler(TEXT("set_sk_material_slots"), &SetSkeletalMeshMaterialSlots);
@@ -596,6 +638,25 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAsset(const TSharedPtr<FJsonObject>& 
 	return MCPResult(Result);
 }
 
+// #568: loading a Blueprint asset path yields the UBlueprint wrapper, whose
+// own properties (ParentClass, etc.) are rarely what a caller wants. Resolve to
+// the generated-class CDO so asset property reads/writes hit the real defaults
+// and can author Instanced sub-object arrays. Non-Blueprint assets pass through.
+static UObject* MCPResolveAssetToCDO(UObject* Asset)
+{
+	if (UBlueprint* BP = Cast<UBlueprint>(Asset))
+	{
+		if (UClass* GenClass = BP->GeneratedClass)
+		{
+			if (UObject* CDO = GenClass->GetDefaultObject())
+			{
+				return CDO;
+			}
+		}
+	}
+	return Asset;
+}
+
 TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJsonObject>& Params)
 {
 	FString AssetPath;
@@ -606,6 +667,11 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJso
 	{
 		return MCPError(FString::Printf(TEXT("Asset not found: %s"), *AssetPath));
 	}
+	Asset = MCPResolveAssetToCDO(Asset); // #568
+
+	FString ValueFormat;
+	Params->TryGetStringField(TEXT("valueFormat"), ValueFormat);
+	const bool bJsonValues = ValueFormat.Equals(TEXT("json"), ESearchCase::IgnoreCase);
 
 	// Helper lambda to export a property value as string (#48 — reads arrays, structs, sub-objects)
 	auto ExportPropertyValue = [](FProperty* Prop, const void* Container, UObject* Outer) -> FString
@@ -619,16 +685,52 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJso
 	FString PropertyName;
 	if (Params->TryGetStringField(TEXT("propertyName"), PropertyName) && !PropertyName.IsEmpty())
 	{
-		FProperty* Prop = Asset->GetClass()->FindPropertyByName(*PropertyName);
-		if (!Prop)
+		// Resolve dotted/indexed paths into nested structs, array elements, and
+		// instanced subobjects (#527), e.g. "Config.Traits[1].Params.Field".
+		FProperty* Prop = nullptr;
+		void* ValuePtr = nullptr;
+		UObject* LeafOwner = nullptr;
+		FString ResolveErr;
+		if (!MCPJsonProperty::ResolveDottedPath(Asset, PropertyName, Prop, ValuePtr, LeafOwner, ResolveErr))
 		{
-			return MCPError(FString::Printf(TEXT("Property not found: %s"), *PropertyName));
+			return MCPError(ResolveErr);
 		}
+		FString ValueStr;
+		Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, LeafOwner, PPF_None);
+
 		auto Result = MCPSuccess();
 		Result->SetStringField(TEXT("path"), AssetPath);
 		Result->SetStringField(TEXT("propertyName"), PropertyName);
 		Result->SetStringField(TEXT("type"), Prop->GetCPPType());
-		Result->SetStringField(TEXT("value"), ExportPropertyValue(Prop, Asset, Asset));
+		if (bJsonValues)
+		{
+			Result->SetField(TEXT("value"), FMCPJsonSerializer::SerializeValue(ValuePtr, Prop));
+		}
+		else
+		{
+			Result->SetStringField(TEXT("value"), ValueStr);
+		}
+
+		// When the path lands on an array of instanced subobjects, also
+		// enumerate each element's index and concrete class so callers can
+		// pick a trait to descend into next (#527).
+		if (FArrayProperty* ArrProp = CastField<FArrayProperty>(Prop))
+		{
+			if (FObjectProperty* InnerObj = CastField<FObjectProperty>(ArrProp->Inner))
+			{
+				FScriptArrayHelper H(ArrProp, ValuePtr);
+				TArray<TSharedPtr<FJsonValue>> Elems;
+				for (int32 i = 0; i < H.Num(); ++i)
+				{
+					UObject* Sub = InnerObj->GetObjectPropertyValue(H.GetRawPtr(i));
+					TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+					E->SetNumberField(TEXT("index"), i);
+					E->SetStringField(TEXT("class"), Sub ? Sub->GetClass()->GetName() : TEXT("None"));
+					Elems.Add(MakeShared<FJsonValueObject>(E));
+				}
+				Result->SetArrayField(TEXT("elements"), Elems);
+			}
+		}
 		return MCPResult(Result);
 	}
 
@@ -643,7 +745,15 @@ TSharedPtr<FJsonValue> FAssetHandlers::ReadAssetProperties(const TSharedPtr<FJso
 		P->SetStringField(TEXT("type"), (*It)->GetCPPType());
 		if (bIncludeValues)
 		{
-			P->SetStringField(TEXT("value"), ExportPropertyValue(*It, Asset, Asset));
+			if (bJsonValues)
+			{
+				const void* ValuePtr = (*It)->ContainerPtrToValuePtr<void>(Asset);
+				P->SetField(TEXT("value"), FMCPJsonSerializer::SerializeValue(ValuePtr, *It));
+			}
+			else
+			{
+				P->SetStringField(TEXT("value"), ExportPropertyValue(*It, Asset, Asset));
+			}
 		}
 		PropsArray.Add(MakeShared<FJsonValueObject>(P));
 	}
@@ -666,7 +776,15 @@ TSharedPtr<FJsonValue> FAssetHandlers::DuplicateAsset(const TSharedPtr<FJsonObje
 
 	const FString OnConflict = OptionalString(Params, TEXT("onConflict"), TEXT("skip"));
 
-	if (!UEditorAssetLibrary::DoesAssetExist(SourcePath))
+	// #441: DoesAssetExist returns false for some Blueprints in 5.7 even when
+	// the registry/loader can resolve them. Confirm via load-or-load_blueprint
+	// before erroring out so duplicate doesn't bounce off valid paths.
+	UObject* SourceObj = UEditorAssetLibrary::LoadAsset(SourcePath);
+	if (!SourceObj)
+	{
+		SourceObj = LoadObject<UObject>(nullptr, *SourcePath);
+	}
+	if (!SourceObj)
 	{
 		return MCPError(FString::Printf(TEXT("Source asset not found: %s"), *SourcePath));
 	}
@@ -686,6 +804,17 @@ TSharedPtr<FJsonValue> FAssetHandlers::DuplicateAsset(const TSharedPtr<FJsonObje
 	}
 
 	UObject* Dup = UEditorAssetLibrary::DuplicateAsset(SourcePath, DestPath);
+	if (!Dup)
+	{
+		// Fallback: drive AssetTools directly off the loaded UObject. Same path
+		// the Python workaround in #441 used.
+		FString DestPkg, DestName;
+		if (DestPath.Split(TEXT("/"), &DestPkg, &DestName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+		{
+			IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+			Dup = AssetTools.DuplicateAsset(DestName, DestPkg, SourceObj);
+		}
+	}
 
 	auto Result = MCPSuccess();
 	MCPSetCreated(Result);
@@ -1194,8 +1323,12 @@ namespace
 	struct FDeleteDiagnostics
 	{
 		bool bOpenInEditor = false;
-		TArray<FString> Referencers;
-		FString Reason;     // open_in_editor | has_referencers | unknown
+		TArray<FString> Referencers;       // on-disk (AssetRegistry) referencers
+		TArray<FString> InMemoryReferencers; // live UObject referencers (#601)
+		bool bInMemoryReferenced = false;  // #601
+		bool bPackageReadOnly = false;     // #601 - file read-only on disk
+		bool bPackageDirty = false;        // #601 - unsaved changes block delete
+		FString Reason;     // open_in_editor | has_referencers | in_memory_referenced | package_read_only | package_dirty | unknown
 	};
 
 	bool TryCloseAssetEditors(const FString& AssetPath, bool& bOutHadOpenEditor)
@@ -1245,9 +1378,45 @@ namespace
 			}
 		}
 
-		if (Diag.bOpenInEditor)         Diag.Reason = TEXT("open_in_editor");
-		else if (Diag.Referencers.Num()) Diag.Reason = TEXT("has_referencers");
-		else                             Diag.Reason = TEXT("unknown");
+		// #601: when there are no editors/on-disk referencers the delete still
+		// fails for non-obvious reasons. Gather the common culprits so callers
+		// get something actionable instead of a bare "unknown".
+		if (UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath))
+		{
+			// Live (in-memory) references beyond the asset's own package.
+			FReferencerInformationList RefInfo;
+			if (IsReferenced(Asset, RF_Public | RF_Standalone, EInternalObjectFlags::Garbage, /*bCheckSubObjects=*/true, &RefInfo))
+			{
+				for (const FReferencerInformation& Ext : RefInfo.ExternalReferences)
+				{
+					if (Ext.Referencer && Ext.Referencer->GetOutermost() != Asset->GetOutermost())
+					{
+						Diag.bInMemoryReferenced = true;
+						if (Diag.InMemoryReferencers.Num() < 20)
+						{
+							Diag.InMemoryReferencers.Add(Ext.Referencer->GetPathName());
+						}
+					}
+				}
+			}
+
+			if (UPackage* Pkg = Asset->GetOutermost())
+			{
+				Diag.bPackageDirty = Pkg->IsDirty();
+				FString PkgFilename;
+				if (FPackageName::DoesPackageExist(Pkg->GetName(), &PkgFilename))
+				{
+					Diag.bPackageReadOnly = IFileManager::Get().IsReadOnly(*PkgFilename);
+				}
+			}
+		}
+
+		if (Diag.bOpenInEditor)               Diag.Reason = TEXT("open_in_editor");
+		else if (Diag.Referencers.Num())      Diag.Reason = TEXT("has_referencers");
+		else if (Diag.bInMemoryReferenced)    Diag.Reason = TEXT("in_memory_referenced");
+		else if (Diag.bPackageReadOnly)       Diag.Reason = TEXT("package_read_only");
+		else if (Diag.bPackageDirty)          Diag.Reason = TEXT("package_dirty");
+		else                                  Diag.Reason = TEXT("unknown");
 		return Diag;
 	}
 
@@ -1261,6 +1430,20 @@ namespace
 			RefsJson.Add(MakeShared<FJsonValueString>(R));
 		}
 		Out->SetArrayField(TEXT("referencers"), RefsJson);
+
+		// #601 richer diagnostics for the formerly-"unknown" cases.
+		Out->SetBoolField(TEXT("inMemoryReferenced"), Diag.bInMemoryReferenced);
+		if (Diag.InMemoryReferencers.Num() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> InMemJson;
+			for (const FString& R : Diag.InMemoryReferencers)
+			{
+				InMemJson.Add(MakeShared<FJsonValueString>(R));
+			}
+			Out->SetArrayField(TEXT("inMemoryReferencers"), InMemJson);
+		}
+		Out->SetBoolField(TEXT("packageReadOnly"), Diag.bPackageReadOnly);
+		Out->SetBoolField(TEXT("packageDirty"), Diag.bPackageDirty);
 	}
 }
 
@@ -1607,7 +1790,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 	{
 		for (const auto& Pair : (*PropsObj)->Values)
 		{
-			const FString Key(Pair.Key.ToView());
+			const FString Key(Pair.Key);
 			FProperty* Prop = DataClass->FindPropertyByName(FName(*Key));
 			if (!Prop)
 			{
@@ -1795,6 +1978,113 @@ TSharedPtr<FJsonValue> FAssetHandlers::GetReferencers(const TSharedPtr<FJsonObje
 	Result->SetObjectField(TEXT("referencersByPackage"), ByPkg);
 	Result->SetNumberField(TEXT("totalReferencers"), TotalRefs);
 	Result->SetNumberField(TEXT("queriedPackages"), Packages.Num());
+	return MCPResult(Result);
+}
+
+// ─── #588 asset(get_dependencies) ───────────────────────────────────
+// Forward dependency lookup per package: "what packages does this asset
+// reference?" Mirrors GetReferencers (#150) but walks the other direction.
+// Optional 'hard'/'soft' flags filter by dependency link type; both default
+// on, matching GetDependencies' default (all package dependencies).
+TSharedPtr<FJsonValue> FAssetHandlers::GetDependencies(const TSharedPtr<FJsonObject>& Params)
+{
+	TArray<FString> Packages;
+	const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+	if (Params->TryGetArrayField(TEXT("packages"), Arr) && Arr)
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Arr)
+		{
+			FString S; if (V.IsValid() && V->TryGetString(S) && !S.IsEmpty()) Packages.Add(S);
+		}
+	}
+	else
+	{
+		FString Single;
+		if (Params->TryGetStringField(TEXT("packagePath"), Single)) Packages.Add(Single);
+	}
+	if (Packages.Num() == 0) return MCPError(TEXT("Supply 'packages' (array) or 'packagePath'"));
+
+	const bool bHard = OptionalBool(Params, TEXT("hard"), true);
+	const bool bSoft = OptionalBool(Params, TEXT("soft"), true);
+
+	using namespace UE::AssetRegistry;
+	EDependencyQuery QueryFlags = EDependencyQuery::NoRequirements;
+	if (bHard && !bSoft) QueryFlags = EDependencyQuery::Hard;
+	else if (bSoft && !bHard) QueryFlags = EDependencyQuery::Soft;
+	const FDependencyQuery Query(QueryFlags);
+
+	IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+
+	TSharedPtr<FJsonObject> ByPkg = MakeShared<FJsonObject>();
+	int32 TotalDeps = 0;
+	for (const FString& Pkg : Packages)
+	{
+		TArray<FName> Deps;
+		AR.GetDependencies(FName(*Pkg), Deps, EDependencyCategory::Package, Query);
+		TArray<TSharedPtr<FJsonValue>> Out;
+		for (const FName& D : Deps) Out.Add(MakeShared<FJsonValueString>(D.ToString()));
+		ByPkg->SetArrayField(Pkg, Out);
+		TotalDeps += Deps.Num();
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetObjectField(TEXT("dependenciesByPackage"), ByPkg);
+	Result->SetNumberField(TEXT("totalDependencies"), TotalDeps);
+	Result->SetNumberField(TEXT("queriedPackages"), Packages.Num());
+	return MCPResult(Result);
+}
+// ─── #579 asset(get_primary_asset_ids) ──────────────────────────────
+// Enumerate AssetManager-registered FPrimaryAssetIds, optionally filtered to a
+// single type, so callers can verify a primary-asset registration without
+// Python. Each entry carries the id, type, name, and resolved asset path.
+TSharedPtr<FJsonValue> FAssetHandlers::GetPrimaryAssetIds(const TSharedPtr<FJsonObject>& Params)
+{
+	UAssetManager* AM = UAssetManager::GetIfInitialized();
+	if (!AM) return MCPError(TEXT("AssetManager is not initialized for this project"));
+
+	const FString TypeFilter = OptionalString(Params, TEXT("type"));
+	const int32 MaxResults = OptionalInt(Params, TEXT("maxResults"), 1000);
+
+	TArray<FPrimaryAssetType> Types;
+	if (!TypeFilter.IsEmpty())
+	{
+		Types.Add(FPrimaryAssetType(*TypeFilter));
+	}
+	else
+	{
+		TArray<FPrimaryAssetTypeInfo> TypeInfos;
+		AM->GetPrimaryAssetTypeInfoList(TypeInfos);
+		for (const FPrimaryAssetTypeInfo& Info : TypeInfos)
+		{
+			Types.Add(FPrimaryAssetType(Info.PrimaryAssetType));
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Out;
+	int32 Total = 0;
+	for (const FPrimaryAssetType& Type : Types)
+	{
+		TArray<FPrimaryAssetId> Ids;
+		AM->GetPrimaryAssetIdList(Type, Ids);
+		for (const FPrimaryAssetId& Id : Ids)
+		{
+			++Total;
+			if (Out.Num() >= MaxResults) continue;
+			TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+			E->SetStringField(TEXT("primaryAssetId"), Id.ToString());
+			E->SetStringField(TEXT("type"), Id.PrimaryAssetType.ToString());
+			E->SetStringField(TEXT("name"), Id.PrimaryAssetName.ToString());
+			E->SetStringField(TEXT("assetPath"), AM->GetPrimaryAssetPath(Id).ToString());
+			Out.Add(MakeShared<FJsonValueObject>(E));
+		}
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetArrayField(TEXT("primaryAssetIds"), Out);
+	Result->SetNumberField(TEXT("count"), Out.Num());
+	Result->SetNumberField(TEXT("total"), Total);
+	Result->SetNumberField(TEXT("typeCount"), Types.Num());
+	if (Total > Out.Num()) Result->SetBoolField(TEXT("truncated"), true);
 	return MCPResult(Result);
 }
 TSharedPtr<FJsonValue> FAssetHandlers::DiagnoseRegistry(const TSharedPtr<FJsonObject>& Params)
@@ -2238,58 +2528,32 @@ TSharedPtr<FJsonValue> FAssetHandlers::SetAssetProperty(const TSharedPtr<FJsonOb
 	{
 		return MCPError(FString::Printf(TEXT("Could not load asset '%s'"), *AssetPath));
 	}
+	Asset = MCPResolveAssetToCDO(Asset); // #568 - author the generated-class CDO for Blueprint paths
 
-	TArray<FString> PathParts;
-	PropertyName.ParseIntoArray(PathParts, TEXT("."));
-	if (PathParts.Num() == 0) return MCPError(TEXT("Empty propertyName"));
-
-	UStruct* CurrentStruct = Asset->GetClass();
-	void* CurrentContainer = Asset;
+	// Resolve the (possibly indexed, possibly subobject-descending) path.
+	// Supports "Config.Traits[1].Params.RepresentationActorManagementClass"
+	// style writes into instanced subobjects held in arrays (#527).
 	FProperty* FinalProp = nullptr;
-	for (int32 i = 0; i < PathParts.Num(); ++i)
+	void* ValuePtr = nullptr;
+	UObject* LeafOwner = nullptr;
+	FString ResolveErr;
+	if (!MCPJsonProperty::ResolveDottedPath(Asset, PropertyName, FinalProp, ValuePtr, LeafOwner, ResolveErr))
 	{
-		FProperty* SegmentProp = CurrentStruct->FindPropertyByName(FName(*PathParts[i]));
-		if (!SegmentProp)
-		{
-			return MCPError(FString::Printf(TEXT("Property '%s' not found at '%s'"), *PathParts[i], *PropertyName));
-		}
-		if (i < PathParts.Num() - 1)
-		{
-			if (FStructProperty* SP = CastField<FStructProperty>(SegmentProp))
-			{
-				CurrentContainer = SP->ContainerPtrToValuePtr<void>(CurrentContainer);
-				CurrentStruct = SP->Struct;
-			}
-			else if (FObjectProperty* OP = CastField<FObjectProperty>(SegmentProp))
-			{
-				UObject* Sub = OP->GetObjectPropertyValue(OP->ContainerPtrToValuePtr<void>(CurrentContainer));
-				if (!Sub) return MCPError(FString::Printf(TEXT("Sub-object '%s' is null - cannot descend"), *PathParts[i]));
-				Sub->Modify();
-				CurrentContainer = Sub;
-				CurrentStruct = Sub->GetClass();
-			}
-			else
-			{
-				return MCPError(FString::Printf(TEXT("'%s' is not a struct or sub-object - cannot descend"), *PathParts[i]));
-			}
-		}
-		else
-		{
-			FinalProp = SegmentProp;
-		}
+		return MCPError(ResolveErr);
 	}
 
-	void* ValuePtr = FinalProp->ContainerPtrToValuePtr<void>(CurrentContainer);
 	FString PrevValue;
 	FinalProp->ExportText_Direct(PrevValue, ValuePtr, ValuePtr, nullptr, PPF_None);
 
 	Asset->Modify();
+	if (LeafOwner && LeafOwner != Asset) LeafOwner->Modify();
 	FString SetErr;
 	if (!MCPJsonProperty::SetJsonOnProperty(FinalProp, ValuePtr, ValueField, SetErr))
 	{
 		return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
 	}
 
+	if (LeafOwner) LeafOwner->PostEditChange();
 	Asset->PostEditChange();
 	Asset->MarkPackageDirty();
 
@@ -2348,7 +2612,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::SetTextureSettingsByType(const TSharedPtr
 
 	for (const auto& Pair : (*GroupsObj)->Values)
 	{
-		const FString Group(Pair.Key.ToView());
+		const FString Group(*Pair.Key);
 		const FProfile* Profile = Profiles.Find(Group);
 		if (!Profile)
 		{
@@ -2500,7 +2764,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateInterchangePipeline(const TSharedPt
 		for (const auto& Pair : (*OptionsObj)->Values)
 		{
 			// Caller key is a dotted path: "MeshPipeline.bImportSkeletalMeshes" etc.
-			const FString Key(Pair.Key.ToView());
+			const FString Key(*Pair.Key);
 			int32 Dot = INDEX_NONE;
 			Key.FindLastChar('.', Dot);
 			if (Dot == INDEX_NONE)

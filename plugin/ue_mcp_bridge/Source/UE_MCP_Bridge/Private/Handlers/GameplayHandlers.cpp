@@ -91,8 +91,19 @@ void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("list_eqs_queries"), &ListEqsQueries);
 	Registry.RegisterHandler(TEXT("list_state_trees"), &ListStateTrees);
 	Registry.RegisterHandler(TEXT("project_point_to_navigation"), &ProjectPointToNavigation);
+	// Enhanced Input asset authoring stays here. pie-studio owns PIE-time
+	// inject/record/replay; authoring InputAction / InputMappingContext
+	// assets and editing IMC mappings is core ue-mcp.
 	Registry.RegisterHandler(TEXT("create_input_action"), &CreateInputAction);
 	Registry.RegisterHandler(TEXT("create_input_mapping_context"), &CreateInputMappingContext);
+	Registry.RegisterHandler(TEXT("read_imc"), &ReadImc);
+	Registry.RegisterHandler(TEXT("get_applied_imcs"), &GetAppliedImcs);
+	Registry.RegisterHandler(TEXT("list_imc_mappings"), &ReadImc);
+	Registry.RegisterHandler(TEXT("add_imc_mapping"), &AddImcMapping);
+	Registry.RegisterHandler(TEXT("set_mapping_modifiers"), &SetMappingModifiers);
+	Registry.RegisterHandler(TEXT("remove_imc_mapping"), &RemoveImcMapping);
+	Registry.RegisterHandler(TEXT("set_imc_mapping_key"), &SetImcMappingKey);
+	Registry.RegisterHandler(TEXT("set_imc_mapping_action"), &SetImcMappingAction);
 	Registry.RegisterHandler(TEXT("create_blackboard"), &CreateBlackboard);
 	Registry.RegisterHandler(TEXT("create_behavior_tree"), &CreateBehaviorTree);
 	Registry.RegisterHandler(TEXT("create_eqs_query"), &CreateEqsQuery);
@@ -105,6 +116,13 @@ void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("spawn_nav_modifier_volume"), &SpawnNavModifierVolume);
 	Registry.RegisterHandler(TEXT("set_world_game_mode"), &SetWorldGameMode);
 	Registry.RegisterHandler(TEXT("add_blackboard_key"), &AddBlackboardKey);
+	// #469: set parent on BlackboardData so a child Blackboard can extend the
+	// parent's keys (canonical UE pattern for extending third-party AI assets).
+	Registry.RegisterHandler(TEXT("set_blackboard_parent"), &SetBlackboardParent);
+	Registry.RegisterHandler(TEXT("remove_blackboard_key"), &RemoveBlackboardKey);
+	Registry.RegisterHandler(TEXT("read_blackboard"), &ReadBlackboard);
+	// #494: discover available BT node classes (composites, tasks, decorators, services).
+	Registry.RegisterHandler(TEXT("list_bt_node_classes"), &ListBTNodeClasses);
 	Registry.RegisterHandler(TEXT("set_behavior_tree_blackboard"), &SetBehaviorTreeBlackboard);
 	Registry.RegisterHandler(TEXT("rebuild_navigation"), &RebuildNavmesh);
 	Registry.RegisterHandler(TEXT("find_nav_path"), &FindNavPath);
@@ -121,38 +139,9 @@ void FGameplayHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("remove_smart_object_slot"), &RemoveSmartObjectSlot);
 	Registry.RegisterHandler(TEXT("list_smart_object_slots"), &ListSmartObjectSlots);
 	Registry.RegisterHandler(TEXT("add_smart_object_slot_behavior"), &AddSmartObjectSlotBehavior);
-	Registry.RegisterHandler(TEXT("read_imc"), &ReadImc);
-	Registry.RegisterHandler(TEXT("list_imc_mappings"), &ReadImc);
-	Registry.RegisterHandler(TEXT("add_imc_mapping"), &AddImcMapping);
-	Registry.RegisterHandler(TEXT("set_mapping_modifiers"), &SetMappingModifiers);
-	Registry.RegisterHandler(TEXT("remove_imc_mapping"), &RemoveImcMapping);
-	Registry.RegisterHandler(TEXT("set_imc_mapping_key"), &SetImcMappingKey);
-	Registry.RegisterHandler(TEXT("set_imc_mapping_action"), &SetImcMappingAction);
-	Registry.RegisterHandler(TEXT("inspect_pie"), &InspectPie);
-	Registry.RegisterHandler(TEXT("get_pie_anim_state"), &GetPieAnimState);
-	Registry.RegisterHandler(TEXT("get_pie_anim_properties"), &GetPieAnimProperties);
-	Registry.RegisterHandler(TEXT("get_pie_subsystem_state"), &GetPieSubsystemState);
+	// read_imc through get_pie_subsystem_state moved to pie-studio
 	Registry.RegisterHandler(TEXT("get_navmesh_details"), &GetNavmeshDetails);
-	Registry.RegisterHandler(TEXT("apply_damage_in_pie"), &ApplyDamageInPie);
-	Registry.RegisterHandler(TEXT("inject_input"), &InjectInput);
-	Registry.RegisterHandler(TEXT("inject_input_start"), &InjectInputStart);
-	Registry.RegisterHandler(TEXT("inject_input_update"), &InjectInputUpdate);
-	Registry.RegisterHandler(TEXT("inject_input_stop"), &InjectInputStop);
-	Registry.RegisterHandler(TEXT("inject_input_tape"), &InjectInputTape);
-	Registry.RegisterHandler(TEXT("pie_record_arm"), &PieRecordArm);
-	Registry.RegisterHandler(TEXT("pie_record_disarm"), &PieRecordDisarm);
-	Registry.RegisterHandler(TEXT("pie_record_stop"), &PieRecordStop);
-	Registry.RegisterHandler(TEXT("pie_record_status"), &PieRecordStatus);
-	Registry.RegisterHandler(TEXT("pie_record_list"), &PieRecordList);
-	Registry.RegisterHandler(TEXT("pie_record_read"), &PieRecordRead);
-	Registry.RegisterHandler(TEXT("pie_record_delete"), &PieRecordDelete);
-	Registry.RegisterHandler(TEXT("pie_mark"), &PieMark);
-	Registry.RegisterHandler(TEXT("pie_replay_arm"), &PieReplayArm);
-	Registry.RegisterHandler(TEXT("pie_replay_disarm"), &PieReplayDisarm);
-	Registry.RegisterHandler(TEXT("pie_replay_stop"), &PieReplayStop);
-	Registry.RegisterHandler(TEXT("pie_replay_status"), &PieReplayStatus);
-	Registry.RegisterHandler(TEXT("pie_record_diff"), &PieRecordDiff);
-	Registry.RegisterHandler(TEXT("pie_snapshot"), &PieSnapshot);
+	// apply_damage_in_pie moved to pie-studio
 }
 
 TSharedPtr<FJsonValue> FGameplayHandlers::CreateSmartObjectDefinition(const TSharedPtr<FJsonObject>& Params)
@@ -460,7 +449,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::AddSmartObjectSlotBehavior(const TShar
 	{
 		for (const auto& Pair : (*InstObj)->Values)
 		{
-			const FString Key(Pair.Key.ToView());
+			const FString Key(Pair.Key);
 			FProperty* P = BehaviorAsset->GetClass()->FindPropertyByName(FName(*Key));
 			if (!P) continue;
 			FString E;
@@ -1201,8 +1190,223 @@ TSharedPtr<FJsonValue> FGameplayHandlers::AddBlackboardKey(const TSharedPtr<FJso
 	Result->SetStringField(TEXT("keyName"), KeyName);
 	Result->SetStringField(TEXT("keyType"), KeyType);
 	Result->SetNumberField(TEXT("totalKeys"), BlackboardAsset->Keys.Num());
-	// No rollback: no paired remove_blackboard_key handler.
+	// #469: rollback via remove_blackboard_key.
+	TSharedPtr<FJsonObject> RollPayload = MakeShared<FJsonObject>();
+	RollPayload->SetStringField(TEXT("blackboardPath"), BlackboardPath);
+	RollPayload->SetStringField(TEXT("keyName"), KeyName);
+	MCPSetRollback(Result, TEXT("remove_blackboard_key"), RollPayload);
 
+	return MCPResult(Result);
+}
+
+// #469: set Parent on BlackboardData. Canonical UE pattern for extending a
+// third-party blackboard (e.g. plugin's ACFAIBB) without duplicating its
+// keys. Optionally prune duplicate own-keys that the parent already defines.
+TSharedPtr<FJsonValue> FGameplayHandlers::SetBlackboardParent(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlackboardPath;
+	if (auto Err = RequireString(Params, TEXT("blackboardPath"), BlackboardPath)) return Err;
+
+	FString ParentPath;
+	const bool bHasParent = Params->TryGetStringField(TEXT("parentPath"), ParentPath);
+
+	const bool bAutoPrune = OptionalBool(Params, TEXT("autoPruneDuplicateKeys"), true);
+
+	UBlackboardData* Child = LoadObject<UBlackboardData>(nullptr, *BlackboardPath);
+	if (!Child) return MCPError(FString::Printf(TEXT("BlackboardData not found: %s"), *BlackboardPath));
+
+	const FString PrevParentPath = Child->Parent ? Child->Parent->GetPathName() : TEXT("None");
+
+	UBlackboardData* Parent = nullptr;
+	if (bHasParent && !ParentPath.IsEmpty() && !ParentPath.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+	{
+		Parent = LoadObject<UBlackboardData>(nullptr, *ParentPath);
+		if (!Parent) return MCPError(FString::Printf(TEXT("Parent BlackboardData not found: %s"), *ParentPath));
+		if (Parent == Child) return MCPError(TEXT("Cannot set blackboard parent to itself"));
+		// Walk parent chain to guard against cycles.
+		for (UBlackboardData* Walk = Parent->Parent; Walk; Walk = Walk->Parent)
+		{
+			if (Walk == Child) return MCPError(TEXT("Cycle detected in blackboard parent chain"));
+		}
+	}
+
+	Child->Modify();
+	Child->Parent = Parent;
+
+	TArray<TSharedPtr<FJsonValue>> Pruned;
+	if (bAutoPrune && Parent)
+	{
+		// Collect parent keys for set-membership.
+		TSet<FName> ParentKeyNames;
+		for (UBlackboardData* Walk = Parent; Walk; Walk = Walk->Parent)
+		{
+			for (const FBlackboardEntry& E : Walk->Keys)
+			{
+				ParentKeyNames.Add(E.EntryName);
+			}
+		}
+		for (int32 i = Child->Keys.Num() - 1; i >= 0; --i)
+		{
+			if (ParentKeyNames.Contains(Child->Keys[i].EntryName))
+			{
+				Pruned.Add(MakeShared<FJsonValueString>(Child->Keys[i].EntryName.ToString()));
+				Child->Keys.RemoveAt(i);
+			}
+		}
+	}
+
+	// Refresh runtime key index cache.
+	Child->UpdateKeyIDs();
+
+	Child->MarkPackageDirty();
+	UEditorAssetLibrary::SaveAsset(Child->GetPathName());
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("blackboardPath"), BlackboardPath);
+	Result->SetStringField(TEXT("parentPath"), Parent ? Parent->GetPathName() : TEXT("None"));
+	Result->SetArrayField(TEXT("prunedDuplicates"), Pruned);
+	Result->SetNumberField(TEXT("ownKeyCount"), Child->Keys.Num());
+
+	TSharedPtr<FJsonObject> RollPayload = MakeShared<FJsonObject>();
+	RollPayload->SetStringField(TEXT("blackboardPath"), BlackboardPath);
+	RollPayload->SetStringField(TEXT("parentPath"), PrevParentPath);
+	RollPayload->SetBoolField(TEXT("autoPruneDuplicateKeys"), false);
+	MCPSetRollback(Result, TEXT("set_blackboard_parent"), RollPayload);
+
+	return MCPResult(Result);
+}
+
+// #469: remove a single key from a Blackboard by name. Idempotent.
+TSharedPtr<FJsonValue> FGameplayHandlers::RemoveBlackboardKey(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlackboardPath;
+	if (auto Err = RequireString(Params, TEXT("blackboardPath"), BlackboardPath)) return Err;
+	FString KeyName;
+	if (auto Err = RequireString(Params, TEXT("keyName"), KeyName)) return Err;
+
+	UBlackboardData* BB = LoadObject<UBlackboardData>(nullptr, *BlackboardPath);
+	if (!BB) return MCPError(FString::Printf(TEXT("BlackboardData not found: %s"), *BlackboardPath));
+
+	const FName KeyFName(*KeyName);
+	int32 RemovedIdx = INDEX_NONE;
+	FString RemovedType;
+	for (int32 i = 0; i < BB->Keys.Num(); ++i)
+	{
+		if (BB->Keys[i].EntryName == KeyFName)
+		{
+			RemovedIdx = i;
+			RemovedType = BB->Keys[i].KeyType ? BB->Keys[i].KeyType->GetClass()->GetName() : TEXT("Unknown");
+			break;
+		}
+	}
+	if (RemovedIdx == INDEX_NONE)
+	{
+		auto Noop = MCPSuccess();
+		Noop->SetBoolField(TEXT("alreadyDeleted"), true);
+		Noop->SetStringField(TEXT("blackboardPath"), BlackboardPath);
+		Noop->SetStringField(TEXT("keyName"), KeyName);
+		return MCPResult(Noop);
+	}
+	BB->Modify();
+	BB->Keys.RemoveAt(RemovedIdx);
+	BB->UpdateKeyIDs();
+	BB->MarkPackageDirty();
+	UEditorAssetLibrary::SaveAsset(BB->GetPathName());
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("blackboardPath"), BlackboardPath);
+	Result->SetStringField(TEXT("keyName"), KeyName);
+	Result->SetNumberField(TEXT("remainingKeys"), BB->Keys.Num());
+	return MCPResult(Result);
+}
+
+// #469: read parent + own keys + inherited keys for a Blackboard.
+TSharedPtr<FJsonValue> FGameplayHandlers::ReadBlackboard(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlackboardPath;
+	if (auto Err = RequireStringAlt(Params, TEXT("blackboardPath"), TEXT("assetPath"), BlackboardPath)) return Err;
+
+	UBlackboardData* BB = LoadObject<UBlackboardData>(nullptr, *BlackboardPath);
+	if (!BB) return MCPError(FString::Printf(TEXT("BlackboardData not found: %s"), *BlackboardPath));
+
+	auto KeyArrayFor = [](UBlackboardData* From) -> TArray<TSharedPtr<FJsonValue>>
+	{
+		TArray<TSharedPtr<FJsonValue>> Out;
+		for (const FBlackboardEntry& E : From->Keys)
+		{
+			TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("name"), E.EntryName.ToString());
+			Obj->SetStringField(TEXT("type"), E.KeyType ? E.KeyType->GetClass()->GetName() : TEXT("Unknown"));
+			Out.Add(MakeShared<FJsonValueObject>(Obj));
+		}
+		return Out;
+	};
+
+	TArray<TSharedPtr<FJsonValue>> InheritedKeys;
+	for (UBlackboardData* Walk = BB->Parent; Walk; Walk = Walk->Parent)
+	{
+		for (const FBlackboardEntry& E : Walk->Keys)
+		{
+			TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("name"), E.EntryName.ToString());
+			Obj->SetStringField(TEXT("type"), E.KeyType ? E.KeyType->GetClass()->GetName() : TEXT("Unknown"));
+			Obj->SetStringField(TEXT("from"), Walk->GetPathName());
+			InheritedKeys.Add(MakeShared<FJsonValueObject>(Obj));
+		}
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("blackboardPath"), BlackboardPath);
+	Result->SetStringField(TEXT("parentPath"), BB->Parent ? BB->Parent->GetPathName() : TEXT("None"));
+	Result->SetArrayField(TEXT("ownKeys"), KeyArrayFor(BB));
+	Result->SetArrayField(TEXT("inheritedKeys"), InheritedKeys);
+	Result->SetNumberField(TEXT("ownKeyCount"), BB->Keys.Num());
+	Result->SetNumberField(TEXT("inheritedKeyCount"), InheritedKeys.Num());
+	return MCPResult(Result);
+}
+
+// #494: enumerate every concrete BT node class (composite, task, decorator,
+// service). Gives authoring scripts a discoverable list of node classes to
+// pass to a future add_bt_node handler, and lets them resolve plugin-supplied
+// custom decorators (UBTDecorator_*) without grepping engine + plugin source.
+//
+// Params: kind? ("composite"|"task"|"decorator"|"service" - default: all)
+TSharedPtr<FJsonValue> FGameplayHandlers::ListBTNodeClasses(const TSharedPtr<FJsonObject>& Params)
+{
+	const FString KindFilter = OptionalString(Params, TEXT("kind"), TEXT("")).ToLower();
+	const bool bAll = KindFilter.IsEmpty();
+
+	auto PushClass = [](TArray<TSharedPtr<FJsonValue>>& Out, UClass* C, const TCHAR* Kind)
+	{
+		if (!C || C->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) return;
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), C->GetName());
+		Obj->SetStringField(TEXT("path"), C->GetPathName());
+		Obj->SetStringField(TEXT("kind"), Kind);
+		Out.Add(MakeShared<FJsonValueObject>(Obj));
+	};
+
+	TArray<TSharedPtr<FJsonValue>> Composites, Tasks, Decorators, Services;
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		UClass* C = *It;
+		if (C->IsChildOf(UBTCompositeNode::StaticClass())) PushClass(Composites, C, TEXT("composite"));
+		else if (C->IsChildOf(UBTTaskNode::StaticClass())) PushClass(Tasks, C, TEXT("task"));
+		else if (C->IsChildOf(UBTDecorator::StaticClass())) PushClass(Decorators, C, TEXT("decorator"));
+		else if (C->IsChildOf(UBTService::StaticClass())) PushClass(Services, C, TEXT("service"));
+	}
+
+	auto Result = MCPSuccess();
+	if (bAll || KindFilter == TEXT("composite")) Result->SetArrayField(TEXT("composites"), Composites);
+	if (bAll || KindFilter == TEXT("task")) Result->SetArrayField(TEXT("tasks"), Tasks);
+	if (bAll || KindFilter == TEXT("decorator")) Result->SetArrayField(TEXT("decorators"), Decorators);
+	if (bAll || KindFilter == TEXT("service")) Result->SetArrayField(TEXT("services"), Services);
+	Result->SetNumberField(TEXT("compositeCount"), Composites.Num());
+	Result->SetNumberField(TEXT("taskCount"), Tasks.Num());
+	Result->SetNumberField(TEXT("decoratorCount"), Decorators.Num());
+	Result->SetNumberField(TEXT("serviceCount"), Services.Num());
 	return MCPResult(Result);
 }
 
@@ -1388,19 +1592,112 @@ TSharedPtr<FJsonValue> FGameplayHandlers::ConfigureAiPerceptionSense(const TShar
 	SenseMap.Add(TEXT("Damage"), TEXT("AISenseConfig_Damage"));
 	SenseMap.Add(TEXT("Touch"), TEXT("AISenseConfig_Touch"));
 	SenseMap.Add(TEXT("Team"), TEXT("AISenseConfig_Team"));
+	SenseMap.Add(TEXT("Prediction"), TEXT("AISenseConfig_Prediction"));
+	SenseMap.Add(TEXT("Blueprint"), TEXT("AISenseConfig_Blueprint"));
 
 	FString* SenseClassName = SenseMap.Find(SenseType);
 	if (!SenseClassName)
 	{
-		return MCPError(FString::Printf(TEXT("Unknown sense type: %s. Available: Sight, Hearing, Damage, Touch, Team"), *SenseType));
+		return MCPError(FString::Printf(TEXT("Unknown sense type: %s. Available: Sight, Hearing, Damage, Touch, Team, Prediction, Blueprint"), *SenseType));
 	}
 
-	auto Result = MCPSuccess();
-	Result->SetStringField(TEXT("blueprintPath"), BPPath);
-	Result->SetStringField(TEXT("senseType"), SenseType);
-	Result->SetStringField(TEXT("senseClass"), *SenseClassName);
-	Result->SetStringField(TEXT("note"), FString::Printf(TEXT("Use editor.execute_python to fully configure %s properties."), **SenseClassName));
+	UClass* SenseCfgClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/AIModule.%s"), **SenseClassName));
+	if (!SenseCfgClass)
+	{
+		return MCPError(FString::Printf(TEXT("Sense config class not found: %s. Enable AIModule."), **SenseClassName));
+	}
 
+	UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BPPath));
+	if (!BP) return MCPError(FString::Printf(TEXT("Blueprint not found: %s"), *BPPath));
+
+	// Locate the AIPerceptionComponent template on the construction script.
+	UClass* PercClass = FindObject<UClass>(nullptr, TEXT("/Script/AIModule.AIPerceptionComponent"));
+	const FString CompName = OptionalString(Params, TEXT("componentName"));
+	UObject* PercTemplate = nullptr;
+	FString ResolvedComp;
+	if (BP->SimpleConstructionScript)
+	{
+		for (USCS_Node* N : BP->SimpleConstructionScript->GetAllNodes())
+		{
+			if (!N || !N->ComponentTemplate) continue;
+			const bool bIsPerc = PercClass
+				? N->ComponentTemplate->IsA(PercClass)
+				: N->ComponentTemplate->GetClass()->GetName().Contains(TEXT("AIPerception"));
+			if (!bIsPerc) continue;
+			if (!CompName.IsEmpty() && N->GetVariableName() != FName(*CompName)) continue;
+			PercTemplate = N->ComponentTemplate;
+			ResolvedComp = N->GetVariableName().ToString();
+			break;
+		}
+	}
+	if (!PercTemplate)
+	{
+		return MCPError(TEXT("No AIPerceptionComponent on the blueprint - run add_perception_component first"));
+	}
+
+	// Add the sense config to SensesConfig via reflection (avoids linking AIModule
+	// headers and matches what the editor's '+' button does).
+	FArrayProperty* SensesProp = CastField<FArrayProperty>(PercTemplate->GetClass()->FindPropertyByName(TEXT("SensesConfig")));
+	FObjectPropertyBase* ElemProp = SensesProp ? CastField<FObjectPropertyBase>(SensesProp->Inner) : nullptr;
+	if (!SensesProp || !ElemProp)
+	{
+		return MCPError(TEXT("SensesConfig object-array property not found on AIPerceptionComponent (engine drift)"));
+	}
+
+	FScriptArrayHelper Helper(SensesProp, SensesProp->ContainerPtrToValuePtr<void>(PercTemplate));
+	for (int32 i = 0; i < Helper.Num(); ++i)
+	{
+		UObject* Existing = ElemProp->GetObjectPropertyValue(Helper.GetRawPtr(i));
+		if (Existing && Existing->GetClass() == SenseCfgClass)
+		{
+			auto Ex = MCPSuccess();
+			MCPSetExisted(Ex);
+			Ex->SetStringField(TEXT("blueprintPath"), BPPath);
+			Ex->SetStringField(TEXT("component"), ResolvedComp);
+			Ex->SetStringField(TEXT("senseType"), SenseType);
+			Ex->SetStringField(TEXT("senseConfig"), SenseCfgClass->GetName());
+			return MCPResult(Ex);
+		}
+	}
+
+	UObject* Cfg = NewObject<UObject>(PercTemplate, SenseCfgClass, NAME_None, RF_Transactional);
+	const int32 NewIdx = Helper.AddValue();
+	ElemProp->SetObjectPropertyValue(Helper.GetRawPtr(NewIdx), Cfg);
+
+	// Optional per-sense tuning (e.g. { "SightRadius": 1500 }).
+	TArray<FString> AppliedProps;
+	const TSharedPtr<FJsonObject>* PropsObj = nullptr;
+	if (Params->TryGetObjectField(TEXT("settings"), PropsObj) && PropsObj && (*PropsObj).IsValid())
+	{
+		for (const auto& KV : (*PropsObj)->Values)
+		{
+			FProperty* P = Cfg->GetClass()->FindPropertyByName(FName(*KV.Key));
+			if (!P) continue;
+			FString PErr;
+			if (MCPJsonProperty::SetJsonOnProperty(P, P->ContainerPtrToValuePtr<void>(Cfg), KV.Value, PErr))
+			{
+				AppliedProps.Add(FString(*KV.Key));
+			}
+		}
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(BP);
+	SaveAssetPackage(BP);
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("blueprintPath"), BPPath);
+	Result->SetStringField(TEXT("component"), ResolvedComp);
+	Result->SetStringField(TEXT("senseType"), SenseType);
+	Result->SetStringField(TEXT("senseConfig"), Cfg->GetClass()->GetName());
+	if (AppliedProps.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> A;
+		for (const FString& S : AppliedProps) A.Add(MakeShared<FJsonValueString>(S));
+		Result->SetArrayField(TEXT("appliedProperties"), A);
+	}
+
+	// Rollback: removing the sense again isn't a first-class action; report intent.
 	return MCPResult(Result);
 }
 

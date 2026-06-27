@@ -70,7 +70,7 @@ export function deploySummary(r: DeployResult): string {
  *
  * If the plugin is missing or a version mismatch is detected, callers
  * should surface that to the user and ask them to run `ue-mcp init`
- * or `ue-mcp update` explicitly.
+ * or `ue-mcp deploy` explicitly.
  */
 export function attach(context: ProjectContext): AttachResult {
   const result: AttachResult = {
@@ -121,7 +121,7 @@ export function attachSummary(r: AttachResult): string {
     );
   } else if (r.versionMatch === false) {
     notes.push(
-      `bridge version mismatch — installed v${r.installedVersion}, packaged v${r.packagedVersion}. Source left untouched; run \`ue-mcp update <uproject>\` to upgrade.`,
+      `bridge version mismatch — installed v${r.installedVersion}, packaged v${r.packagedVersion}. Source left untouched; run \`ue-mcp deploy <uproject>\` to upgrade.`,
     );
   } else if (r.versionMatch === true) {
     notes.push(`bridge v${r.installedVersion} present (source untouched)`);
@@ -132,9 +132,13 @@ export function attachSummary(r: AttachResult): string {
   return "Bridge attach: " + notes.join("; ");
 }
 
+function selfDir(): string {
+  return import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+}
+
 function packagedUpluginPath(): string {
   return path.resolve(
-    import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
+    selfDir(),
     "..",
     "plugin",
     "ue_mcp_bridge",
@@ -185,7 +189,7 @@ function deployCppPlugin(uprojectPath: string): boolean {
   const pluginsDir = path.join(projectDir, "Plugins");
 
   const sourcePluginDir = path.resolve(
-    import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
+    selfDir(),
     "..",
     "plugin",
     "ue_mcp_bridge",
@@ -264,14 +268,15 @@ export function findEngineInstall(
   engineAssociation: string | null,
 ): string | null {
   if (!engineAssociation) return null;
+  const normalizedAssociation = engineAssociation.replace(/^\{|\}$/g, "");
 
   const guidRegex =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (guidRegex.test(engineAssociation)) {
-    return findEngineByGuid(engineAssociation);
+  if (guidRegex.test(normalizedAssociation)) {
+    return findEngineByGuid(normalizedAssociation);
   }
 
-  return findLauncherEngine(engineAssociation);
+  return findLauncherEngine(normalizedAssociation);
 }
 
 function findEngineByGuid(guid: string): string | null {

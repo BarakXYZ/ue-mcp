@@ -446,7 +446,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 			// Set properties via reflection
 			for (const auto& Pair : (*ModObj)->Values)
 			{
-				const FString Key(Pair.Key.ToView());
+				const FString Key(Pair.Key);
 				if (Key == TEXT("type")) continue;
 
 				FProperty* Prop = ModClass->FindPropertyByName(FName(*Key));
@@ -556,7 +556,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 			// Set properties via reflection (same pattern as modifiers)
 			for (const auto& Pair : (*TrigObj)->Values)
 			{
-				const FString Key(Pair.Key.ToView());
+				const FString Key(Pair.Key);
 				if (Key == TEXT("type")) continue;
 
 				FProperty* Prop = TrigClass->FindPropertyByName(FName(*Key));

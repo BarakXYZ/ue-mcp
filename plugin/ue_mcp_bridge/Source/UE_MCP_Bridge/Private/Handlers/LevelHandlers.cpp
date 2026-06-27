@@ -6,6 +6,13 @@
 #include "Editor.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
+#include "NavigationSystem.h"
+#include "NavigationData.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundBase.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "ReferenceSkeleton.h"
 #include "CollisionQueryParams.h"
@@ -82,6 +89,8 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("get_selected_actors"), &GetSelectedActors);
 	Registry.RegisterHandler(TEXT("list_volumes"), &ListVolumes);
 	Registry.RegisterHandler(TEXT("move_actor"), &MoveActor);
+	Registry.RegisterHandler(TEXT("aim_actor_at"), &AimActorAt);
+	Registry.RegisterHandler(TEXT("nav_project_point"), &NavProjectPoint);
 	Registry.RegisterHandler(TEXT("select_actors"), &SelectActors);
 	Registry.RegisterHandler(TEXT("spawn_light"), &SpawnLight);
 	Registry.RegisterHandler(TEXT("set_light_properties"), &SetLightProperties);
@@ -90,12 +99,14 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("remove_component_from_actor"), &RemoveComponentFromActor);
 	Registry.RegisterHandler(TEXT("load_level"), &LoadLevel);
 	Registry.RegisterHandler(TEXT("set_component_property"), &SetComponentProperty);
+	Registry.RegisterHandler(TEXT("get_component_details"), &GetComponentDetails);
 	Registry.RegisterHandler(TEXT("set_actor_material"), &SetActorMaterial);
 	Registry.RegisterHandler(TEXT("set_volume_properties"), &SetVolumeProperties);
 	Registry.RegisterHandler(TEXT("get_world_settings"), &GetWorldSettings);
 	Registry.RegisterHandler(TEXT("set_world_settings"), &SetWorldSettings);
 	Registry.RegisterHandler(TEXT("set_fog_properties"), &SetFogProperties);
 	Registry.RegisterHandler(TEXT("get_actors_by_class"), &GetActorsByClass);
+	Registry.RegisterHandler(TEXT("get_actors_by_component_class"), &GetActorsByComponentClass);
 	Registry.RegisterHandler(TEXT("count_actors_by_class"), &CountActorsByClass);
 	Registry.RegisterHandler(TEXT("get_runtime_virtual_texture_summary"), &GetRVTSummary);
 	Registry.RegisterHandler(TEXT("set_water_body_property"), &SetWaterBodyProperty);
@@ -103,6 +114,14 @@ void FLevelHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("resolve_actor"), &ResolveActor);
 	Registry.RegisterHandler(TEXT("set_actor_property"), &SetActorProperty);
 	Registry.RegisterHandler(TEXT("line_trace"), &LineTrace);
+	// #453: per-actor motion snapshot for telemetry probes. Reads location,
+	// rotation, velocity, angular velocity, scale, and ground state in one
+	// call. Caller is expected to invoke at the desired sample interval.
+	Registry.RegisterHandler(TEXT("read_actor_motion"), &ReadActorMotion);
+	// #434: bulk-add transforms to a HISMC / ISMC component (Python crashes).
+	Registry.RegisterHandler(TEXT("add_hismc_instances"), &AddHismcInstances);
+	Registry.RegisterHandler(TEXT("add_ismc_instances"), &AddHismcInstances);
+	Registry.RegisterHandler(TEXT("add_instances"), &AddHismcInstances);
 	Registry.RegisterHandler(TEXT("snap_actor_to_floor"), &SnapActorToFloor);
 	Registry.RegisterHandler(TEXT("delete_actors"), &DeleteActors);
 	Registry.RegisterHandler(TEXT("add_actor_tag"), &AddActorTag);
@@ -224,7 +243,11 @@ TSharedPtr<FJsonValue> FLevelHandlers::PlaceActor(const TSharedPtr<FJsonObject>&
 	FString ActorClass;
 	if (auto Err = RequireString(Params, TEXT("actorClass"), ActorClass)) return Err;
 
-	REQUIRE_EDITOR_WORLD(World);
+	// #585: respect world:pie so the actor spawns into the running PIE world
+	// instead of silently landing in the editor world.
+	const FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = ResolveWorldScope(WorldScope);
+	if (!World) return MCPError(TEXT("World not available"));
 
 	const FString OnConflict = OptionalString(Params, TEXT("onConflict"), TEXT("skip"));
 	const FString Label = OptionalString(Params, TEXT("label"));
@@ -619,6 +642,25 @@ TSharedPtr<FJsonValue> FLevelHandlers::GetComponentTree(const TSharedPtr<FJsonOb
 			}
 		}
 
+		// #581: dynamically-spawned FX components' runtime state, so visual
+		// verification doesn't need Python. NiagaraComponent: asset/active/visible;
+		// AudioComponent: sound/playing. Works in editor or PIE (world scope).
+		if (UNiagaraComponent* Niagara = Cast<UNiagaraComponent>(Comp))
+		{
+			TSharedPtr<FJsonObject> Fx = MakeShared<FJsonObject>();
+			if (UNiagaraSystem* Sys = Niagara->GetAsset()) Fx->SetStringField(TEXT("asset"), Sys->GetPathName());
+			Fx->SetBoolField(TEXT("active"), Niagara->IsActive());
+			Fx->SetBoolField(TEXT("visible"), Niagara->IsVisible());
+			C->SetObjectField(TEXT("niagara"), Fx);
+		}
+		else if (UAudioComponent* Audio = Cast<UAudioComponent>(Comp))
+		{
+			TSharedPtr<FJsonObject> Fx = MakeShared<FJsonObject>();
+			if (USoundBase* Snd = Audio->GetSound()) Fx->SetStringField(TEXT("sound"), Snd->GetPathName());
+			Fx->SetBoolField(TEXT("playing"), Audio->IsPlaying());
+			C->SetObjectField(TEXT("audio"), Fx);
+		}
+
 		if (bIncludeProperties)
 		{
 			TArray<TSharedPtr<FJsonValue>> Props;
@@ -799,9 +841,14 @@ TSharedPtr<FJsonValue> FLevelHandlers::MoveActor(const TSharedPtr<FJsonObject>& 
 	FString ActorLabel;
 	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
 
-	REQUIRE_EDITOR_WORLD(World);
+	// #586: support the PIE world so a label from get_outliner {world:pie}
+	// resolves and the live actor moves. FindActorByLabelOrName also matches the
+	// runtime instance name PIE shows.
+	const FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = ResolveWorldScope(WorldScope);
+	if (!World) return MCPError(TEXT("World not available"));
 
-	AActor* Actor = FindActorByLabel(World, ActorLabel);
+	AActor* Actor = FindActorByLabelOrName(World, ActorLabel);
 	if (!Actor)
 	{
 		return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
@@ -840,6 +887,96 @@ TSharedPtr<FJsonValue> FLevelHandlers::MoveActor(const TSharedPtr<FJsonObject>& 
 	Payload->SetObjectField(TEXT("scale"), MCPVec3ToJsonObject(PreviousScale));
 	MCPSetRollback(Result, TEXT("move_actor"), Payload);
 
+	return MCPResult(Result);
+}
+
+// #566 aim_actor_at - rotate an actor so its +X (forward) points at a target
+// point or another actor. Saves the "frame this from the bridge" round-trip of
+// reading two transforms and computing the look-at client-side.
+TSharedPtr<FJsonValue> FLevelHandlers::AimActorAt(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+
+	FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = ResolveWorldScope(WorldScope);
+	if (!World) return MCPError(TEXT("World not available"));
+
+	AActor* Actor = FindActorByLabel(World, ActorLabel);
+	if (!Actor) return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+
+	// Resolve the target point: an explicit target Vec3, or another actor's location.
+	FVector TargetLocation;
+	const FString TargetActorLabel = OptionalString(Params, TEXT("targetActor"));
+	if (!TargetActorLabel.IsEmpty())
+	{
+		AActor* TargetActor = FindActorByLabel(World, TargetActorLabel);
+		if (!TargetActor) return MCPError(FString::Printf(TEXT("Target actor not found: %s"), *TargetActorLabel));
+		TargetLocation = TargetActor->GetActorLocation();
+	}
+	else if (Params->HasField(TEXT("target")))
+	{
+		TargetLocation = OptionalVec3(Params, TEXT("target"), FVector::ZeroVector);
+	}
+	else
+	{
+		return MCPError(TEXT("Supply 'target' (Vec3) or 'targetActor' (label)"));
+	}
+
+	const FVector ActorLocation = Actor->GetActorLocation();
+	const FVector Direction = TargetLocation - ActorLocation;
+	if (Direction.IsNearlyZero())
+	{
+		return MCPError(TEXT("Actor and target are at the same location; look-at is undefined"));
+	}
+
+	const FRotator PreviousRotation = Actor->GetActorRotation();
+	FRotator LookAt = FRotationMatrix::MakeFromX(Direction).Rotator();
+	const double Roll = OptionalNumber(Params, TEXT("roll"), 0.0);
+	LookAt.Roll = Roll;
+	Actor->SetActorRotation(LookAt);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetObjectField(TEXT("rotation"), MCPRotatorToJsonObject(Actor->GetActorRotation()));
+	Result->SetObjectField(TEXT("target"), MCPVec3ToJsonObject(TargetLocation));
+
+	// Rollback: restore the prior rotation via move_actor.
+	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Payload->SetObjectField(TEXT("rotation"), MCPRotatorToJsonObject(PreviousRotation));
+	MCPSetRollback(Result, TEXT("move_actor"), Payload);
+
+	return MCPResult(Result);
+}
+
+// #585 nav_project_point - project a world point onto the navmesh, returning the
+// nearest navigable location and whether the point is on the navmesh. Works in
+// editor or PIE (navmesh must be built/generated for the world).
+TSharedPtr<FJsonValue> FLevelHandlers::NavProjectPoint(const TSharedPtr<FJsonObject>& Params)
+{
+	if (!Params->HasField(TEXT("point"))) return MCPError(TEXT("Missing 'point' (Vec3)"));
+	const FVector Point = OptionalVec3(Params, TEXT("point"), FVector::ZeroVector);
+
+	const FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = ResolveWorldScope(WorldScope);
+	if (!World) return MCPError(TEXT("World not available"));
+
+	UNavigationSystemV1* Nav = UNavigationSystemV1::GetCurrent(World);
+	if (!Nav) return MCPError(TEXT("No navigation system in this world (add a NavMeshBoundsVolume and build navigation)"));
+
+	const FVector Extent = Params->HasField(TEXT("extent"))
+		? OptionalVec3(Params, TEXT("extent"), FVector(100.f, 100.f, 100.f))
+		: FVector(100.f, 100.f, 100.f);
+
+	FNavLocation Out;
+	const bool bOnNav = Nav->ProjectPointToNavigation(Point, Out, Extent);
+
+	auto Result = MCPSuccess();
+	Result->SetBoolField(TEXT("onNavMesh"), bOnNav);
+	Result->SetObjectField(TEXT("queryPoint"), MCPVec3ToJsonObject(Point));
+	if (bOnNav) Result->SetObjectField(TEXT("projectedLocation"), MCPVec3ToJsonObject(Out.Location));
 	return MCPResult(Result);
 }
 
@@ -1052,6 +1189,48 @@ TSharedPtr<FJsonValue> FLevelHandlers::LoadLevel(const TSharedPtr<FJsonObject>& 
 	return MCPResult(Result);
 }
 
+// Resolve a component on a placed actor by name, case-insensitively, across
+// all components GetComponents returns (which includes inherited/SCS
+// components on placed Blueprint instances). Empty name -> root component.
+// (#539: case-sensitive exact-match was missing SCS components whose instance
+// name differed only in case, reporting "component not found".)
+static UActorComponent* FindComponentOnActor(AActor* Actor, const FString& Name)
+{
+	if (!Actor) return nullptr;
+	if (Name.IsEmpty()) return Actor->GetRootComponent();
+
+	TArray<UActorComponent*> Components;
+	Actor->GetComponents(Components);
+
+	// Pass 1: exact match (case-insensitive) by instance name or class name.
+	for (UActorComponent* Comp : Components)
+	{
+		if (Comp->GetName().Equals(Name, ESearchCase::IgnoreCase) ||
+			Comp->GetClass()->GetName().Equals(Name, ESearchCase::IgnoreCase))
+		{
+			return Comp;
+		}
+	}
+	// Pass 2: prefix match (e.g. "StaticMeshComponent" -> "StaticMeshComponent0").
+	for (UActorComponent* Comp : Components)
+	{
+		if (Comp->GetName().StartsWith(Name, ESearchCase::IgnoreCase) ||
+			Comp->GetClass()->GetName().StartsWith(Name, ESearchCase::IgnoreCase))
+		{
+			return Comp;
+		}
+	}
+	// Pass 3: substring (handles _GEN_VARIABLE suffixes and decorated names).
+	for (UActorComponent* Comp : Components)
+	{
+		if (Comp->GetName().Contains(Name, ESearchCase::IgnoreCase))
+		{
+			return Comp;
+		}
+	}
+	return nullptr;
+}
+
 TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJsonObject>& Params)
 {
 	FString ActorLabel;
@@ -1070,40 +1249,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
 	}
 
-	// Find the component -- exact match first, then prefix/class match
-	UActorComponent* TargetComp = nullptr;
-	if (!ComponentName.IsEmpty())
-	{
-		TArray<UActorComponent*> Components;
-		TargetActor->GetComponents(Components);
-		// Pass 1: exact match by name or class name
-		for (UActorComponent* Comp : Components)
-		{
-			if (Comp->GetName() == ComponentName || Comp->GetClass()->GetName() == ComponentName)
-			{
-				TargetComp = Comp;
-				break;
-			}
-		}
-		// Pass 2: prefix match (e.g. "StaticMeshComponent" matches "StaticMeshComponent0")
-		if (!TargetComp)
-		{
-			for (UActorComponent* Comp : Components)
-			{
-				if (Comp->GetName().StartsWith(ComponentName) || Comp->GetClass()->GetName().StartsWith(ComponentName))
-				{
-					TargetComp = Comp;
-					break;
-				}
-			}
-		}
-	}
-	else
-	{
-		// Use root component as default
-		TargetComp = TargetActor->GetRootComponent();
-	}
-
+	UActorComponent* TargetComp = FindComponentOnActor(TargetActor, ComponentName);
 	if (!TargetComp)
 	{
 		return MCPError(FString::Printf(TEXT("Component '%s' not found on actor '%s'"), *ComponentName, *ActorLabel));
@@ -1249,6 +1395,18 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 		}
 	}
 
+	// #539: writing RelativeLocation/RelativeRotation/RelativeScale3D on a scene
+	// component only moves it once the transform is recomputed. Refresh so the
+	// change is visible and persisted, not just stored on the property.
+	if (USceneComponent* SceneComp = Cast<USceneComponent>(TargetComp))
+	{
+		SceneComp->UpdateComponentToWorld();
+		SceneComp->MarkRenderStateDirty();
+	}
+	{
+		FPropertyChangedEvent CompChange(Prop);
+		TargetComp->PostEditChangeProperty(CompChange);
+	}
 	TargetComp->MarkPackageDirty();
 
 	auto Result = MCPSuccess();
@@ -1268,6 +1426,87 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetComponentProperty(const TSharedPtr<FJs
 
 	return MCPResult(Result);
 }
+
+// get_component_details -- read a placed actor's component(s), including
+// relative/world transforms. With componentName, returns that component's
+// transform + class; without it, lists every component with its transform so
+// callers can read a lid's open-pose rotation without execute_python. (#539)
+TSharedPtr<FJsonValue> FLevelHandlers::GetComponentDetails(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+
+	const FString ComponentName = OptionalString(Params, TEXT("componentName"));
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	AActor* TargetActor = FindActorByLabel(World, ActorLabel);
+	if (!TargetActor)
+	{
+		return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+	}
+
+	auto DescribeComponent = [](UActorComponent* Comp) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), Comp->GetName());
+		Obj->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
+		if (USceneComponent* Scene = Cast<USceneComponent>(Comp))
+		{
+			const FVector RelLoc = Scene->GetRelativeLocation();
+			const FRotator RelRot = Scene->GetRelativeRotation();
+			const FVector RelScale = Scene->GetRelativeScale3D();
+			const FTransform World = Scene->GetComponentTransform();
+
+			auto VecObj = [](const FVector& V)
+			{
+				TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+				O->SetNumberField(TEXT("x"), V.X); O->SetNumberField(TEXT("y"), V.Y); O->SetNumberField(TEXT("z"), V.Z);
+				return O;
+			};
+			auto RotObj = [](const FRotator& R)
+			{
+				TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+				O->SetNumberField(TEXT("pitch"), R.Pitch); O->SetNumberField(TEXT("yaw"), R.Yaw); O->SetNumberField(TEXT("roll"), R.Roll);
+				return O;
+			};
+			Obj->SetObjectField(TEXT("relativeLocation"), VecObj(RelLoc));
+			Obj->SetObjectField(TEXT("relativeRotation"), RotObj(RelRot));
+			Obj->SetObjectField(TEXT("relativeScale3D"), VecObj(RelScale));
+			Obj->SetObjectField(TEXT("worldLocation"), VecObj(World.GetLocation()));
+			Obj->SetObjectField(TEXT("worldRotation"), RotObj(World.Rotator()));
+			USceneComponent* Parent = Scene->GetAttachParent();
+			Obj->SetStringField(TEXT("attachParent"), Parent ? Parent->GetName() : TEXT(""));
+		}
+		return Obj;
+	};
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+
+	if (!ComponentName.IsEmpty())
+	{
+		UActorComponent* TargetComp = FindComponentOnActor(TargetActor, ComponentName);
+		if (!TargetComp)
+		{
+			return MCPError(FString::Printf(TEXT("Component '%s' not found on actor '%s'"), *ComponentName, *ActorLabel));
+		}
+		Result->SetObjectField(TEXT("component"), DescribeComponent(TargetComp));
+		return MCPResult(Result);
+	}
+
+	TArray<UActorComponent*> Components;
+	TargetActor->GetComponents(Components);
+	TArray<TSharedPtr<FJsonValue>> CompArray;
+	for (UActorComponent* Comp : Components)
+	{
+		CompArray.Add(MakeShared<FJsonValueObject>(DescribeComponent(Comp)));
+	}
+	Result->SetNumberField(TEXT("componentCount"), CompArray.Num());
+	Result->SetArrayField(TEXT("components"), CompArray);
+	return MCPResult(Result);
+}
+
 TSharedPtr<FJsonValue> FLevelHandlers::GetWorldSettings(const TSharedPtr<FJsonObject>& Params)
 {
 	REQUIRE_EDITOR_WORLD(World);
@@ -1476,6 +1715,55 @@ TSharedPtr<FJsonValue> FLevelHandlers::GetActorsByClass(const TSharedPtr<FJsonOb
 			E->SetStringField(TEXT("label"), A->GetActorLabel());
 			E->SetStringField(TEXT("class"), CName);
 			E->SetStringField(TEXT("path"), A->GetPathName());
+			Out.Add(MakeShared<FJsonValueObject>(E));
+		}
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetArrayField(TEXT("actors"), Out);
+	Result->SetNumberField(TEXT("count"), Out.Num());
+	return MCPResult(Result);
+}
+
+// #582 find actors that own a component of a given class. Matches by component
+// class name (exact or substring), mirroring get_actors_by_class. Reports the
+// matched component name(s) so callers can target them directly afterwards.
+TSharedPtr<FJsonValue> FLevelHandlers::GetActorsByComponentClass(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ComponentClass;
+	if (auto Err = RequireStringAlt(Params, TEXT("componentClass"), TEXT("className"), ComponentClass)) return Err;
+
+	FString WorldScope = OptionalString(Params, TEXT("world"), TEXT("editor"));
+	UWorld* World = ResolveWorldScope(WorldScope);
+	if (!World) return MCPError(TEXT("World not available"));
+
+	TArray<TSharedPtr<FJsonValue>> Out;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* A = *It;
+		if (!A) continue;
+
+		TArray<TSharedPtr<FJsonValue>> Matched;
+		for (UActorComponent* Comp : A->GetComponents())
+		{
+			if (!Comp) continue;
+			const FString CompCName = Comp->GetClass()->GetName();
+			if (CompCName == ComponentClass || CompCName.Contains(ComponentClass))
+			{
+				TSharedPtr<FJsonObject> C = MakeShared<FJsonObject>();
+				C->SetStringField(TEXT("name"), Comp->GetName());
+				C->SetStringField(TEXT("class"), CompCName);
+				Matched.Add(MakeShared<FJsonValueObject>(C));
+			}
+		}
+
+		if (Matched.Num() > 0)
+		{
+			TSharedPtr<FJsonObject> E = MakeShared<FJsonObject>();
+			E->SetStringField(TEXT("label"), A->GetActorLabel());
+			E->SetStringField(TEXT("class"), A->GetClass()->GetName());
+			E->SetStringField(TEXT("path"), A->GetPathName());
+			E->SetArrayField(TEXT("matchedComponents"), Matched);
 			Out.Add(MakeShared<FJsonValueObject>(E));
 		}
 	}
@@ -1872,6 +2160,53 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetActorProperty(const TSharedPtr<FJsonOb
 		}
 	}
 
+	// #538: a TArray of actor references populated from a JSON array of actor
+	// labels (e.g. TArray<APointLight*>). The generic setter would treat each
+	// string as an asset path; resolve labels against the world instead. Tolerate
+	// a stringified JSON array ("[\"A\",\"B\"]") the same way the keystone fix does.
+	if (FArrayProperty* ArrProp = CastField<FArrayProperty>(Prop))
+	{
+		if (FObjectProperty* InnerObj = CastField<FObjectProperty>(ArrProp->Inner);
+			InnerObj && InnerObj->PropertyClass && InnerObj->PropertyClass->IsChildOf(AActor::StaticClass()))
+		{
+			TSharedPtr<FJsonValue> ArrValue = Value;
+			if (ArrValue->Type == EJson::String)
+			{
+				const FString Trimmed = ArrValue->AsString().TrimStartAndEnd();
+				if (Trimmed.StartsWith(TEXT("[")))
+				{
+					TSharedPtr<FJsonValue> Reparsed;
+					const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Trimmed);
+					if (FJsonSerializer::Deserialize(Reader, Reparsed) && Reparsed.IsValid()) ArrValue = Reparsed;
+				}
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
+			if (ArrValue->TryGetArray(Items) && Items)
+			{
+				FScriptArrayHelper H(ArrProp, ValuePtr);
+				H.Resize(Items->Num());
+				for (int32 i = 0; i < Items->Num(); ++i)
+				{
+					FString Label;
+					(*Items)[i]->TryGetString(Label);
+					AActor* Ref = FindActorByLabel(World, Label);
+					if (!Ref)
+					{
+						Prop->PropertyFlags = OriginalFlags;
+						return MCPError(FString::Printf(TEXT("Actor not found for '%s' element [%d]: '%s'"), *PropertyName, i, *Label));
+					}
+					if (!Ref->IsA(InnerObj->PropertyClass))
+					{
+						Prop->PropertyFlags = OriginalFlags;
+						return MCPError(FString::Printf(TEXT("Actor '%s' is not a %s (element [%d] of '%s')"), *Label, *InnerObj->PropertyClass->GetName(), i, *PropertyName));
+					}
+					InnerObj->SetObjectPropertyValue(H.GetRawPtr(i), Ref);
+				}
+				goto WriteDone;
+			}
+		}
+	}
+
 	{
 		FString SetErr;
 		if (!MCPJsonProperty::SetJsonOnProperty(Prop, ValuePtr, Value, SetErr))
@@ -1906,6 +2241,226 @@ WriteDone:
 
 namespace
 {
+}
+
+// #453: per-actor motion snapshot. Reads location, rotation, velocity,
+// angular velocity, scale, and ground state in one call. Works against
+// either the editor world or the PIE world (default: PIE when available).
+// Callers driving a long telemetry probe loop this at their desired
+// sample interval - the bridge stays request/response.
+//
+// Params:
+//   actorLabel? (single) OR actorLabels? (string[])
+//   world?: "pie" | "editor" (default: "pie" with editor fallback)
+TSharedPtr<FJsonValue> FLevelHandlers::ReadActorMotion(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WorldArg = OptionalString(Params, TEXT("world"), TEXT("pie"));
+	UWorld* TargetWorld = nullptr;
+	auto EditorWorld = []() -> UWorld* { return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr; };
+	if (WorldArg.Equals(TEXT("editor"), ESearchCase::IgnoreCase))
+	{
+		TargetWorld = EditorWorld();
+	}
+	else
+	{
+		TargetWorld = GetPIEWorld();
+		if (!TargetWorld) TargetWorld = EditorWorld();
+	}
+	if (!TargetWorld) return MCPError(TEXT("No world available (editor + PIE both null)"));
+
+	TArray<FString> Labels;
+	FString Single;
+	if (Params->TryGetStringField(TEXT("actorLabel"), Single) && !Single.IsEmpty())
+	{
+		Labels.Add(Single);
+	}
+	const TArray<TSharedPtr<FJsonValue>>* LabelsArr = nullptr;
+	if (Params->TryGetArrayField(TEXT("actorLabels"), LabelsArr) && LabelsArr)
+	{
+		for (const TSharedPtr<FJsonValue>& V : *LabelsArr)
+		{
+			FString L; if (V->TryGetString(L) && !L.IsEmpty()) Labels.Add(L);
+		}
+	}
+	if (Labels.Num() == 0)
+	{
+		return MCPError(TEXT("Pass at least one of 'actorLabel' or 'actorLabels'"));
+	}
+
+	auto VecToJson = [](const FVector& V) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetNumberField(TEXT("x"), V.X); Obj->SetNumberField(TEXT("y"), V.Y); Obj->SetNumberField(TEXT("z"), V.Z);
+		return Obj;
+	};
+	auto RotToJson = [](const FRotator& R) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetNumberField(TEXT("pitch"), R.Pitch); Obj->SetNumberField(TEXT("yaw"), R.Yaw); Obj->SetNumberField(TEXT("roll"), R.Roll);
+		return Obj;
+	};
+
+	TArray<TSharedPtr<FJsonValue>> Samples;
+	TArray<TSharedPtr<FJsonValue>> Missing;
+	for (const FString& Label : Labels)
+	{
+		AActor* Actor = FindActorByLabel(TargetWorld, Label);
+		if (!Actor)
+		{
+			Missing.Add(MakeShared<FJsonValueString>(Label));
+			continue;
+		}
+		TSharedPtr<FJsonObject> S = MakeShared<FJsonObject>();
+		S->SetStringField(TEXT("actorLabel"), Label);
+		S->SetStringField(TEXT("class"), Actor->GetClass()->GetName());
+		S->SetObjectField(TEXT("location"), VecToJson(Actor->GetActorLocation()));
+		S->SetObjectField(TEXT("rotation"), RotToJson(Actor->GetActorRotation()));
+		S->SetObjectField(TEXT("scale"), VecToJson(Actor->GetActorScale3D()));
+		S->SetObjectField(TEXT("velocity"), VecToJson(Actor->GetVelocity()));
+
+		// Physics: drill into the root primitive for angular velocity + grounded.
+		if (UPrimitiveComponent* Prim = Actor->FindComponentByClass<UPrimitiveComponent>())
+		{
+			if (Prim->IsSimulatingPhysics())
+			{
+				S->SetBoolField(TEXT("simulatingPhysics"), true);
+				S->SetObjectField(TEXT("angularVelocity"), VecToJson(Prim->GetPhysicsAngularVelocityInDegrees()));
+				S->SetNumberField(TEXT("mass"), Prim->GetMass());
+			}
+			else
+			{
+				S->SetBoolField(TEXT("simulatingPhysics"), false);
+			}
+		}
+
+		// CharacterMovement-style grounded check via downward trace from feet.
+		FHitResult Hit;
+		const FVector Start = Actor->GetActorLocation();
+		const FVector End = Start - FVector(0, 0, 200);
+		FCollisionQueryParams Q(SCENE_QUERY_STAT(MCPMotionGround), true, Actor);
+		const bool bGrounded = TargetWorld->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Q);
+		S->SetBoolField(TEXT("grounded"), bGrounded);
+		if (bGrounded) S->SetNumberField(TEXT("distanceToGround"), (Start - Hit.ImpactPoint).Size());
+
+		Samples.Add(MakeShared<FJsonValueObject>(S));
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetStringField(TEXT("worldType"), TargetWorld->WorldType == EWorldType::PIE ? TEXT("pie") : TEXT("editor"));
+	Result->SetNumberField(TEXT("timeSeconds"), TargetWorld->GetTimeSeconds());
+	Result->SetArrayField(TEXT("samples"), Samples);
+	if (Missing.Num() > 0) Result->SetArrayField(TEXT("missing"), Missing);
+	return MCPResult(Result);
+}
+
+// #434: add instance transforms to a HISMC / ISMC component. The reporter
+// hit a Python add_instance crash on UE 5.7; the C++ path through
+// UInstancedStaticMeshComponent::AddInstance is stable and HISMC inherits
+// it (UHierarchicalInstancedStaticMeshComponent extends UInstancedStaticMeshComponent).
+//
+// Params:
+//   actorLabel: actor that owns the HISMC/ISMC
+//   componentName?: pick a specific InstancedStaticMeshComponent on the actor;
+//                   omitted = first ISMC/HISMC found
+//   transforms: array of [{location: {x,y,z}, rotation? : {pitch,yaw,roll},
+//                          scale? : {x,y,z}}]
+//   worldSpace? (default true)
+TSharedPtr<FJsonValue> FLevelHandlers::AddHismcInstances(const TSharedPtr<FJsonObject>& Params)
+{
+	REQUIRE_EDITOR_WORLD(World);
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+
+	AActor* Actor = FindActorByLabel(World, ActorLabel);
+	if (!Actor) return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+
+	FString ComponentName = OptionalString(Params, TEXT("componentName"));
+	UInstancedStaticMeshComponent* ISMC = nullptr;
+	for (UActorComponent* Comp : Actor->GetComponents())
+	{
+		UInstancedStaticMeshComponent* AsISMC = Cast<UInstancedStaticMeshComponent>(Comp);
+		if (!AsISMC) continue;
+		if (ComponentName.IsEmpty()) { ISMC = AsISMC; break; }
+		if (AsISMC->GetName() == ComponentName) { ISMC = AsISMC; break; }
+	}
+	if (!ISMC)
+	{
+		return MCPError(FString::Printf(TEXT("No InstancedStaticMeshComponent / HISMC on actor '%s'%s"),
+			*ActorLabel, ComponentName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" named '%s'"), *ComponentName)));
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+	if (!Params->TryGetArrayField(TEXT("transforms"), Arr) || !Arr)
+	{
+		return MCPError(TEXT("Missing 'transforms' array ([{location, rotation?, scale?}])"));
+	}
+	const bool bWorldSpace = OptionalBool(Params, TEXT("worldSpace"), true);
+
+	auto ReadVec = [](const TSharedPtr<FJsonObject>& Obj, const TCHAR* Key, FVector& Out, double DefaultX = 0, double DefaultY = 0, double DefaultZ = 0) -> bool
+	{
+		const TSharedPtr<FJsonObject>* VObj = nullptr;
+		if (Obj->TryGetObjectField(Key, VObj) && *VObj)
+		{
+			double X = DefaultX, Y = DefaultY, Z = DefaultZ;
+			(*VObj)->TryGetNumberField(TEXT("x"), X);
+			(*VObj)->TryGetNumberField(TEXT("y"), Y);
+			(*VObj)->TryGetNumberField(TEXT("z"), Z);
+			Out = FVector(X, Y, Z);
+			return true;
+		}
+		return false;
+	};
+
+	TArray<FTransform> Transforms;
+	Transforms.Reserve(Arr->Num());
+	for (const TSharedPtr<FJsonValue>& V : *Arr)
+	{
+		const TSharedPtr<FJsonObject>* TObj = nullptr;
+		if (!V->TryGetObject(TObj) || !*TObj) continue;
+		FVector Location = FVector::ZeroVector;
+		FVector Scale = FVector(1, 1, 1);
+		ReadVec(*TObj, TEXT("location"), Location);
+		ReadVec(*TObj, TEXT("scale"), Scale, 1, 1, 1);
+
+		FRotator Rotator = FRotator::ZeroRotator;
+		const TSharedPtr<FJsonObject>* RObj = nullptr;
+		if ((*TObj)->TryGetObjectField(TEXT("rotation"), RObj) && *RObj)
+		{
+			double P = 0, Y = 0, R = 0;
+			(*RObj)->TryGetNumberField(TEXT("pitch"), P);
+			(*RObj)->TryGetNumberField(TEXT("yaw"), Y);
+			(*RObj)->TryGetNumberField(TEXT("roll"), R);
+			Rotator = FRotator(P, Y, R);
+		}
+
+		Transforms.Add(FTransform(Rotator, Location, Scale));
+	}
+
+	if (Transforms.Num() == 0)
+	{
+		return MCPError(TEXT("transforms array contained no valid entries"));
+	}
+
+	ISMC->Modify();
+	const int32 FirstIndex = ISMC->GetInstanceCount();
+	const TArray<int32> AddedIndices = ISMC->AddInstances(Transforms, /*bShouldReturnIndices*/ true, bWorldSpace);
+	ISMC->MarkRenderStateDirty();
+
+	TArray<TSharedPtr<FJsonValue>> IndicesJson;
+	IndicesJson.Reserve(AddedIndices.Num());
+	for (int32 Idx : AddedIndices) IndicesJson.Add(MakeShared<FJsonValueNumber>(Idx));
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	Result->SetStringField(TEXT("componentName"), ISMC->GetName());
+	Result->SetStringField(TEXT("componentClass"), ISMC->GetClass()->GetName());
+	Result->SetNumberField(TEXT("addedCount"), AddedIndices.Num());
+	Result->SetNumberField(TEXT("firstIndex"), FirstIndex);
+	Result->SetNumberField(TEXT("totalInstances"), ISMC->GetInstanceCount());
+	Result->SetArrayField(TEXT("instanceIndices"), IndicesJson);
+	Result->SetBoolField(TEXT("worldSpace"), bWorldSpace);
+	return MCPResult(Result);
 }
 
 // #220: bulk delete actors matching label prefix / class / tag.

@@ -28,8 +28,10 @@
 #include "Components/ActorComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "EnhancedPlayerInput.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "Kismet/GameplayStatics.h"
 #include "InputModifiers.h"
 #include "InputTriggers.h"
 #include "Animation/AnimInstance.h"
@@ -203,6 +205,62 @@ TSharedPtr<FJsonValue> FGameplayHandlers::ReadImc(const TSharedPtr<FJsonObject>&
 
 
 // ─────────────────────────────────────────────────────────────
+// #604  get_applied_imcs — read a live PIE player's applied Input Mapping
+// Contexts (this is a runtime READ; PIE input injection lives in pie-studio).
+// ─────────────────────────────────────────────────────────────
+TSharedPtr<FJsonValue> FGameplayHandlers::GetAppliedImcs(const TSharedPtr<FJsonObject>& Params)
+{
+	UWorld* World = GEditor ? GEditor->PlayWorld : nullptr;
+	if (!World) return MCPError(TEXT("No PIE world available. Start Play-In-Editor first."));
+
+	const int32 PlayerIndex = OptionalInt(Params, TEXT("playerIndex"), 0);
+	APlayerController* PC = UGameplayStatics::GetPlayerController(World, PlayerIndex);
+	if (!PC) return MCPError(FString::Printf(TEXT("No PlayerController at index %d"), PlayerIndex));
+
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP) return MCPError(TEXT("PlayerController has no LocalPlayer"));
+
+	UEnhancedInputLocalPlayerSubsystem* Sub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	if (!Sub) return MCPError(TEXT("EnhancedInputLocalPlayerSubsystem not available (project may not use Enhanced Input)"));
+
+	UEnhancedPlayerInput* EPI = Sub->GetPlayerInput();
+	if (!EPI) return MCPError(TEXT("No EnhancedPlayerInput on the local player"));
+
+	// GetAppliedInputContextData() is protected, so read the UPROPERTY map via
+	// reflection: keys are UInputMappingContext object refs, values are the
+	// FAppliedInputContextData struct (Priority, RegistrationCount).
+	TArray<TSharedPtr<FJsonValue>> Contexts;
+	FMapProperty* MapProp = CastField<FMapProperty>(EPI->GetClass()->FindPropertyByName(TEXT("AppliedInputContextData")));
+	if (MapProp)
+	{
+		FObjectPropertyBase* KeyObjProp = CastField<FObjectPropertyBase>(MapProp->KeyProp);
+		FStructProperty* ValStruct = CastField<FStructProperty>(MapProp->ValueProp);
+		FIntProperty* PriorityProp = ValStruct ? CastField<FIntProperty>(ValStruct->Struct->FindPropertyByName(TEXT("Priority"))) : nullptr;
+		FIntProperty* RegProp = ValStruct ? CastField<FIntProperty>(ValStruct->Struct->FindPropertyByName(TEXT("RegistrationCount"))) : nullptr;
+		FScriptMapHelper Helper(MapProp, MapProp->ContainerPtrToValuePtr<void>(EPI));
+		for (int32 i = 0; i < Helper.GetMaxIndex(); ++i)
+		{
+			if (!Helper.IsValidIndex(i)) continue;
+			UObject* IMC = KeyObjProp ? KeyObjProp->GetObjectPropertyValue(Helper.GetKeyPtr(i)) : nullptr;
+			if (!IMC) continue;
+			void* ValPtr = Helper.GetValuePtr(i);
+			TSharedPtr<FJsonObject> C = MakeShared<FJsonObject>();
+			C->SetStringField(TEXT("imc"), IMC->GetPathName());
+			C->SetStringField(TEXT("name"), IMC->GetName());
+			if (PriorityProp) C->SetNumberField(TEXT("priority"), PriorityProp->GetPropertyValue_InContainer(ValPtr));
+			if (RegProp) C->SetNumberField(TEXT("registrationCount"), RegProp->GetPropertyValue_InContainer(ValPtr));
+			Contexts.Add(MakeShared<FJsonValueObject>(C));
+		}
+	}
+
+	auto Result = MCPSuccess();
+	Result->SetNumberField(TEXT("playerIndex"), PlayerIndex);
+	Result->SetArrayField(TEXT("appliedContexts"), Contexts);
+	Result->SetNumberField(TEXT("count"), Contexts.Num());
+	return MCPResult(Result);
+}
+
+// ─────────────────────────────────────────────────────────────
 // #57 / #60  add_imc_mapping — Add key mapping to an IMC
 // ─────────────────────────────────────────────────────────────
 TSharedPtr<FJsonValue> FGameplayHandlers::AddImcMapping(const TSharedPtr<FJsonObject>& Params)
@@ -348,7 +406,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 			// Set properties via reflection
 			for (const auto& Pair : (*ModObj)->Values)
 			{
-				const FString Key(Pair.Key.ToView());
+				const FString Key(Pair.Key);
 				if (Key == TEXT("type")) continue;
 
 				FProperty* Prop = ModClass->FindPropertyByName(FName(*Key));
@@ -458,7 +516,7 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetMappingModifiers(const TSharedPtr<F
 			// Set properties via reflection (same pattern as modifiers)
 			for (const auto& Pair : (*TrigObj)->Values)
 			{
-				const FString Key(Pair.Key.ToView());
+				const FString Key(Pair.Key);
 				if (Key == TEXT("type")) continue;
 
 				FProperty* Prop = TrigClass->FindPropertyByName(FName(*Key));
@@ -678,476 +736,5 @@ TSharedPtr<FJsonValue> FGameplayHandlers::SetImcMappingAction(const TSharedPtr<F
 	Result->SetNumberField(TEXT("mappingIndex"), Idx);
 	Result->SetStringField(TEXT("previousInputAction"), PrevAction ? PrevAction->GetPathName() : TEXT("None"));
 	Result->SetStringField(TEXT("newInputAction"), NewAction->GetPathName());
-	return MCPResult(Result);
-}
-
-// ─────────────────────────────────────────────────────────────
-// #54 / #89 / #90  inspect_pie — PIE runtime actor inspection
-// ─────────────────────────────────────────────────────────────
-
-
-// ─────────────────────────────────────────────────────────────
-// #54 / #89 / #90  inspect_pie — PIE runtime actor inspection
-// ─────────────────────────────────────────────────────────────
-TSharedPtr<FJsonValue> FGameplayHandlers::InspectPie(const TSharedPtr<FJsonObject>& Params)
-{
-	// Get PIE world
-	FWorldContext* PIEContext = GEditor->GetPIEWorldContext();
-	if (!PIEContext || !PIEContext->World())
-	{
-		return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
-	}
-
-	UWorld* PIEWorld = PIEContext->World();
-
-	FString ActorLabel;
-	bool bHasLabel = Params->TryGetStringField(TEXT("actorLabel"), ActorLabel) && !ActorLabel.IsEmpty();
-
-	if (!bHasLabel)
-	{
-		// List all actors in PIE world
-		TArray<TSharedPtr<FJsonValue>> ActorsArr;
-		for (TActorIterator<AActor> It(PIEWorld); It; ++It)
-		{
-			AActor* Actor = *It;
-			if (!Actor || !IsValid(Actor)) continue;
-
-			TSharedPtr<FJsonObject> AObj = MakeShared<FJsonObject>();
-			AObj->SetStringField(TEXT("name"), Actor->GetName());
-			AObj->SetStringField(TEXT("label"), Actor->GetActorLabel());
-			AObj->SetStringField(TEXT("class"), Actor->GetClass()->GetName());
-
-			FVector Loc = Actor->GetActorLocation();
-			TSharedPtr<FJsonObject> LocObj = MakeShared<FJsonObject>();
-			LocObj->SetNumberField(TEXT("x"), Loc.X);
-			LocObj->SetNumberField(TEXT("y"), Loc.Y);
-			LocObj->SetNumberField(TEXT("z"), Loc.Z);
-			AObj->SetObjectField(TEXT("location"), LocObj);
-
-			ActorsArr.Add(MakeShared<FJsonValueObject>(AObj));
-		}
-
-		auto Result = MCPSuccess();
-		Result->SetArrayField(TEXT("actors"), ActorsArr);
-		Result->SetNumberField(TEXT("count"), ActorsArr.Num());
-		return MCPResult(Result);
-	}
-
-	AActor* FoundActor = FindActorByLabelOrName(PIEWorld, ActorLabel);
-	if (!FoundActor)
-	{
-		return MCPError(FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
-	}
-
-	auto Result = MCPSuccess();
-	Result->SetStringField(TEXT("name"), FoundActor->GetName());
-	Result->SetStringField(TEXT("label"), FoundActor->GetActorLabel());
-	Result->SetStringField(TEXT("class"), FoundActor->GetClass()->GetName());
-
-	FVector Loc = FoundActor->GetActorLocation();
-	TSharedPtr<FJsonObject> LocObj = MakeShared<FJsonObject>();
-	LocObj->SetNumberField(TEXT("x"), Loc.X);
-	LocObj->SetNumberField(TEXT("y"), Loc.Y);
-	LocObj->SetNumberField(TEXT("z"), Loc.Z);
-	Result->SetObjectField(TEXT("location"), LocObj);
-
-	// Components
-	TArray<TSharedPtr<FJsonValue>> CompsArr;
-	TArray<UActorComponent*> Components;
-	FoundActor->GetComponents(Components);
-	for (UActorComponent* Comp : Components)
-	{
-		if (!Comp) continue;
-
-		TSharedPtr<FJsonObject> CObj = MakeShared<FJsonObject>();
-		CObj->SetStringField(TEXT("name"), Comp->GetName());
-		CObj->SetStringField(TEXT("class"), Comp->GetClass()->GetName());
-		CObj->SetBoolField(TEXT("active"), Comp->IsActive());
-
-		// For scene components, include transform
-		if (USceneComponent* SceneComp = Cast<USceneComponent>(Comp))
-		{
-			FVector CLoc = SceneComp->GetComponentLocation();
-			TSharedPtr<FJsonObject> CLocObj = MakeShared<FJsonObject>();
-			CLocObj->SetNumberField(TEXT("x"), CLoc.X);
-			CLocObj->SetNumberField(TEXT("y"), CLoc.Y);
-			CLocObj->SetNumberField(TEXT("z"), CLoc.Z);
-			CObj->SetObjectField(TEXT("worldLocation"), CLocObj);
-		}
-
-		// For primitive components, include physics/collision info
-		if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Comp))
-		{
-			CObj->SetBoolField(TEXT("simulatingPhysics"), PrimComp->IsSimulatingPhysics());
-			CObj->SetStringField(TEXT("collisionProfile"), PrimComp->GetCollisionProfileName().ToString());
-		}
-
-		CompsArr.Add(MakeShared<FJsonValueObject>(CObj));
-	}
-	Result->SetArrayField(TEXT("components"), CompsArr);
-
-	// Input bindings — check for EnhancedInputComponent
-	UEnhancedInputComponent* InputComp = FoundActor->FindComponentByClass<UEnhancedInputComponent>();
-	Result->SetBoolField(TEXT("hasEnhancedInput"), InputComp != nullptr);
-
-	return MCPResult(Result);
-}
-
-// ─────────────────────────────────────────────────────────────
-// #26  get_pie_anim_state — PIE anim instance state
-// ─────────────────────────────────────────────────────────────
-
-
-// ─────────────────────────────────────────────────────────────
-// #26  get_pie_anim_state — PIE anim instance state
-// ─────────────────────────────────────────────────────────────
-TSharedPtr<FJsonValue> FGameplayHandlers::GetPieAnimState(const TSharedPtr<FJsonObject>& Params)
-{
-	FString ActorLabel;
-	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
-
-	// Get PIE world
-	FWorldContext* PIEContext = GEditor->GetPIEWorldContext();
-	if (!PIEContext || !PIEContext->World())
-	{
-		return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
-	}
-
-	UWorld* PIEWorld = PIEContext->World();
-
-	AActor* FoundActor = FindActorByLabelOrName(PIEWorld, ActorLabel);
-	if (!FoundActor)
-	{
-		return MCPError(FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
-	}
-
-	// Find SkeletalMeshComponent
-	USkeletalMeshComponent* SkelMesh = FoundActor->FindComponentByClass<USkeletalMeshComponent>();
-	if (!SkelMesh)
-	{
-		return MCPError(TEXT("Actor does not have a SkeletalMeshComponent"));
-	}
-
-	// Get AnimInstance
-	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
-	if (!AnimInst)
-	{
-		return MCPError(TEXT("No AnimInstance on the SkeletalMeshComponent"));
-	}
-
-	auto Result = MCPSuccess();
-	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
-	Result->SetStringField(TEXT("actorName"), FoundActor->GetName());
-	Result->SetStringField(TEXT("animClass"), AnimInst->GetClass()->GetName());
-
-	// Current montage
-	UAnimMontage* CurrentMontage = AnimInst->GetCurrentActiveMontage();
-	Result->SetStringField(TEXT("currentMontage"), CurrentMontage ? CurrentMontage->GetName() : TEXT("None"));
-	if (CurrentMontage)
-	{
-		Result->SetNumberField(TEXT("montagePosition"), AnimInst->Montage_GetPosition(CurrentMontage));
-		Result->SetBoolField(TEXT("montageIsPlaying"), AnimInst->Montage_IsPlaying(CurrentMontage));
-	}
-
-	// State machine info — use the anim class interface to enumerate machines
-	TArray<TSharedPtr<FJsonValue>> StatesArr;
-	if (const IAnimClassInterface* AnimClassInterface = IAnimClassInterface::GetFromClass(AnimInst->GetClass()))
-	{
-		const TArray<FBakedAnimationStateMachine>& BakedMachines = AnimClassInterface->GetBakedStateMachines();
-		for (int32 MachineIdx = 0; MachineIdx < BakedMachines.Num(); ++MachineIdx)
-		{
-			const FBakedAnimationStateMachine& BakedMachine = BakedMachines[MachineIdx];
-			TSharedPtr<FJsonObject> SMObj = MakeShared<FJsonObject>();
-			SMObj->SetStringField(TEXT("machineName"), BakedMachine.MachineName.ToString());
-			SMObj->SetNumberField(TEXT("machineIndex"), MachineIdx);
-			SMObj->SetNumberField(TEXT("stateCount"), BakedMachine.States.Num());
-
-			// Try to get current state from the instance
-			const FAnimNode_StateMachine* SM = AnimInst->GetStateMachineInstance(MachineIdx);
-			if (SM)
-			{
-				int32 StateIdx = SM->GetCurrentState();
-				SMObj->SetNumberField(TEXT("currentStateIndex"), StateIdx);
-				if (BakedMachine.States.IsValidIndex(StateIdx))
-				{
-					SMObj->SetStringField(TEXT("currentStateName"), BakedMachine.States[StateIdx].StateName.ToString());
-				}
-			}
-
-			StatesArr.Add(MakeShared<FJsonValueObject>(SMObj));
-		}
-	}
-	Result->SetArrayField(TEXT("stateMachines"), StatesArr);
-
-	return MCPResult(Result);
-}
-
-// ─────────────────────────────────────────────────────────────
-// #139 — Read arbitrary UPROPERTY values on a PIE AnimInstance
-// Params:
-//   actorLabel: required — find the actor in PIE by label or name
-//   propertyNames: optional array of property names to read; if omitted
-//                  returns ALL UPROPERTY values on the AnimInstance CDO.
-// ─────────────────────────────────────────────────────────────
-
-
-// ─────────────────────────────────────────────────────────────
-// #139 — Read arbitrary UPROPERTY values on a PIE AnimInstance
-// Params:
-//   actorLabel: required — find the actor in PIE by label or name
-//   propertyNames: optional array of property names to read; if omitted
-//                  returns ALL UPROPERTY values on the AnimInstance CDO.
-// ─────────────────────────────────────────────────────────────
-TSharedPtr<FJsonValue> FGameplayHandlers::GetPieAnimProperties(const TSharedPtr<FJsonObject>& Params)
-{
-	FString ActorLabel;
-	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
-
-	UWorld* PIEWorld = GetPIEWorld();
-	if (!PIEWorld)
-	{
-		return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
-	}
-
-	AActor* FoundActor = FindActorByLabelOrName(PIEWorld, ActorLabel);
-	if (!FoundActor) return MCPError(FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
-
-	USkeletalMeshComponent* SkelMesh = FoundActor->FindComponentByClass<USkeletalMeshComponent>();
-	if (!SkelMesh) return MCPError(TEXT("Actor has no SkeletalMeshComponent"));
-	UAnimInstance* AnimInst = SkelMesh->GetAnimInstance();
-	if (!AnimInst) return MCPError(TEXT("No AnimInstance on the SkeletalMeshComponent"));
-
-	TArray<FString> RequestedNames;
-	const TArray<TSharedPtr<FJsonValue>>* NamesArr = nullptr;
-	if (Params->TryGetArrayField(TEXT("propertyNames"), NamesArr) && NamesArr)
-	{
-		for (const TSharedPtr<FJsonValue>& V : *NamesArr)
-		{
-			FString S;
-			if (V.IsValid() && V->TryGetString(S)) RequestedNames.Add(S);
-		}
-	}
-
-	auto ExportOne = [AnimInst](FProperty* Prop) -> FString
-	{
-		FString ValueStr;
-		const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(AnimInst);
-		Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, AnimInst, PPF_None);
-		return ValueStr;
-	};
-
-	TSharedPtr<FJsonObject> Props = MakeShared<FJsonObject>();
-	if (RequestedNames.Num() > 0)
-	{
-		for (const FString& Name : RequestedNames)
-		{
-			FProperty* Prop = AnimInst->GetClass()->FindPropertyByName(*Name);
-			if (!Prop)
-			{
-				Props->SetStringField(Name, TEXT("<not found>"));
-				continue;
-			}
-			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
-			Entry->SetStringField(TEXT("type"), Prop->GetCPPType());
-			Entry->SetStringField(TEXT("value"), ExportOne(Prop));
-			Props->SetObjectField(Name, Entry);
-		}
-	}
-	else
-	{
-		for (TFieldIterator<FProperty> It(AnimInst->GetClass()); It; ++It)
-		{
-			FProperty* Prop = *It;
-			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
-			Entry->SetStringField(TEXT("type"), Prop->GetCPPType());
-			Entry->SetStringField(TEXT("value"), ExportOne(Prop));
-			Props->SetObjectField(Prop->GetName(), Entry);
-		}
-	}
-
-	auto Result = MCPSuccess();
-	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
-	Result->SetStringField(TEXT("animClass"), AnimInst->GetClass()->GetName());
-	Result->SetObjectField(TEXT("properties"), Props);
-	return MCPResult(Result);
-}
-
-// ─────────────────────────────────────────────────────────────
-// #139 — Read a subsystem's UPROPERTY values (GameInstance / World / LocalPlayer)
-// Params:
-//   subsystemClass: class path or short name of the subsystem to read
-//   scope: "game" (GameInstance, default), "world", "engine", "localplayer"
-//   propertyNames: optional array; omit for all UPROPERTYs
-//   actorLabel: required only for localplayer scope (to locate the owning PlayerController)
-// ─────────────────────────────────────────────────────────────
-
-
-// ─────────────────────────────────────────────────────────────
-// #139 — Read a subsystem's UPROPERTY values (GameInstance / World / LocalPlayer)
-// Params:
-//   subsystemClass: class path or short name of the subsystem to read
-//   scope: "game" (GameInstance, default), "world", "engine", "localplayer"
-//   propertyNames: optional array; omit for all UPROPERTYs
-//   actorLabel: required only for localplayer scope (to locate the owning PlayerController)
-// ─────────────────────────────────────────────────────────────
-TSharedPtr<FJsonValue> FGameplayHandlers::GetPieSubsystemState(const TSharedPtr<FJsonObject>& Params)
-{
-	FString SubsystemClassName;
-	if (auto Err = RequireString(Params, TEXT("subsystemClass"), SubsystemClassName)) return Err;
-
-	UClass* SubClass = nullptr;
-	if (SubsystemClassName.Contains(TEXT("/")) || SubsystemClassName.Contains(TEXT(".")))
-	{
-		SubClass = LoadObject<UClass>(nullptr, *SubsystemClassName);
-	}
-	if (!SubClass)
-	{
-		SubClass = FindClassByShortName(SubsystemClassName);
-	}
-	if (!SubClass) return MCPError(FString::Printf(TEXT("Subsystem class not found: %s"), *SubsystemClassName));
-
-	const FString Scope = OptionalString(Params, TEXT("scope"), TEXT("game")).ToLower();
-
-	UWorld* PIEWorld = GetPIEWorld();
-	if (!PIEWorld) return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
-
-	USubsystem* Subsystem = nullptr;
-	if (Scope == TEXT("engine"))
-	{
-		Subsystem = GEngine ? GEngine->GetEngineSubsystemBase(SubClass) : nullptr;
-	}
-	else if (Scope == TEXT("world"))
-	{
-		Subsystem = PIEWorld->GetSubsystemBase(SubClass);
-	}
-	else if (Scope == TEXT("localplayer"))
-	{
-		ULocalPlayer* LP = PIEWorld->GetFirstLocalPlayerFromController();
-		if (!LP) return MCPError(TEXT("No LocalPlayer in PIE world"));
-		Subsystem = LP->GetSubsystemBase(SubClass);
-	}
-	else // game (default)
-	{
-		UGameInstance* GI = PIEWorld->GetGameInstance();
-		if (!GI) return MCPError(TEXT("No GameInstance in PIE world"));
-		Subsystem = GI->GetSubsystemBase(SubClass);
-	}
-
-	if (!Subsystem) return MCPError(FString::Printf(TEXT("Subsystem not found: %s (scope=%s)"), *SubsystemClassName, *Scope));
-
-	TArray<FString> RequestedNames;
-	const TArray<TSharedPtr<FJsonValue>>* NamesArr = nullptr;
-	if (Params->TryGetArrayField(TEXT("propertyNames"), NamesArr) && NamesArr)
-	{
-		for (const TSharedPtr<FJsonValue>& V : *NamesArr)
-		{
-			FString S;
-			if (V.IsValid() && V->TryGetString(S)) RequestedNames.Add(S);
-		}
-	}
-
-	auto ExportOne = [Subsystem](FProperty* Prop) -> FString
-	{
-		FString ValueStr;
-		const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Subsystem);
-		Prop->ExportText_Direct(ValueStr, ValuePtr, ValuePtr, Subsystem, PPF_None);
-		return ValueStr;
-	};
-
-	TSharedPtr<FJsonObject> Props = MakeShared<FJsonObject>();
-	if (RequestedNames.Num() > 0)
-	{
-		for (const FString& Name : RequestedNames)
-		{
-			FProperty* Prop = Subsystem->GetClass()->FindPropertyByName(*Name);
-			if (!Prop)
-			{
-				Props->SetStringField(Name, TEXT("<not found>"));
-				continue;
-			}
-			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
-			Entry->SetStringField(TEXT("type"), Prop->GetCPPType());
-			Entry->SetStringField(TEXT("value"), ExportOne(Prop));
-			Props->SetObjectField(Name, Entry);
-		}
-	}
-	else
-	{
-		for (TFieldIterator<FProperty> It(Subsystem->GetClass()); It; ++It)
-		{
-			FProperty* Prop = *It;
-			TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
-			Entry->SetStringField(TEXT("type"), Prop->GetCPPType());
-			Entry->SetStringField(TEXT("value"), ExportOne(Prop));
-			Props->SetObjectField(Prop->GetName(), Entry);
-		}
-	}
-
-	auto Result = MCPSuccess();
-	Result->SetStringField(TEXT("subsystemClass"), Subsystem->GetClass()->GetPathName());
-	Result->SetStringField(TEXT("scope"), Scope);
-	Result->SetObjectField(TEXT("properties"), Props);
-	return MCPResult(Result);
-}
-
-// ─── #124 read_behavior_tree_graph ──────────────────────────────────
-
-
-// ─────────────────────────────────────────────────────────────
-// #186  apply_damage_in_pie — Apply damage to a PIE actor via UGameplayStatics
-// ─────────────────────────────────────────────────────────────
-TSharedPtr<FJsonValue> FGameplayHandlers::ApplyDamageInPie(const TSharedPtr<FJsonObject>& Params)
-{
-	FString ActorLabel;
-	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
-
-	double BaseDamage = OptionalNumber(Params, TEXT("baseDamage"), 10.0);
-	FString DamageTypeClassName = OptionalString(Params, TEXT("damageTypeClass"), TEXT(""));
-
-	// Get PIE world
-	FWorldContext* PIEContext = GEditor->GetPIEWorldContext();
-	if (!PIEContext || !PIEContext->World())
-	{
-		return MCPError(TEXT("No PIE world available. Is Play-In-Editor running?"));
-	}
-	UWorld* PIEWorld = PIEContext->World();
-
-	AActor* TargetActor = FindActorByLabelOrName(PIEWorld, ActorLabel);
-	if (!TargetActor)
-	{
-		return MCPError(FString::Printf(TEXT("Actor not found in PIE: %s"), *ActorLabel));
-	}
-
-	// Resolve damage type
-	TSubclassOf<UDamageType> DamageTypeClass = UDamageType::StaticClass();
-	if (!DamageTypeClassName.IsEmpty())
-	{
-		UClass* FoundClass = FindClassByShortName(DamageTypeClassName);
-		if (FoundClass && FoundClass->IsChildOf(UDamageType::StaticClass()))
-		{
-			DamageTypeClass = FoundClass;
-		}
-	}
-
-	// We need an instigator — use the first player controller as event instigator
-	APlayerController* PC = PIEWorld->GetFirstPlayerController();
-	AActor* DamageCauser = PC ? PC->GetPawn() : nullptr;
-	AController* InstigatorController = PC;
-
-	// Apply damage
-	float ActualDamage = UGameplayStatics::ApplyDamage(
-		TargetActor,
-		static_cast<float>(BaseDamage),
-		InstigatorController,
-		DamageCauser,
-		DamageTypeClass
-	);
-
-	auto Result = MCPSuccess();
-	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
-	Result->SetStringField(TEXT("actorClass"), TargetActor->GetClass()->GetName());
-	Result->SetNumberField(TEXT("baseDamage"), BaseDamage);
-	Result->SetNumberField(TEXT("actualDamage"), static_cast<double>(ActualDamage));
-	Result->SetStringField(TEXT("damageType"), DamageTypeClass->GetName());
 	return MCPResult(Result);
 }

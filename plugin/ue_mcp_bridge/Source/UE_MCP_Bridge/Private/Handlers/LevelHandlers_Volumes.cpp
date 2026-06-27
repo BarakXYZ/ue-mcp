@@ -223,17 +223,17 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 	TArray<TPair<FString, TSharedPtr<FJsonValue>>> Pairs;
 	for (auto& Pair : Params->Values)
 	{
-		const FString Key(Pair.Key.ToView());
+		const FString Key(Pair.Key);
 		if (Key == TEXT("actorLabel") || Key == TEXT("action") || Key == TEXT("properties"))
 			continue;
-		Pairs.Emplace(Key, Pair.Value);
+		Pairs.Emplace(FString(*Pair.Key), Pair.Value);
 	}
 	const TSharedPtr<FJsonObject>* PropsObj = nullptr;
 	if (Params->TryGetObjectField(TEXT("properties"), PropsObj) && PropsObj && (*PropsObj).IsValid())
 	{
 		for (auto& Pair : (*PropsObj)->Values)
 		{
-			Pairs.Emplace(FString(Pair.Key.ToView()), Pair.Value);
+			Pairs.Emplace(FString(*Pair.Key), Pair.Value);
 		}
 	}
 	for (auto& Pair : Pairs)
@@ -271,6 +271,36 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 			continue;
 		}
 
+		// #466: dotted paths like "Settings.VignetteIntensity" descend into
+		// nested structs (PostProcessVolume.Settings is the marquee case). When
+		// the key writes into FPostProcessSettings, also auto-flip the matching
+		// bOverride_* flag so the change actually takes effect.
+		if (Pair.Key.Contains(TEXT(".")))
+		{
+			FString SetErr;
+			TArray<FString> Parts;
+			Pair.Key.ParseIntoArray(Parts, TEXT("."));
+			if (MCPJsonProperty::SetDottedPropertyFromJson(TargetActor, Pair.Key, Pair.Value, SetErr))
+			{
+				if (Parts.Num() >= 2)
+				{
+					const FString& Container = Parts[0];
+					const FString& Leaf = Parts.Last();
+					if (!Leaf.StartsWith(TEXT("bOverride_")))
+					{
+						const FString OverrideKey = FString::Printf(TEXT("%s.bOverride_%s"), *Container, *Leaf);
+						FString OverrideErr;
+						TSharedPtr<FJsonValue> True = MakeShared<FJsonValueBoolean>(true);
+						MCPJsonProperty::SetDottedPropertyFromJson(TargetActor, OverrideKey, True, OverrideErr);
+					}
+				}
+				Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
+				continue;
+			}
+			Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: %s"), *Pair.Key, *SetErr)));
+			continue;
+		}
+
 		FProperty* Prop = TargetActor->GetClass()->FindPropertyByName(*Pair.Key);
 		if (!Prop)
 		{
@@ -282,24 +312,11 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 		Prop->ExportText_Direct(PrevStr, Prop->ContainerPtrToValuePtr<void>(TargetActor),
 			Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
 
-		FString ValueStr;
-		bool bApplied = false;
-		if (Pair.Value->TryGetString(ValueStr))
-		{
-			Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
-			bApplied = true;
-		}
-		else
-		{
-			double NumVal;
-			if (Pair.Value->TryGetNumber(NumVal))
-			{
-				ValueStr = FString::SanitizeFloat(NumVal);
-				Prop->ImportText_Direct(*ValueStr, Prop->ContainerPtrToValuePtr<void>(TargetActor), TargetActor, PPF_None);
-				bApplied = true;
-			}
-		}
-
+		// #466: route every value through MCPJsonProperty so JSON dicts (e.g.
+		// {x,y,z,w} for FVector4) reach struct properties, not just strings.
+		void* ValueAddr = Prop->ContainerPtrToValuePtr<void>(TargetActor);
+		FString SetErr;
+		bool bApplied = MCPJsonProperty::SetJsonOnProperty(Prop, ValueAddr, Pair.Value, SetErr);
 		if (bApplied)
 		{
 			Changes.Add(MakeShared<FJsonValueString>(Pair.Key));
@@ -307,7 +324,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 		}
 		else
 		{
-			Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: value type not coercible"), *Pair.Key)));
+			Skipped.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%s: %s"), *Pair.Key, *SetErr)));
 		}
 	}
 
@@ -328,7 +345,7 @@ TSharedPtr<FJsonValue> FLevelHandlers::SetVolumeProperties(const TSharedPtr<FJso
 		Payload->SetStringField(TEXT("actorLabel"), ActorLabel);
 		for (auto& Prev : PreviousValues->Values)
 		{
-			Payload->SetField(Prev.Key.ToView(), Prev.Value);
+			Payload->SetField(Prev.Key, Prev.Value);
 		}
 		MCPSetRollback(Result, TEXT("set_volume_properties"), Payload);
 	}

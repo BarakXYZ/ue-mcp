@@ -1004,7 +1004,7 @@ TSharedPtr<FJsonValue> FAssetHandlers::CreateDataAsset(const TSharedPtr<FJsonObj
 	{
 		for (const auto& Pair : (*PropsObj)->Values)
 		{
-			const FString Key(Pair.Key.ToView());
+			const FString Key(Pair.Key);
 			FProperty* Prop = DataClass->FindPropertyByName(FName(*Key));
 			if (!Prop)
 			{

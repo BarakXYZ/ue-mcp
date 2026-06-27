@@ -13,6 +13,7 @@
 #include "NiagaraSystem.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraComponent.h"
+#include "NiagaraActor.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraRendererProperties.h"
 #include "NiagaraMeshRendererProperties.h"
@@ -24,7 +25,6 @@
 #include "NiagaraGraph.h"
 #include "NiagaraNodeFunctionCall.h"
 #include "NiagaraNodeCustomHlsl.h"
-#include "NiagaraScriptFactoryNew.h"
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraEditorUtilities.h"
 #include "Editor.h"
@@ -36,6 +36,19 @@
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphNode.h"
 
+namespace
+{
+	UFactory* CreateNiagaraEditorFactoryByClassPath(const TCHAR* ClassPath)
+	{
+		UClass* FactoryClass = LoadObject<UClass>(nullptr, ClassPath);
+		if (!FactoryClass || !FactoryClass->IsChildOf(UFactory::StaticClass()))
+		{
+			return nullptr;
+		}
+		return NewObject<UFactory>(GetTransientPackage(), FactoryClass);
+	}
+}
+
 void FNiagaraHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 {
 	Registry.RegisterHandler(TEXT("list_niagara_systems"), &ListNiagaraSystems);
@@ -45,6 +58,8 @@ void FNiagaraHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	Registry.RegisterHandler(TEXT("list_emitters_in_system"), &ListEmittersInSystem);
 	Registry.RegisterHandler(TEXT("create_niagara_emitter"), &CreateNiagaraEmitter);
 	Registry.RegisterHandler(TEXT("spawn_niagara_at_location"), &SpawnNiagaraAtLocation);
+	Registry.RegisterHandler(TEXT("spawn_niagara_actor"), &SpawnNiagaraActor);
+	Registry.RegisterHandler(TEXT("reactivate_niagara"), &ReactivateNiagara);
 	Registry.RegisterHandler(TEXT("set_niagara_parameter"), &SetNiagaraParameter);
 	Registry.RegisterHandler(TEXT("add_emitter_to_system"), &AddEmitterToSystem);
 	Registry.RegisterHandler(TEXT("set_emitter_property"), &SetEmitterProperty);
@@ -345,6 +360,99 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SpawnNiagaraAtLocation(const TSharedPtr
 	return MCPResult(Result);
 }
 
+// spawn_niagara_actor -- place a PERSISTENT, labeled ANiagaraActor in the editor
+// world (unlike spawn_niagara_at_location, which makes a transient component
+// parented to WorldSettings that GC's before an offscreen capture and can't be
+// reliably found/reactivated). Assigns the system, sets the label, activates.
+// (#537) Params: systemPath, location?, rotation?, label?, activate? (default true).
+TSharedPtr<FJsonValue> FNiagaraHandlers::SpawnNiagaraActor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString SystemPath;
+	if (auto Err = RequireString(Params, TEXT("systemPath"), SystemPath)) return Err;
+
+	UNiagaraSystem* NiagaraSystem = LoadObject<UNiagaraSystem>(nullptr, *SystemPath);
+	if (!NiagaraSystem)
+	{
+		return MCPError(FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+	}
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	FVector Location = OptionalVec3(Params, TEXT("location"));
+	if (Location == FVector::ZeroVector) ReadVec3Fields(Params, Location);
+	FRotator Rotation = OptionalRotator(Params, TEXT("rotation"));
+	if (Rotation == FRotator::ZeroRotator) ReadRotatorFields(Params, Rotation);
+
+	const FString Label = OptionalString(Params, TEXT("label"));
+	if (auto ExistingActor = MCPCheckActorLabelExists(World, Label, TEXT("skip"), TEXT("Niagara actor")))
+	{
+		return ExistingActor;
+	}
+
+	const bool bActivate = OptionalBool(Params, TEXT("activate"), true);
+
+	FActorSpawnParameters SpawnParams;
+	ANiagaraActor* Actor = World->SpawnActor<ANiagaraActor>(ANiagaraActor::StaticClass(), Location, Rotation, SpawnParams);
+	if (!Actor)
+	{
+		return MCPError(TEXT("Failed to spawn ANiagaraActor"));
+	}
+
+	UNiagaraComponent* Comp = Actor->GetNiagaraComponent();
+	if (!Comp)
+	{
+		Actor->Destroy();
+		return MCPError(TEXT("Spawned ANiagaraActor has no NiagaraComponent"));
+	}
+
+	Comp->SetAsset(NiagaraSystem);
+	if (!Label.IsEmpty()) Actor->SetActorLabel(*Label);
+	if (bActivate) Comp->Activate(/*bReset=*/true);
+
+	auto Result = MCPSuccess();
+	MCPSetCreated(Result);
+	Result->SetStringField(TEXT("systemPath"), SystemPath);
+	Result->SetStringField(TEXT("actorLabel"), Actor->GetActorLabel());
+	Result->SetStringField(TEXT("actorName"), Actor->GetName());
+	Result->SetBoolField(TEXT("activated"), bActivate);
+
+	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("actorLabel"), Actor->GetActorLabel());
+	MCPSetRollback(Result, TEXT("delete_actor"), Payload);
+	return MCPResult(Result);
+}
+
+// reactivate_niagara -- reset + reactivate the Niagara component on a placed
+// actor (e.g. to replay a burst before an offscreen capture). (#537)
+// Params: actorLabel.
+TSharedPtr<FJsonValue> FNiagaraHandlers::ReactivateNiagara(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (auto Err = RequireString(Params, TEXT("actorLabel"), ActorLabel)) return Err;
+
+	REQUIRE_EDITOR_WORLD(World);
+
+	AActor* Actor = FindActorByLabel(World, ActorLabel);
+	if (!Actor)
+	{
+		return MCPError(FString::Printf(TEXT("Actor not found: %s"), *ActorLabel));
+	}
+	UNiagaraComponent* Comp = Actor->FindComponentByClass<UNiagaraComponent>();
+	if (!Comp)
+	{
+		return MCPError(FString::Printf(TEXT("No NiagaraComponent on actor: %s"), *ActorLabel));
+	}
+
+	Comp->Deactivate();
+	Comp->ResetSystem();
+	Comp->Activate(/*bReset=*/true);
+
+	auto Result = MCPSuccess();
+	MCPSetUpdated(Result);
+	Result->SetStringField(TEXT("actorLabel"), ActorLabel);
+	return MCPResult(Result);
+}
+
 TSharedPtr<FJsonValue> FNiagaraHandlers::SetNiagaraParameter(const TSharedPtr<FJsonObject>& Params)
 {
 	FString ActorLabel;
@@ -577,12 +685,13 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetEmitterProperty(const TSharedPtr<FJs
 	bool bSet = false;
 	if (PropName.Equals(TEXT("enabled"), ESearchCase::IgnoreCase))
 	{
-		// Can't directly set enabled on versioned data, but can toggle handle
-		// Use mutable access pattern
+		const bool bEnabled = Value.ToBool();
 		System->Modify();
-		// SetIsEnabled is not const-accessible, note for the user
+		// GetEmitterHandles() is const; the editor mutates via a non-const handle.
+		FNiagaraEmitterHandle& MutableHandle = const_cast<FNiagaraEmitterHandle&>(Handles[TargetIdx]);
+		MutableHandle.SetIsEnabled(bEnabled, *System, /*bRecompileIfChanged*/ true);
 		bSet = true;
-		Result->SetStringField(TEXT("note"), TEXT("Use get_info to check enabled state. For toggling, use execute_python."));
+		Result->SetBoolField(TEXT("enabled"), bEnabled);
 	}
 
 	// Try reflection on the EmitterData's properties
@@ -1394,7 +1503,8 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::CreateModuleFromHlsl(const TSharedPtr<F
 
 	// Use the stock module factory to create a baseline module with Param-map get/set scaffolding,
 	// then add a CustomHLSL node that carries the user's HLSL body.
-	UNiagaraModuleScriptFactory* Factory = NewObject<UNiagaraModuleScriptFactory>();
+	UFactory* Factory = CreateNiagaraEditorFactoryByClassPath(TEXT("/Script/NiagaraEditor.NiagaraModuleScriptFactory"));
+	if (!Factory) return MCPError(TEXT("Failed to create Niagara module factory. Ensure Niagara editor module is available."));
 	auto Created = MCPCreateAssetIdempotent<UNiagaraScript>(Name, PackagePath, OptionalString(Params, TEXT("onConflict"), TEXT("skip")), TEXT("NiagaraScript"), Factory);
 	if (Created.EarlyReturn) return Created.EarlyReturn;
 	UNiagaraScript* Script = Created.Asset;
@@ -1453,7 +1563,8 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::CreateScratchModule(const TSharedPtr<FJ
 	FString PackagePath = OptionalString(Params, TEXT("packagePath"), TEXT("/Game/VFX"));
 
 	// Use the stock Niagara module factory to create a baseline module script
-	UNiagaraModuleScriptFactory* Factory = NewObject<UNiagaraModuleScriptFactory>();
+	UFactory* Factory = CreateNiagaraEditorFactoryByClassPath(TEXT("/Script/NiagaraEditor.NiagaraModuleScriptFactory"));
+	if (!Factory) return MCPError(TEXT("Failed to create Niagara module factory. Ensure Niagara editor module is available."));
 	auto Created = MCPCreateAssetIdempotent<UNiagaraScript>(Name, PackagePath, OptionalString(Params, TEXT("onConflict"), TEXT("skip")), TEXT("NiagaraScript"), Factory);
 	if (Created.EarlyReturn) return Created.EarlyReturn;
 	UNiagaraScript* Script = Created.Asset;

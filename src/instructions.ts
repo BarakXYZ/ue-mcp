@@ -18,7 +18,7 @@ project — Project status, config INI, C++ source
   set_config, read_cpp_header, read_module, list_modules, search_cpp
 
 asset — Assets: list, search, CRUD, import, export, datatables, textures
-  list, search, read, read_properties, duplicate, rename, move, delete, save,
+  list, search, read, read_properties, list_properties, get_properties, duplicate, rename, move, delete, save,
   import_static_mesh, import_skeletal_mesh, import_animation, import_texture,
   read_datatable, create_datatable, reimport_datatable, list_textures,
   get_texture_info, set_texture_settings,
@@ -40,13 +40,15 @@ level — Level actors, selection, components, volumes, lights, splines
   get_spline_info, set_spline_points
 
 material — Materials, shading, and graph authoring
-  read, list_parameters, set_parameter, create_instance, create,
+  read, list_parameters, set_parameter, read_instance, set_instance_parent,
+  clear_instance_parameters, list_static_switches, set_static_switch,
+  create_instance, create,
   set_shading_model, set_base_color, connect_texture,
   add_expression, connect_expressions, connect_to_property,
   list_expressions, delete_expression, list_expression_types, recompile
 
 animation — Anim assets, skeletons, montages, blendspaces
-  read_anim_blueprint, read_montage, read_sequence, read_blendspace, list,
+  read_anim_blueprint, read_montage, read_sequence, scan_animation_tracks, read_blendspace, list,
   create_montage, create_anim_blueprint, create_blendspace, add_notify,
   get_skeleton_info, list_sockets, list_skeletal_meshes, get_physics_asset,
   create_sequence, set_bone_keyframes, get_bone_transforms,
@@ -79,7 +81,8 @@ widget — UMG widgets and editor utilities
   create_utility_blueprint, run_utility_blueprint
 
 editor — Console, Python, PIE, viewport, sequencer, perf, build pipeline, logs
-  execute_command, execute_python, set_property, play_in_editor,
+  execute_command, execute_python, set_property, get_property,
+  describe_object, play_in_editor,
   get_runtime_value, hot_reload, undo, redo,
   get_perf_stats, run_stat, set_scalability, capture_screenshot,
   get_viewport, set_viewport, focus_on_actor,
@@ -98,7 +101,7 @@ gameplay — Physics, collision, navigation, input, behavior trees, AI, game fra
   set_collision_profile, set_simulate_physics, set_collision_enabled,
   set_physics_properties, rebuild_navigation, get_navmesh_info,
   project_to_nav, spawn_nav_modifier,
-  create_input_action, create_input_mapping, list_input_assets, set_mapping_modifiers,
+  list_input_assets,
   list_behavior_trees, get_behavior_tree_info,
   create_blackboard, create_behavior_tree,
   create_eqs_query, list_eqs_queries,
@@ -143,7 +146,7 @@ plugins — Introspect npm-distributed plugins that inject actions into other ca
 • For BP scripting: blueprint(action="search_node_types") → blueprint(action="add_node") → blueprint(action="connect_pins").
 • editor(action="execute_python") is the escape hatch for any Unreal Python API call.
 • Animation tools need a skeleton path — use animation(action="list_skeletal_meshes") to find it.
-• Editor lifecycle: editor(action="stop_editor") / editor(action="start_editor") / editor(action="restart_editor") manage the UE process.
+• Editor lifecycle: editor(action="stop_editor") / editor(action="start_editor") / editor(action="restart_editor") manage the UE process. editor(action="build_project") builds the project C++ code (stop the editor first).
 • editor(action="hot_reload") triggers Live Coding compilation without restarting the editor.
 • editor(action="focus_on_actor", actorLabel="MyActor") snaps the viewport to any actor.
 • Log output: editor(action="get_log", category="LogMCPBridge") to see bridge-specific logs.
