@@ -22,6 +22,13 @@ export interface UeMcpConfig {
   contentRoots?: string[];
   /** Tool categories to disable (e.g. ["gas", "networking", "pcg"]) */
   disable?: string[];
+  /** Native (Epic 5.8 ToolsetRegistry) tool surfacing. Enabled by default;
+   *  `exclude` names ue-mcp categories that should not be enriched with Epic
+   *  tools (they remain reachable via the `epic` gateway). */
+  nativeTools?: {
+    enabled?: boolean;
+    exclude?: string[];
+  };
   /** Optional HTTP surface for flow.run (#144). Disabled by default. */
   http?: {
     enabled?: boolean;
@@ -36,6 +43,12 @@ export interface UeMcpConfig {
     host?: string;
     /** Default 9877. */
     port?: number;
+  };
+  /** Context-seeding strategy. `full` (default) lists every action inline;
+   *  `lean` keeps action names but serves descriptions on demand; `micro`
+   *  collapses everything behind one gateway tool. See lean-context.ts. */
+  context?: {
+    strategy?: "full" | "lean" | "micro";
   };
 }
 

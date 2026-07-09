@@ -5,7 +5,8 @@ import { z } from "zod";
 import { EditorBridge } from "./bridge.js";
 import { ProjectContext } from "./project.js";
 import { attach, attachSummary } from "./deployer.js";
-import { SERVER_INSTRUCTIONS } from "./instructions.js";
+import { SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_LEAN, SERVER_INSTRUCTIONS_MICRO } from "./instructions.js";
+import { resolveContextStrategy, applyLeanContext, buildMicroGateway } from "./lean-context.js";
 import { isDirectiveResponse, type ToolDef, type ToolContext, type PluginInfo, type ElicitFn } from "./types.js";
 import { McpError, ErrorCode } from "./errors.js";
 import { info, warn } from "./log.js";
@@ -22,6 +23,8 @@ import * as path from "node:path";
 import yaml from "js-yaml";
 
 import { ALL_TOOLS } from "./tools.js";
+import { enrichToolsWithEpicCatalog, type EpicCatalog } from "./epic-enrich.js";
+import { saveCatalogCache, loadCatalogCache, loadBakedCatalog } from "./epic-cache.js";
 
 type TextBlock = { type: "text"; text: string };
 
@@ -84,6 +87,90 @@ async function main() {
   const activeTools = pluginLoad.tools;
   const pluginRecords = pluginLoad.records;
 
+  // ── Epic 5.8 native toolset surfacing (best-effort, startup) ─────
+  // If the editor bridge is reachable now, pull Epic's live toolset catalog and
+  // inject each tool as a first-class action into the matching ue-mcp category
+  // (GAS tools into `gas`, Niagara into `niagara`, etc.). This must run before
+  // the flow registry and MCP tool registration below so the injected actions
+  // are dispatchable and advertised. When the editor is not up yet, the `epic`
+  // gateway still works; a server restart picks up enrichment. (Re-enrichment on
+  // late connect would require tools/list_changed and is a follow-up.)
+  const nativeCfg = project.config.nativeTools ?? {};
+  const nativeEnabled = nativeCfg.enabled !== false; // on by default (opt-out)
+  if (!nativeEnabled) {
+    console.error("[ue-mcp] Native Epic tools disabled via ue-mcp.yml (nativeTools.enabled=false); epic gateway still available");
+  } else {
+    try {
+      // Source priority: live editor (most current, refreshes the cache) ->
+      // project cache (last-seen) -> baked snapshot shipped with the package
+      // (deterministic default so the surface appears on first cold startup and
+      // matches the generated docs). First available wins.
+      let catalog: EpicCatalog | null = null;
+      let source = "";
+      if (!bridge.isConnected) {
+        await bridge.connect(2000).catch(() => {});
+      }
+      if (bridge.isConnected) {
+        catalog = (await bridge.call("epic_list_toolsets", { includeSchemas: true }, 20000)) as EpicCatalog;
+        if (catalog?.toolsets?.length) {
+          saveCatalogCache(configDir, catalog, project.engineAssociation);
+          source = "live editor";
+        }
+      }
+      if (!catalog?.toolsets?.length) {
+        catalog = loadCatalogCache(configDir);
+        if (catalog?.toolsets?.length) source = "project cache";
+      }
+      if (!catalog?.toolsets?.length) {
+        catalog = loadBakedCatalog();
+        if (catalog?.toolsets?.length) source = "baked snapshot";
+      }
+      if (catalog?.toolsets?.length) {
+        const enriched = enrichToolsWithEpicCatalog(activeTools, catalog, {
+          excludeCategories: nativeCfg.exclude,
+        });
+        if (enriched.injected > 0) {
+          const summary = Object.entries(enriched.byCategory).map(([c, n]) => `${c}:${n}`).join(", ");
+          console.error(`[ue-mcp] Epic 5.8 toolsets (${source}): surfaced ${enriched.injected} tools (${summary})`);
+        }
+      }
+    } catch (e) {
+      console.error(`[ue-mcp] Epic toolset enrichment skipped: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  // ── Context-seeding strategy (full | lean | micro) ───────────────
+  // Applied AFTER plugin + Epic enrichment so lean/micro discovery covers the
+  // injected actions too, and BEFORE the flow registry + MCP registration so
+  // the gateway / catalog / describe surfaces are dispatchable and advertised.
+  //   full  - every category tool advertised with its full action catalog
+  //   lean  - trimmed category tools + a `catalog` discovery tool (names stay
+  //           visible, descriptions/params on demand)
+  //   micro - one `tools` gateway (list_categories / describe / call) fronts
+  //           everything; smallest possible seed
+  const contextStrategy = resolveContextStrategy(project.config.context?.strategy);
+  const disabled = new Set(project.config.disable ?? []);
+  const enabledActive = activeTools.filter((t) => !disabled.has(t.name));
+
+  let advertisedTools: ToolDef[];
+  let registryTools: ToolDef[];
+  if (contextStrategy === "micro") {
+    const gateway = buildMicroGateway(enabledActive);
+    advertisedTools = [gateway];
+    // Keep every category task in the registry so flows still resolve.
+    registryTools = [gateway, ...activeTools];
+  } else if (contextStrategy === "lean") {
+    const leaned = applyLeanContext(activeTools);
+    advertisedTools = leaned.filter((t) => !disabled.has(t.name));
+    registryTools = leaned;
+  } else {
+    advertisedTools = enabledActive;
+    registryTools = activeTools;
+  }
+  if (contextStrategy !== "full") {
+    console.error(`[ue-mcp] Context strategy: ${contextStrategy}`);
+  }
+
   // Lazy flow accessor — reads ue-mcp.yml fresh each call so agents see
   // edits without a server restart. project(get_status) uses this so the
   // first call agents make in any session reveals the registered flows.
@@ -126,7 +213,7 @@ async function main() {
   const ctx: ToolContext = { bridge, project, getFlows, getPlugins };
 
   // ── Flow engine: task registry ──────────────────────────────────
-  const registry = buildFlowRegistry(activeTools);
+  const registry = buildFlowRegistry(registryTools);
   for (const { name, ctor } of pluginLoad.taskRegistrations) {
     registry.register(name, ctor);
   }
@@ -140,9 +227,14 @@ async function main() {
   // budget as SERVER_INSTRUCTIONS itself; deeper plugin docs remain
   // readable on demand via the file-reading surface.
   const knowledgeBlock = buildKnowledgeBlock(pluginLoad.knowledgeByCategory);
+  const baseInstructions = contextStrategy === "micro"
+    ? SERVER_INSTRUCTIONS_MICRO
+    : contextStrategy === "lean"
+      ? SERVER_INSTRUCTIONS_LEAN
+      : SERVER_INSTRUCTIONS;
   const serverInstructions = knowledgeBlock
-    ? `${SERVER_INSTRUCTIONS}\n\n═══ PLUGIN KNOWLEDGE ═══\n${knowledgeBlock}`
-    : SERVER_INSTRUCTIONS;
+    ? `${baseInstructions}\n\n═══ PLUGIN KNOWLEDGE ═══\n${knowledgeBlock}`
+    : baseInstructions;
 
   const server = new McpServer({
     name: "ue-mcp",
@@ -153,8 +245,7 @@ async function main() {
 
   ctx.elicit = buildElicit(server);
 
-  const disabled = new Set(project.config.disable ?? []);
-  const tools = activeTools.filter((t) => !disabled.has(t.name));
+  const tools = advertisedTools;
 
   // ── Register category tools — dispatched through the task registry ──
   for (const tool of tools) {
@@ -452,6 +543,9 @@ if (subcmd === "init") {
 } else if (subcmd === "projects") {
   process.argv.splice(2, 1);
   import("./projects-cli.js");
+} else if (subcmd === "context") {
+  process.argv.splice(2, 1);
+  import("./context-cli.js");
 } else if (subcmd === "version" || subcmd === "--version" || subcmd === "-v") {
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);

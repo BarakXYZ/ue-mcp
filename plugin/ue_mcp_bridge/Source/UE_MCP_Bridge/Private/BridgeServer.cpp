@@ -34,6 +34,8 @@
 #include "Handlers/PhysicsHandlers.h"
 #include "Handlers/DemoHandlers.h"
 #include "Handlers/StateTreeHandlers.h"
+#include "Handlers/ChooserHandlers.h"
+#include "Handlers/EpicHandlers.h"
 
 // Platform-specific socket includes
 #if PLATFORM_WINDOWS
@@ -178,6 +180,10 @@ bool FMCPBridgeOriginValidationTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("reject non-loopback host"), IsLoopbackWebSocketOrigin(TEXT("https://example.com")));
 	TestFalse(TEXT("reject missing scheme"), IsLoopbackWebSocketOrigin(TEXT("localhost:9877")));
 	TestFalse(TEXT("reject invalid port"), IsLoopbackWebSocketOrigin(TEXT("http://localhost:bad")));
+	TestFalse(TEXT("reject zero port"), IsLoopbackWebSocketOrigin(TEXT("http://localhost:0")));
+	TestFalse(TEXT("reject out-of-range port"), IsLoopbackWebSocketOrigin(TEXT("http://localhost:65536")));
+	TestFalse(TEXT("reject userinfo trick"), IsLoopbackWebSocketOrigin(TEXT("http://localhost@evil.com")));
+	TestFalse(TEXT("reject IPv6 suffix trick"), IsLoopbackWebSocketOrigin(TEXT("http://[::1].evil.com")));
 	return true;
 }
 #endif
@@ -214,6 +220,8 @@ FMCPBridgeServer::FMCPBridgeServer(int32 Port)
 	FDemoHandlers::RegisterHandlers(HandlerRegistry);
 	FProjectHandlers::RegisterHandlers(HandlerRegistry);
 	FStateTreeHandlers::RegisterHandlers(HandlerRegistry);
+	FChooserHandlers::RegisterHandlers(HandlerRegistry);
+	FEpicHandlers::RegisterHandlers(HandlerRegistry);
 }
 
 FMCPBridgeServer::~FMCPBridgeServer()

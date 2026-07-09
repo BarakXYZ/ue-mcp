@@ -103,8 +103,26 @@ private:
 	static TSharedPtr<FJsonValue> CreatePoseSearchDatabase(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> SetPoseSearchSchema(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> AddPoseSearchSequence(const TSharedPtr<FJsonObject>& Params);
+	// #684: bulk clip-list authoring with per-entry flags (mirror/reselection/sampling).
+	static TSharedPtr<FJsonValue> SetPoseSearchClips(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> BuildPoseSearchIndex(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ReadPoseSearchDatabase(const TSharedPtr<FJsonObject>& Params);
+
+	// Motion Matching content pipeline: schema, mirror table, normalization set,
+	// database tuning (AnimationHandlers_MotionMatching.cpp).
+	static TSharedPtr<FJsonValue> CreatePoseSearchSchema(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddPoseSearchSchemaPoseChannel(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddPoseSearchSchemaTrajectoryChannel(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadPoseSearchSchema(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> CreateMirrorDataTable(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ReadMirrorDataTable(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> CreatePoseSearchNormalizationSet(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> SetPoseSearchDatabaseSettings(const TSharedPtr<FJsonObject>& Params);
+	// Motion Matching runtime AnimGraph nodes.
+	static TSharedPtr<FJsonValue> AddMotionMatchingNode(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> AddPoseHistoryNode(const TSharedPtr<FJsonObject>& Params);
+	// Drive the MM node's Database from a ChooserTable (runtime database selection).
+	static TSharedPtr<FJsonValue> SetMotionMatchingChooser(const TSharedPtr<FJsonObject>& Params);
 
 	// #419/#420 — live-actor skeletal reads + rebind + preview (moved from Level)
 	static TSharedPtr<FJsonValue> GetBoneTransform(const TSharedPtr<FJsonObject>& Params);

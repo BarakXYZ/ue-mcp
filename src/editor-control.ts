@@ -16,7 +16,7 @@ function findUEBuildTool(): string | null {
   const envPath = process.env.UE_BUILD_TOOL_PATH;
   if (envPath) return envPath;
 
-  const versions = ["5.7", "5.6", "5.5", "5.4", "5.3"];
+  const versions = ["5.8", "5.7", "5.6", "5.5", "5.4", "5.3"];
   const scriptName = IS_WINDOWS ? "Build.bat" : "Build.sh";
 
   const searchRoots: string[] = IS_WINDOWS
@@ -77,21 +77,6 @@ function findEditorExecutable(project?: ProjectContext): string | null {
   }
 
   return null;
-}
-
-function isEditorRunning(): boolean {
-  if (!IS_WINDOWS) return false;
-  try {
-    // Use /NH (no header) and check output directly — avoids pipe/find issues
-    const output = execFileSync("tasklist", ["/NH", "/FI", "IMAGENAME eq UnrealEditor.exe"], {
-      stdio: "pipe",
-      encoding: "utf-8",
-    });
-    // tasklist returns "INFO: No tasks..." when not found, or the process line when found
-    return output.toLowerCase().includes("unrealeditor.exe");
-  } catch {
-    return false;
-  }
 }
 
 function escapePowerShellSingleQuoted(value: string): string {
@@ -223,20 +208,23 @@ export async function startEditor(project: ProjectContext): Promise<{ success: b
   }
 }
 
-export async function stopEditor(project?: ProjectContext, force = false): Promise<{ success: boolean; message: string }> {
+export async function stopEditor(project: ProjectContext, force = false): Promise<{ success: boolean; message: string }> {
   if (!IS_WINDOWS) return { success: false, message: WINDOWS_ONLY_MSG };
-  const scopedProject = project?.projectPath ? project : undefined;
-  const bridgeHost = scopedProject?.bridgeHost ?? DEFAULT_BRIDGE_HOST;
-  const bridgePort = scopedProject?.bridgePort ?? DEFAULT_BRIDGE_PORT;
-  const projectProcessIds = scopedProject ? findEditorProcessIdsForProject(scopedProject) : [];
-  const processRunning = scopedProject ? projectProcessIds.length > 0 : isEditorRunning();
+  if (!project.projectPath) {
+    return { success: false, message: "No project loaded. Use project(action='set_project') first." };
+  }
+
+  const bridgeHost = project.bridgeHost ?? DEFAULT_BRIDGE_HOST;
+  const bridgePort = project.bridgePort ?? DEFAULT_BRIDGE_PORT;
+  const projectProcessIds = findEditorProcessIdsForProject(project);
+  const processRunning = projectProcessIds.length > 0;
   const bridgeUp = await isBridgeAvailable(bridgeHost, bridgePort);
 
   if (!processRunning && !bridgeUp) {
     return { success: false, message: "Editor is not running" };
   }
 
-  if (scopedProject && projectProcessIds.length === 0) {
+  if (projectProcessIds.length === 0) {
     return {
       success: false,
       message: `Editor bridge is available on ${bridgeHost}:${bridgePort}, but the project editor process could not be resolved. Close it manually or restart it through ue-mcp.`,
@@ -255,23 +243,20 @@ export async function stopEditor(project?: ProjectContext, force = false): Promi
 
     if (force) {
       if (killProjectProcesses(true)) {
-        return { success: true, message: `Editor force-killed for project ${scopedProject?.projectName ?? ""}`.trim() };
+        return { success: true, message: `Editor force-killed for project ${project.projectName ?? ""}`.trim() };
       }
-      execFileSync("taskkill", ["/F", "/IM", "UnrealEditor.exe"], { stdio: "pipe" });
-      return { success: true, message: "Editor force-killed" };
+      return { success: false, message: "Editor process could not be resolved for project-scoped force kill." };
     }
 
     // Graceful close - sends WM_CLOSE, allows save dialogs
     if (!killProjectProcesses(false)) {
-      execFileSync("taskkill", ["/IM", "UnrealEditor.exe"], { stdio: "pipe" });
+      return { success: false, message: "Editor process could not be resolved for project-scoped graceful close." };
     }
 
     // Wait up to 10 seconds for editor to close gracefully
     for (let i = 0; i < 10; i++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      const stillRunning = scopedProject
-        ? findEditorProcessIdsForProject(scopedProject).length > 0
-        : isEditorRunning();
+      const stillRunning = findEditorProcessIdsForProject(project).length > 0;
       if (!stillRunning) {
         return { success: true, message: "Editor closed successfully" };
       }
@@ -279,13 +264,11 @@ export async function stopEditor(project?: ProjectContext, force = false): Promi
 
     // Graceful close failed — force kill
     if (!killProjectProcesses(true)) {
-      execFileSync("taskkill", ["/F", "/IM", "UnrealEditor.exe"], { stdio: "pipe" });
+      return { success: false, message: "Editor process could not be resolved for project-scoped force kill." };
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    const stillRunning = scopedProject
-      ? findEditorProcessIdsForProject(scopedProject).length > 0
-      : isEditorRunning();
+    const stillRunning = findEditorProcessIdsForProject(project).length > 0;
     if (!stillRunning) {
       return { success: true, message: "Editor force-killed after graceful close timed out" };
     }
@@ -363,16 +346,14 @@ export async function buildProject(
   const target = `${projectName}Editor`;
   const platform = getPlatformString();
 
-  const buildArgs = [target, platform, "Development", `-Project="${resolvedPath}"`, "-WaitMutex", "-FromMsBuild"];
+  const buildArgs = [target, platform, "Development", `-Project=${resolvedPath}`, "-WaitMutex", "-FromMsBuild"];
 
   return new Promise((resolve) => {
     let proc;
     if (IS_WINDOWS) {
-      const quotedCommand = `"${buildTool}"`;
-      const fullCommand = `cmd /c "${quotedCommand} ${buildArgs.join(" ")}"`;
-      proc = spawn(fullCommand, [], { shell: true, stdio: "pipe" });
+      proc = spawn("cmd.exe", ["/d", "/s", "/c", buildTool, ...buildArgs], { shell: false, stdio: "pipe" });
     } else {
-      proc = spawn(buildTool, buildArgs, { stdio: "pipe" });
+      proc = spawn(buildTool, buildArgs, { shell: false, stdio: "pipe" });
     }
 
     const forward = (data: Buffer) => {

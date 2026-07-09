@@ -1,6 +1,6 @@
 # UE-MCP
 
-**Unreal Engine Model Context Protocol Server** - gives AI assistants deep read/write access to the Unreal Editor through <!-- count:tools -->21<!-- /count --> category tools covering <!-- count:actions -->569+<!-- /count --> actions, plus a YAML flow engine for multi-step workflows.
+**Unreal Engine Model Context Protocol Server** - gives AI assistants deep read/write access to the Unreal Editor through <!-- count:tools -->23<!-- /count --> category tools covering <!-- count:actions -->636+<!-- /count --> actions, plus a YAML flow engine for multi-step workflows.
 
 ```mermaid
 flowchart LR
@@ -57,7 +57,7 @@ If you prefer to configure manually, add to your MCP client config:
 
 - [Getting Started](https://db-lyon.github.io/ue-mcp/getting-started/) — Installation, configuration, first run
 - [Architecture](https://db-lyon.github.io/ue-mcp/architecture/) — How the pieces fit together
-- [Tool Reference](https://db-lyon.github.io/ue-mcp/tool-reference/) - All <!-- count:tools -->21<!-- /count --> tools with <!-- count:actions -->569+<!-- /count --> actions
+- [Tool Reference](https://db-lyon.github.io/ue-mcp/tool-reference/) - All <!-- count:tools -->23<!-- /count --> tools with <!-- count:actions -->636+<!-- /count --> actions
 - [Flows](https://db-lyon.github.io/ue-mcp/flows/) - YAML flow engine, custom tasks, rollback, hooks
 - [Configuration](https://db-lyon.github.io/ue-mcp/configuration/) — `.ue-mcp.json` and MCP client config
 - [Project Registry](docs/project-registry.md) - Cross-platform multi-project MCP config generation
@@ -87,7 +87,7 @@ If you prefer to configure manually, add to your MCP client config:
 
 ## Supported Platforms
 
-- **Windows** — UE 5.4–5.7
+- **Windows** — UE 5.4–5.8
 - **Linux** — UE 5.6+ (contributed by [@robinduckett](https://github.com/robinduckett))
 
 Requires `PythonScriptPlugin` (ships with UE 4.26+).

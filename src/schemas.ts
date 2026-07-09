@@ -36,6 +36,15 @@ export const UeMcpConfigSchema = z
   .object({
     contentRoots: z.array(z.string()).optional(),
     disable: z.array(z.string()).optional(),
+    // Native (Epic 5.8 ToolsetRegistry) tool surfacing. Enabled by default;
+    // `exclude` names ue-mcp categories that should NOT be enriched with Epic
+    // tools (they stay reachable via the `epic` gateway). See epic-enrich.ts.
+    nativeTools: z
+      .object({
+        enabled: z.boolean().optional(),
+        exclude: z.array(z.string()).optional(),
+      })
+      .optional(),
     http: z
       .object({
         enabled: z.boolean().optional(),
@@ -47,6 +56,16 @@ export const UeMcpConfigSchema = z
       .object({
         port: z.number().int().min(1).max(65535).optional(),
         host: LoopbackBridgeHostSchema.optional(),
+      })
+      .optional(),
+    // Context-seeding strategy. `full` (default) advertises every action inline
+    // in each category tool's description + trimmed server instructions. `lean`
+    // collapses tool descriptions to a one-line summary, trims the instructions,
+    // and moves the action catalog behind on-demand discovery (the `catalog`
+    // tool + per-category `describe` action). See lean-context.ts.
+    context: z
+      .object({
+        strategy: z.enum(["full", "lean", "micro"]).optional(),
       })
       .optional(),
   })

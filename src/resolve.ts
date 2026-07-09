@@ -2,8 +2,9 @@
 /**
  * npx ue-mcp resolve <issue-number>
  *
- * Fetches a GitHub issue, creates a branch, launches Claude Code to
- * implement the fix, then pushes and opens a PR.  Never merges to main.
+ * Fetches a GitHub issue and, only with an explicit apply flag, creates a
+ * branch and launches Claude Code to implement the fix. Remote writes require
+ * a second explicit flag plus an environment opt-in. Never merges to main.
  */
 import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -22,6 +23,9 @@ const fail = (msg: string) => {
   console.error(`  ${RED}✗${RESET} ${msg}`);
   process.exit(1);
 };
+
+const remoteWritesEnabled = (args: string[]) =>
+  args.includes("--allow-remote-write") && process.env.UE_MCP_RESOLVE_ALLOW_REMOTE_WRITE === "1";
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -58,14 +62,16 @@ async function resolve() {
 
   const args = process.argv.slice(3);
   const ciMode = args.includes("--ci") || !!process.env.CI;
+  const applyMode = args.includes("--apply");
   const issueArg = args.find((a) => !a.startsWith("-"));
   const issueNum = Number(issueArg);
 
   if (!issueArg || isNaN(issueNum)) {
     console.log("");
-    console.log(`  ${BOLD}Usage:${RESET} npx ue-mcp resolve <issue-number> [--ci]`);
-    console.log(`  ${DIM}Example: npx ue-mcp resolve 16${RESET}`);
-    console.log(`  ${DIM}   CI:   npx ue-mcp resolve 16 --ci${RESET}`);
+    console.log(`  ${BOLD}Usage:${RESET} npx ue-mcp resolve <issue-number> [--ci] [--apply] [--allow-remote-write]`);
+    console.log(`  ${DIM}Inspect: npx ue-mcp resolve 16${RESET}`);
+    console.log(`  ${DIM}Apply:   npx ue-mcp resolve 16 --apply${RESET}`);
+    console.log(`  ${DIM}CI:      npx ue-mcp resolve 16 --ci --apply${RESET}`);
     console.log("");
     process.exit(1);
   }
@@ -123,6 +129,12 @@ async function resolve() {
 
   ok(`Issue #${issueNum}: ${issue.title}`);
 
+  if (!applyMode) {
+    console.log(`  ${DIM}Dry-run only. Pass --apply to create a branch and launch Claude Code after reviewing the issue.${RESET}`);
+    console.log("");
+    return;
+  }
+
   // Create branch from main
   const startBranch = currentBranch();
   const branch = `resolve/${issueNum}`;
@@ -173,9 +185,6 @@ async function resolve() {
   fs.writeFileSync(promptFile, prompt);
 
   const claudeArgs = ["--print"];
-  if (process.env.UE_MCP_RESOLVE_SKIP_PERMISSIONS === "1") {
-    claudeArgs.push("--dangerously-skip-permissions");
-  }
 
   console.log(`  ${DIM}Launching Claude Code${ciMode ? " (CI mode)" : ""}...${RESET}`);
   console.log("");
@@ -220,6 +229,14 @@ async function resolve() {
   ok(`${commitCount} commit(s) ready`);
 
   // Push and create PR
+  if (!remoteWritesEnabled(args)) {
+    console.log(
+      `  ${DIM}Remote writes disabled. Pass --allow-remote-write and set UE_MCP_RESOLVE_ALLOW_REMOTE_WRITE=1 to push and open a PR after reviewing the branch.${RESET}`,
+    );
+    console.log("");
+    return;
+  }
+
   try {
     execFileSync("git", ["push", "-u", "origin", branch], { stdio: "pipe" });
     ok("Pushed to origin");

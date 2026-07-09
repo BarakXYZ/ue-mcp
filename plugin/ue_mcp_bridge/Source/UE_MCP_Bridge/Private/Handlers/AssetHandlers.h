@@ -136,4 +136,9 @@ private:
 	// #279: detect stuck-unloadable assets and recover without editor restart
 	static TSharedPtr<FJsonValue> HealthCheck(const TSharedPtr<FJsonObject>& Params);
 	static TSharedPtr<FJsonValue> ForceReload(const TSharedPtr<FJsonObject>& Params);
+
+	// #686: UserDefinedEnum authoring (create, list values, add/rename/remove enumerator)
+	static TSharedPtr<FJsonValue> CreateUserDefinedEnum(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> ListEnumValues(const TSharedPtr<FJsonObject>& Params);
+	static TSharedPtr<FJsonValue> EditUserDefinedEnum(const TSharedPtr<FJsonObject>& Params);
 };

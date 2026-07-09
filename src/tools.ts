@@ -27,7 +27,9 @@ import { networkingTool } from "./tools/networking.js";
 import { demoTool } from "./tools/demo.js";
 import { feedbackTool } from "./tools/feedback.js";
 import { statetreeTool } from "./tools/statetree.js";
+import { chooserTool } from "./tools/chooser.js";
 import { pluginsTool } from "./tools/plugins.js";
+import { epicTool } from "./tools/epic.js";
 
 export const ALL_TOOLS: ToolDef[] = [
   projectTool,
@@ -50,7 +52,9 @@ export const ALL_TOOLS: ToolDef[] = [
   demoTool,
   feedbackTool,
   statetreeTool,
+  chooserTool,
   pluginsTool,
+  epicTool,
 ];
 
 /** Flatten to (toolName, actionName, bridgeMethod) triples for every action
