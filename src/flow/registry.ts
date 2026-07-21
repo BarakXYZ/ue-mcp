@@ -1,9 +1,11 @@
-import { TaskRegistry, ShellTask } from "@db-lyon/flowkit";
+import { ShellTask } from "@db-lyon/flowkit";
+import type { TaskRegistry } from "@db-lyon/flowkit";
 import type { TaskConstructor } from "@db-lyon/flowkit";
 import type { ToolDef } from "../types.js";
 import type { FlowContext } from "./context.js";
 import { BridgeTask } from "./bridge-task.js";
 import { bridgeTaskClass, handlerTaskClass } from "./task-factory.js";
+import { ProjectTaskRegistry } from "./project-task-registry.js";
 
 /**
  * Walk all category tools and register every action as a flowkit task.
@@ -13,8 +15,11 @@ import { bridgeTaskClass, handlerTaskClass } from "./task-factory.js";
  *
  * Also registers `ue-mcp.bridge` as a class_path for YAML-defined bridge tasks.
  */
-export function buildFlowRegistry(tools: ToolDef[]): TaskRegistry {
-  const registry = new TaskRegistry();
+export function buildFlowRegistry(
+  tools: ToolDef[],
+  projectDir?: string,
+): TaskRegistry {
+  const registry = new ProjectTaskRegistry(projectDir);
 
   // Register built-in task class paths
   registry.registerClassPath("ue-mcp.bridge", BridgeTask as unknown as TaskConstructor);

@@ -213,7 +213,7 @@ async function main() {
   const ctx: ToolContext = { bridge, project, getFlows, getPlugins };
 
   // ── Flow engine: task registry ──────────────────────────────────
-  const registry = buildFlowRegistry(registryTools);
+  const registry = buildFlowRegistry(registryTools, configDir);
   for (const { name, ctor } of pluginLoad.taskRegistrations) {
     registry.register(name, ctor);
   }
