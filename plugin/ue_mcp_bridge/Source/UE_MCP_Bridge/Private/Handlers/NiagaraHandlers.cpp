@@ -27,6 +27,7 @@
 #include "NiagaraNodeCustomHlsl.h"
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraEditorUtilities.h"
+#include "ViewModels/Stack/NiagaraStackGraphUtilities.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -78,6 +79,7 @@ void FNiagaraHandlers::RegisterHandlers(FMCPHandlerRegistry& Registry)
 	// v0.7.14 — module inputs, static switches, HLSL modules
 	Registry.RegisterHandler(TEXT("list_niagara_module_inputs"), &ListModuleInputs);
 	Registry.RegisterHandler(TEXT("set_niagara_module_input"), &SetModuleInput);
+	Registry.RegisterHandler(TEXT("set_niagara_module_enabled"), &SetModuleEnabled);
 	Registry.RegisterHandler(TEXT("list_niagara_static_switches"), &ListStaticSwitches);
 	Registry.RegisterHandler(TEXT("set_niagara_static_switch"), &SetStaticSwitch);
 	Registry.RegisterHandler(TEXT("create_niagara_module_from_hlsl"), &CreateModuleFromHlsl);
@@ -673,8 +675,10 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetEmitterProperty(const TSharedPtr<FJs
 	}
 
 	// Try to set the property via reflection on the emitter handle's emitter data
-	FVersionedNiagaraEmitterData* EmitterData = Handles[TargetIdx].GetInstance().GetEmitterData();
-	if (!EmitterData)
+	FVersionedNiagaraEmitter VersionedEmitter = Handles[TargetIdx].GetInstance();
+	UNiagaraEmitter* Emitter = VersionedEmitter.Emitter;
+	FVersionedNiagaraEmitterData* EmitterData = VersionedEmitter.GetEmitterData();
+	if (!EmitterData || !Emitter)
 	{
 		return MCPError(TEXT("Could not access emitter data"));
 	}
@@ -687,6 +691,7 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetEmitterProperty(const TSharedPtr<FJs
 	{
 		const bool bEnabled = Value.ToBool();
 		System->Modify();
+		Emitter->Modify();
 		// GetEmitterHandles() is const; the editor mutates via a non-const handle.
 		FNiagaraEmitterHandle& MutableHandle = const_cast<FNiagaraEmitterHandle&>(Handles[TargetIdx]);
 		MutableHandle.SetIsEnabled(bEnabled, *System, /*bRecompileIfChanged*/ true);
@@ -702,14 +707,35 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetEmitterProperty(const TSharedPtr<FJs
 		if (Prop)
 		{
 			void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(EmitterData);
+			FString PreviousValue;
+			Prop->ExportTextItem_Direct(PreviousValue, ValuePtr, nullptr, nullptr, PPF_None);
+			System->Modify();
+			Emitter->Modify();
+			Emitter->PreEditChange(Prop);
 			const TCHAR* ImportResult = Prop->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);
 			bSet = (ImportResult != nullptr);
+			if (bSet)
+			{
+				FPropertyChangedEvent ChangeEvent(Prop, EPropertyChangeType::ValueSet);
+				Emitter->PostEditChangeProperty(ChangeEvent);
+				Result->SetStringField(TEXT("previousValue"), PreviousValue);
+			}
+			else
+			{
+				// ImportText may partially mutate structured values before reporting
+				// failure. Restore the exact exported value before returning.
+				Prop->ImportText_Direct(*PreviousValue, ValuePtr, nullptr, PPF_None);
+				Emitter->PostEditChange();
+			}
 		}
 	}
 
 	if (bSet)
 	{
-		UEditorAssetLibrary::SaveAsset(System->GetPathName());
+		System->RequestCompile(true);
+		System->WaitForCompilationComplete(true, false);
+		System->MarkPackageDirty();
+		UEditorAssetLibrary::SaveLoadedAsset(System);
 	}
 
 	if (bSet) MCPSetUpdated(Result);
@@ -1153,27 +1179,71 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::ListSystemParameters(const TSharedPtr<F
 
 namespace
 {
-	struct FScriptSlot
-	{
-		FString Context;
-		UNiagaraScript* Script;
-	};
-
-	void CollectEmitterScripts(FVersionedNiagaraEmitterData* Data, const FString& StackContext, TArray<FScriptSlot>& Out)
-	{
-		const bool bAll = StackContext.IsEmpty() || StackContext.Equals(TEXT("all"), ESearchCase::IgnoreCase);
-		if (!Data) return;
-		if (bAll || StackContext.Equals(TEXT("ParticleSpawn"), ESearchCase::IgnoreCase))  Out.Add({TEXT("ParticleSpawn"),  Data->SpawnScriptProps.Script});
-		if (bAll || StackContext.Equals(TEXT("ParticleUpdate"), ESearchCase::IgnoreCase)) Out.Add({TEXT("ParticleUpdate"), Data->UpdateScriptProps.Script});
-		if (bAll || StackContext.Equals(TEXT("EmitterSpawn"), ESearchCase::IgnoreCase))   Out.Add({TEXT("EmitterSpawn"),   Data->EmitterSpawnScriptProps.Script});
-		if (bAll || StackContext.Equals(TEXT("EmitterUpdate"), ESearchCase::IgnoreCase))  Out.Add({TEXT("EmitterUpdate"),  Data->EmitterUpdateScriptProps.Script});
-	}
-
 	UNiagaraGraph* GraphOfScript(UNiagaraScript* Script)
 	{
 		if (!Script) return nullptr;
 		UNiagaraScriptSource* Src = Cast<UNiagaraScriptSource>(Script->GetLatestSource());
 		return Src ? Src->NodeGraph : nullptr;
+	}
+
+	UNiagaraGraph* GraphOfEmitter(FVersionedNiagaraEmitterData* Data)
+	{
+		if (!Data) return nullptr;
+		if (UNiagaraGraph* Graph = GraphOfScript(Data->SpawnScriptProps.Script)) return Graph;
+		if (UNiagaraGraph* Graph = GraphOfScript(Data->UpdateScriptProps.Script)) return Graph;
+		if (UNiagaraGraph* Graph = GraphOfScript(Data->EmitterSpawnScriptProps.Script)) return Graph;
+		return GraphOfScript(Data->EmitterUpdateScriptProps.Script);
+	}
+
+	FString StackContextForNode(const UNiagaraNodeFunctionCall& Node)
+	{
+		switch (FNiagaraStackGraphUtilities::GetOutputNodeUsage(Node))
+		{
+		case ENiagaraScriptUsage::ParticleSpawnScript:
+		case ENiagaraScriptUsage::ParticleSpawnScriptInterpolated:
+			return TEXT("ParticleSpawn");
+		case ENiagaraScriptUsage::ParticleUpdateScript:
+		case ENiagaraScriptUsage::ParticleGPUComputeScript:
+			return TEXT("ParticleUpdate");
+		case ENiagaraScriptUsage::EmitterSpawnScript:
+			return TEXT("EmitterSpawn");
+		case ENiagaraScriptUsage::EmitterUpdateScript:
+			return TEXT("EmitterUpdate");
+		case ENiagaraScriptUsage::SystemSpawnScript:
+			return TEXT("SystemSpawn");
+		case ENiagaraScriptUsage::SystemUpdateScript:
+			return TEXT("SystemUpdate");
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	bool MatchesStackContext(const FString& Requested, const FString& Actual)
+	{
+		return Requested.IsEmpty() ||
+			Requested.Equals(TEXT("all"), ESearchCase::IgnoreCase) ||
+			Requested.Equals(Actual, ESearchCase::IgnoreCase);
+	}
+
+	void AddModuleIdentity(
+		TSharedPtr<FJsonObject>& Module,
+		const UNiagaraNodeFunctionCall& Node,
+		const FString& StackContext)
+	{
+		Module->SetStringField(TEXT("stackContext"), StackContext);
+		Module->SetStringField(TEXT("objectPath"), Node.GetPathName());
+		Module->SetStringField(
+			TEXT("nodeGuid"),
+			Node.NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+		Module->SetStringField(
+			TEXT("enabledState"),
+			LexToString(Node.GetDesiredEnabledState()));
+		Module->SetBoolField(
+			TEXT("isEnabled"),
+			Node.GetDesiredEnabledState() != ENodeEnabledState::Disabled);
+		Module->SetBoolField(
+			TEXT("hasUserSetEnabledState"),
+			Node.HasUserSetTheEnabledState());
 	}
 
 	TSharedPtr<FJsonObject> PinToJson(const UEdGraphPin* Pin)
@@ -1205,38 +1275,34 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::ListModuleInputs(const TSharedPtr<FJson
 	FVersionedNiagaraEmitterData* Data = ResolveEmitter(System, EmitterName, EmitterIndex, Emitter, Version);
 	if (!Data) return MCPError(TEXT("Emitter not resolved"));
 
-	TArray<FScriptSlot> Scripts;
-	CollectEmitterScripts(Data, StackContext, Scripts);
-
 	TArray<TSharedPtr<FJsonValue>> ModulesArr;
-	for (const FScriptSlot& Slot : Scripts)
+	UNiagaraGraph* Graph = GraphOfEmitter(Data);
+	if (!Graph) return MCPError(TEXT("Emitter graph not resolved"));
+	for (UEdGraphNode* N : Graph->Nodes)
 	{
-		UNiagaraGraph* Graph = GraphOfScript(Slot.Script);
-		if (!Graph) continue;
-		for (UEdGraphNode* N : Graph->Nodes)
+		UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
+		if (!FC) continue;
+		const FString ActualContext = StackContextForNode(*FC);
+		if (!MatchesStackContext(StackContext, ActualContext)) continue;
+		const FString ModName = FC->GetFunctionName();
+		if (!ModuleFilter.IsEmpty() && !ModName.Equals(ModuleFilter, ESearchCase::IgnoreCase)) continue;
+
+		TSharedPtr<FJsonObject> ModObj = MakeShared<FJsonObject>();
+		AddModuleIdentity(ModObj, *FC, ActualContext);
+		ModObj->SetStringField(TEXT("moduleName"), ModName);
+		ModObj->SetStringField(TEXT("scriptAsset"), FC->FunctionScript ? FC->FunctionScript->GetPathName() : FString());
+
+		TArray<TSharedPtr<FJsonValue>> Inputs;
+		TArray<TSharedPtr<FJsonValue>> Outputs;
+		for (UEdGraphPin* Pin : FC->Pins)
 		{
-			UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
-			if (!FC) continue;
-			const FString ModName = FC->GetFunctionName();
-			if (!ModuleFilter.IsEmpty() && !ModName.Equals(ModuleFilter, ESearchCase::IgnoreCase)) continue;
-
-			TSharedPtr<FJsonObject> ModObj = MakeShared<FJsonObject>();
-			ModObj->SetStringField(TEXT("stackContext"), Slot.Context);
-			ModObj->SetStringField(TEXT("moduleName"), ModName);
-			ModObj->SetStringField(TEXT("scriptAsset"), FC->FunctionScript ? FC->FunctionScript->GetPathName() : FString());
-
-			TArray<TSharedPtr<FJsonValue>> Inputs;
-			TArray<TSharedPtr<FJsonValue>> Outputs;
-			for (UEdGraphPin* Pin : FC->Pins)
-			{
-				if (!Pin) continue;
-				if (Pin->Direction == EGPD_Input)  Inputs.Add(MakeShared<FJsonValueObject>(PinToJson(Pin)));
-				if (Pin->Direction == EGPD_Output) Outputs.Add(MakeShared<FJsonValueObject>(PinToJson(Pin)));
-			}
-			ModObj->SetArrayField(TEXT("inputs"), Inputs);
-			ModObj->SetArrayField(TEXT("outputs"), Outputs);
-			ModulesArr.Add(MakeShared<FJsonValueObject>(ModObj));
+			if (!Pin) continue;
+			if (Pin->Direction == EGPD_Input)  Inputs.Add(MakeShared<FJsonValueObject>(PinToJson(Pin)));
+			if (Pin->Direction == EGPD_Output) Outputs.Add(MakeShared<FJsonValueObject>(PinToJson(Pin)));
 		}
+		ModObj->SetArrayField(TEXT("inputs"), Inputs);
+		ModObj->SetArrayField(TEXT("outputs"), Outputs);
+		ModulesArr.Add(MakeShared<FJsonValueObject>(ModObj));
 	}
 
 	TSharedPtr<FJsonObject> Res = MCPSuccess();
@@ -1269,41 +1335,42 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetModuleInput(const TSharedPtr<FJsonOb
 	FVersionedNiagaraEmitterData* Data = ResolveEmitter(System, EmitterName, EmitterIndex, Emitter, Version);
 	if (!Data) return MCPError(TEXT("Emitter not resolved"));
 
-	TArray<FScriptSlot> Scripts;
-	CollectEmitterScripts(Data, StackContext, Scripts);
-
 	int32 SetCount = 0;
 	FString PrevValue;
 	FString MatchedContext;
 	TArray<FString> SeenModules;
-	for (const FScriptSlot& Slot : Scripts)
+	UNiagaraGraph* Graph = GraphOfEmitter(Data);
+	if (!Graph) return MCPError(TEXT("Emitter graph not resolved"));
+	for (UEdGraphNode* N : Graph->Nodes)
 	{
-		UNiagaraGraph* Graph = GraphOfScript(Slot.Script);
-		if (!Graph) continue;
-		for (UEdGraphNode* N : Graph->Nodes)
+		UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
+		if (!FC) continue;
+		const FString ActualContext = StackContextForNode(*FC);
+		if (!MatchesStackContext(StackContext, ActualContext)) continue;
+		SeenModules.AddUnique(FC->GetFunctionName());
+		if (!FC->GetFunctionName().Equals(ModuleName, ESearchCase::IgnoreCase)) continue;
+		bool bNodeChanged = false;
+		for (UEdGraphPin* Pin : FC->Pins)
 		{
-			UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
-			if (!FC) continue;
-			SeenModules.AddUnique(FC->GetFunctionName());
-			if (!FC->GetFunctionName().Equals(ModuleName, ESearchCase::IgnoreCase)) continue;
-			for (UEdGraphPin* Pin : FC->Pins)
+			if (!Pin || Pin->Direction != EGPD_Input) continue;
+			if (Pin->PinName.ToString().Equals(InputName, ESearchCase::IgnoreCase))
 			{
-				if (!Pin || Pin->Direction != EGPD_Input) continue;
-				if (Pin->PinName.ToString().Equals(InputName, ESearchCase::IgnoreCase))
-				{
-					if (SetCount == 0) PrevValue = Pin->DefaultValue;
-					FC->Modify();
-					Graph->Modify();
-					Pin->Modify();
-					Pin->DefaultValue = Value;
-					MatchedContext = Slot.Context;
-					++SetCount;
-				}
+				if (SetCount == 0) PrevValue = Pin->DefaultValue;
+				FC->Modify();
+				Graph->Modify();
+				Pin->Modify();
+				Pin->DefaultValue = Value;
+				MatchedContext = ActualContext;
+				bNodeChanged = true;
+				++SetCount;
 			}
-			if (SetCount > 0) FC->MarkNodeRequiresSynchronization(TEXT("MCP_SetModuleInput"), true);
 		}
-		if (SetCount > 0) Graph->NotifyGraphChanged();
+		if (bNodeChanged)
+		{
+			FC->MarkNodeRequiresSynchronization(TEXT("MCP_SetModuleInput"), true);
+		}
 	}
+	if (SetCount > 0) Graph->NotifyGraphChanged();
 
 	if (SetCount == 0)
 	{
@@ -1311,7 +1378,11 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetModuleInput(const TSharedPtr<FJsonOb
 			*ModuleName, *InputName, *FString::Join(SeenModules, TEXT(", "))));
 	}
 
+	System->Modify();
 	Emitter->PostEditChange();
+	System->RequestCompile(true);
+	System->WaitForCompilationComplete(true, false);
+	System->MarkPackageDirty();
 	UEditorAssetLibrary::SaveLoadedAsset(System);
 
 	TSharedPtr<FJsonObject> Res = MCPSuccess();
@@ -1337,6 +1408,118 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetModuleInput(const TSharedPtr<FJsonOb
 	return MCPResult(Res);
 }
 
+TSharedPtr<FJsonValue> FNiagaraHandlers::SetModuleEnabled(const TSharedPtr<FJsonObject>& Params)
+{
+	FString SystemPath;
+	if (auto Err = RequireString(Params, TEXT("systemPath"), SystemPath)) return Err;
+	const FString ModuleName = OptionalString(Params, TEXT("moduleName"), TEXT(""));
+	const FString NodeGuidText = OptionalString(Params, TEXT("nodeGuid"), TEXT(""));
+	const FString EmitterName = OptionalString(Params, TEXT("emitterName"), TEXT(""));
+	const int32 EmitterIndex = OptionalInt(Params, TEXT("emitterIndex"), 0);
+	const FString StackContext = OptionalString(Params, TEXT("stackContext"), TEXT("all"));
+	bool bEnabled = true;
+	if (!Params->TryGetBoolField(TEXT("enabled"), bEnabled))
+	{
+		return MCPError(TEXT("Missing 'enabled' boolean parameter"));
+	}
+	if (ModuleName.IsEmpty() && NodeGuidText.IsEmpty())
+	{
+		return MCPError(TEXT("Provide 'nodeGuid' or 'moduleName'"));
+	}
+
+	FGuid RequestedNodeGuid;
+	if (!NodeGuidText.IsEmpty() && !FGuid::Parse(NodeGuidText, RequestedNodeGuid))
+	{
+		return MCPError(FString::Printf(TEXT("Invalid nodeGuid: %s"), *NodeGuidText));
+	}
+
+	UNiagaraSystem* System = Cast<UNiagaraSystem>(UEditorAssetLibrary::LoadAsset(SystemPath));
+	if (!System) return MCPError(FString::Printf(TEXT("System not found: %s"), *SystemPath));
+
+	UNiagaraEmitter* Emitter = nullptr;
+	FGuid Version;
+	FVersionedNiagaraEmitterData* Data = ResolveEmitter(System, EmitterName, EmitterIndex, Emitter, Version);
+	if (!Data) return MCPError(TEXT("Emitter not resolved"));
+
+	UNiagaraGraph* Graph = GraphOfEmitter(Data);
+	if (!Graph) return MCPError(TEXT("Emitter graph not resolved"));
+
+	TArray<UNiagaraNodeFunctionCall*> Matches;
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		UNiagaraNodeFunctionCall* FunctionCall = Cast<UNiagaraNodeFunctionCall>(Node);
+		if (!FunctionCall) continue;
+		const FString ActualContext = StackContextForNode(*FunctionCall);
+		if (!MatchesStackContext(StackContext, ActualContext)) continue;
+		if (RequestedNodeGuid.IsValid())
+		{
+			if (FunctionCall->NodeGuid == RequestedNodeGuid) Matches.Add(FunctionCall);
+		}
+		else if (FunctionCall->GetFunctionName().Equals(ModuleName, ESearchCase::IgnoreCase))
+		{
+			Matches.Add(FunctionCall);
+		}
+	}
+
+	if (Matches.IsEmpty())
+	{
+		return MCPError(FString::Printf(
+			TEXT("Niagara module not found (moduleName='%s', nodeGuid='%s', stackContext='%s')"),
+			*ModuleName,
+			*NodeGuidText,
+			*StackContext));
+	}
+	if (Matches.Num() > 1)
+	{
+		return MCPError(FString::Printf(
+			TEXT("Module selector matched %d nodes; pass the stable nodeGuid returned by list_module_inputs"),
+			Matches.Num()));
+	}
+
+	UNiagaraNodeFunctionCall* FunctionCall = Matches[0];
+	const ENodeEnabledState PreviousState = FunctionCall->GetDesiredEnabledState();
+	const ENodeEnabledState RequestedState =
+		bEnabled ? ENodeEnabledState::Enabled : ENodeEnabledState::Disabled;
+	FunctionCall->Modify();
+	Graph->Modify();
+	System->Modify();
+	FunctionCall->SetEnabledState(RequestedState, true);
+	FunctionCall->MarkNodeRequiresSynchronization(TEXT("MCP_SetModuleEnabled"), true);
+	Graph->NotifyGraphChanged();
+	Emitter->PostEditChange();
+	System->RequestCompile(true);
+	System->WaitForCompilationComplete(true, false);
+	System->MarkPackageDirty();
+	UEditorAssetLibrary::SaveLoadedAsset(System);
+
+	TSharedPtr<FJsonObject> Res = MCPSuccess();
+	MCPSetUpdated(Res);
+	Res->SetStringField(TEXT("systemPath"), SystemPath);
+	Res->SetStringField(TEXT("emitter"), Emitter ? Emitter->GetName() : TEXT(""));
+	Res->SetStringField(TEXT("moduleName"), FunctionCall->GetFunctionName());
+	Res->SetStringField(
+		TEXT("nodeGuid"),
+		FunctionCall->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+	Res->SetStringField(TEXT("stackContext"), StackContextForNode(*FunctionCall));
+	Res->SetStringField(TEXT("previousState"), LexToString(PreviousState));
+	Res->SetStringField(TEXT("enabledState"), LexToString(RequestedState));
+	Res->SetBoolField(TEXT("enabled"), bEnabled);
+
+	TSharedPtr<FJsonObject> RollbackPayload = MakeShared<FJsonObject>();
+	RollbackPayload->SetStringField(TEXT("systemPath"), SystemPath);
+	RollbackPayload->SetStringField(
+		TEXT("nodeGuid"),
+		FunctionCall->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+	RollbackPayload->SetStringField(TEXT("emitterName"), EmitterName);
+	RollbackPayload->SetNumberField(TEXT("emitterIndex"), EmitterIndex);
+	RollbackPayload->SetStringField(TEXT("stackContext"), StackContextForNode(*FunctionCall));
+	RollbackPayload->SetBoolField(
+		TEXT("enabled"),
+		PreviousState != ENodeEnabledState::Disabled);
+	MCPSetRollback(Res, TEXT("set_niagara_module_enabled"), RollbackPayload);
+	return MCPResult(Res);
+}
+
 TSharedPtr<FJsonValue> FNiagaraHandlers::ListStaticSwitches(const TSharedPtr<FJsonObject>& Params)
 {
 	FString SystemPath;
@@ -1354,49 +1537,45 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::ListStaticSwitches(const TSharedPtr<FJs
 	FVersionedNiagaraEmitterData* Data = ResolveEmitter(System, EmitterName, EmitterIndex, Emitter, Version);
 	if (!Data) return MCPError(TEXT("Emitter not resolved"));
 
-	TArray<FScriptSlot> Scripts;
-	CollectEmitterScripts(Data, StackContext, Scripts);
-
 	TArray<TSharedPtr<FJsonValue>> ModulesArr;
-	for (const FScriptSlot& Slot : Scripts)
+	UNiagaraGraph* Graph = GraphOfEmitter(Data);
+	if (!Graph) return MCPError(TEXT("Emitter graph not resolved"));
+	for (UEdGraphNode* N : Graph->Nodes)
 	{
-		UNiagaraGraph* Graph = GraphOfScript(Slot.Script);
-		if (!Graph) continue;
-		for (UEdGraphNode* N : Graph->Nodes)
-		{
-			UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
-			if (!FC) continue;
-			const FString ModName = FC->GetFunctionName();
-			if (!ModuleFilter.IsEmpty() && !ModName.Equals(ModuleFilter, ESearchCase::IgnoreCase)) continue;
+		UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
+		if (!FC) continue;
+		const FString ActualContext = StackContextForNode(*FC);
+		if (!MatchesStackContext(StackContext, ActualContext)) continue;
+		const FString ModName = FC->GetFunctionName();
+		if (!ModuleFilter.IsEmpty() && !ModName.Equals(ModuleFilter, ESearchCase::IgnoreCase)) continue;
 
-			TArray<TSharedPtr<FJsonValue>> Switches;
-			UNiagaraGraph* FuncGraph = FC->GetCalledGraph();
-			if (FuncGraph)
+		TArray<TSharedPtr<FJsonValue>> Switches;
+		UNiagaraGraph* FuncGraph = FC->GetCalledGraph();
+		if (FuncGraph)
+		{
+			const TArray<FNiagaraVariable> SwitchVars = FuncGraph->FindStaticSwitchInputs(false);
+			for (const FNiagaraVariable& Var : SwitchVars)
 			{
-				const TArray<FNiagaraVariable> SwitchVars = FuncGraph->FindStaticSwitchInputs(false);
-				for (const FNiagaraVariable& Var : SwitchVars)
+				const FName VarName = Var.GetName();
+				UEdGraphPin* SwitchPin = nullptr;
+				for (UEdGraphPin* Pin : FC->Pins)
 				{
-					const FName VarName = Var.GetName();
-					UEdGraphPin* SwitchPin = nullptr;
-					for (UEdGraphPin* Pin : FC->Pins)
-					{
-						if (Pin && Pin->Direction == EGPD_Input && Pin->PinName == VarName) { SwitchPin = Pin; break; }
-					}
-					TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
-					O->SetStringField(TEXT("name"), VarName.ToString());
-					O->SetStringField(TEXT("type"), Var.GetType().GetName());
-					O->SetStringField(TEXT("defaultValue"), SwitchPin ? SwitchPin->DefaultValue : FString());
-					O->SetBoolField(TEXT("boundToPin"), SwitchPin != nullptr);
-					Switches.Add(MakeShared<FJsonValueObject>(O));
+					if (Pin && Pin->Direction == EGPD_Input && Pin->PinName == VarName) { SwitchPin = Pin; break; }
 				}
+				TSharedPtr<FJsonObject> O = MakeShared<FJsonObject>();
+				O->SetStringField(TEXT("name"), VarName.ToString());
+				O->SetStringField(TEXT("type"), Var.GetType().GetName());
+				O->SetStringField(TEXT("defaultValue"), SwitchPin ? SwitchPin->DefaultValue : FString());
+				O->SetBoolField(TEXT("boundToPin"), SwitchPin != nullptr);
+				Switches.Add(MakeShared<FJsonValueObject>(O));
 			}
-			if (Switches.Num() == 0) continue;
-			TSharedPtr<FJsonObject> ModObj = MakeShared<FJsonObject>();
-			ModObj->SetStringField(TEXT("stackContext"), Slot.Context);
-			ModObj->SetStringField(TEXT("moduleName"), ModName);
-			ModObj->SetArrayField(TEXT("staticSwitches"), Switches);
-			ModulesArr.Add(MakeShared<FJsonValueObject>(ModObj));
 		}
+		if (Switches.Num() == 0) continue;
+		TSharedPtr<FJsonObject> ModObj = MakeShared<FJsonObject>();
+		AddModuleIdentity(ModObj, *FC, ActualContext);
+		ModObj->SetStringField(TEXT("moduleName"), ModName);
+		ModObj->SetArrayField(TEXT("staticSwitches"), Switches);
+		ModulesArr.Add(MakeShared<FJsonValueObject>(ModObj));
 	}
 
 	TSharedPtr<FJsonObject> Res = MCPSuccess();
@@ -1429,47 +1608,47 @@ TSharedPtr<FJsonValue> FNiagaraHandlers::SetStaticSwitch(const TSharedPtr<FJsonO
 	FVersionedNiagaraEmitterData* Data = ResolveEmitter(System, EmitterName, EmitterIndex, Emitter, Version);
 	if (!Data) return MCPError(TEXT("Emitter not resolved"));
 
-	TArray<FScriptSlot> Scripts;
-	CollectEmitterScripts(Data, StackContext, Scripts);
-
 	int32 SetCount = 0;
 	FString PrevValue;
 	FString MatchedContext;
-	for (const FScriptSlot& Slot : Scripts)
+	UNiagaraGraph* Graph = GraphOfEmitter(Data);
+	if (!Graph) return MCPError(TEXT("Emitter graph not resolved"));
+	for (UEdGraphNode* N : Graph->Nodes)
 	{
-		UNiagaraGraph* Graph = GraphOfScript(Slot.Script);
-		if (!Graph) continue;
-		for (UEdGraphNode* N : Graph->Nodes)
+		UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
+		if (!FC) continue;
+		const FString ActualContext = StackContextForNode(*FC);
+		if (!MatchesStackContext(StackContext, ActualContext)) continue;
+		if (!FC->GetFunctionName().Equals(ModuleName, ESearchCase::IgnoreCase)) continue;
+		// Find the static switch pin by name (FindStaticSwitchInputPin isn't exported, so walk pins).
+		UEdGraphPin* SwitchPin = nullptr;
+		const FName Needle(*SwitchName);
+		for (UEdGraphPin* Pin : FC->Pins)
 		{
-			UNiagaraNodeFunctionCall* FC = Cast<UNiagaraNodeFunctionCall>(N);
-			if (!FC) continue;
-			if (!FC->GetFunctionName().Equals(ModuleName, ESearchCase::IgnoreCase)) continue;
-			// Find the static switch pin by name (FindStaticSwitchInputPin isn't exported, so walk pins).
-			UEdGraphPin* SwitchPin = nullptr;
-			const FName Needle(*SwitchName);
-			for (UEdGraphPin* Pin : FC->Pins)
-			{
-				if (Pin && Pin->Direction == EGPD_Input && Pin->PinName == Needle) { SwitchPin = Pin; break; }
-			}
-			if (!SwitchPin) continue;
-			if (SetCount == 0) PrevValue = SwitchPin->DefaultValue;
-			FC->Modify();
-			Graph->Modify();
-			SwitchPin->Modify();
-			SwitchPin->DefaultValue = Value;
-			FC->MarkNodeRequiresSynchronization(TEXT("MCP_SetStaticSwitch"), true);
-			MatchedContext = Slot.Context;
-			++SetCount;
+			if (Pin && Pin->Direction == EGPD_Input && Pin->PinName == Needle) { SwitchPin = Pin; break; }
 		}
-		if (SetCount > 0) Graph->NotifyGraphChanged();
+		if (!SwitchPin) continue;
+		if (SetCount == 0) PrevValue = SwitchPin->DefaultValue;
+		FC->Modify();
+		Graph->Modify();
+		SwitchPin->Modify();
+		SwitchPin->DefaultValue = Value;
+		FC->MarkNodeRequiresSynchronization(TEXT("MCP_SetStaticSwitch"), true);
+		MatchedContext = ActualContext;
+		++SetCount;
 	}
+	if (SetCount > 0) Graph->NotifyGraphChanged();
 
 	if (SetCount == 0)
 	{
 		return MCPError(FString::Printf(TEXT("Static switch '%s' on module '%s' not found"), *SwitchName, *ModuleName));
 	}
 
+	System->Modify();
 	Emitter->PostEditChange();
+	System->RequestCompile(true);
+	System->WaitForCompilationComplete(true, false);
+	System->MarkPackageDirty();
 	UEditorAssetLibrary::SaveLoadedAsset(System);
 
 	TSharedPtr<FJsonObject> Res = MCPSuccess();
