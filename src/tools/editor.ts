@@ -31,12 +31,13 @@ export const editorTool: ToolDef = categoryTool(
       },
     },
     build_project: {
-      description: "Build the project's C++ code using Unreal Build Tool. Editor should be stopped first.",
-      handler: async (ctx: ToolContext) => {
+      description: "Build the project's C++ code using Unreal Build Tool. Discovers the real *Editor.Target.cs; pass target only to disambiguate multiple editor targets. Editor should be stopped first. Params: target?",
+      handler: async (ctx: ToolContext, params: Record<string, unknown>) => {
         ctx.project.ensureLoaded();
         const lines: string[] = [];
         const result = await buildProject(ctx.project.projectPath!, {
           onOutput: (text) => lines.push(text),
+          target: typeof params.target === "string" ? params.target : undefined,
         });
         return { ...result, output: lines.join("") };
       },
@@ -171,7 +172,7 @@ export const editorTool: ToolDef = categoryTool(
       z.record(z.unknown()),
     ]).optional().describe("run_python_file: array of positional args. invoke_function: object mapping parameter name to value"),
     objectPath: z.string().optional(),
-    target: z.string().optional().describe("capture_screenshot target: auto (default) | pie | editor"),
+    target: z.string().optional().describe("capture_screenshot: auto (default) | pie | editor; build_project: explicit UBT editor target when discovery is ambiguous"),
     playerIndex: z.number().optional().describe("get_pie_pawn: 0-based player index (default 0)"),
     functionName: z.string().optional(),
     component: z.string().optional().describe("invoke_function: optional component subobject name to call the function on instead of the actor (#382)"),

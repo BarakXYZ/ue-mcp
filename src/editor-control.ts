@@ -79,19 +79,60 @@ function findEditorExecutable(project?: ProjectContext): string | null {
   return null;
 }
 
-function escapePowerShellSingleQuoted(value: string): string {
-  return value.replace(/'/g, "''");
+function normalizeWindowsCommandPath(value: string): string {
+  return value.replace(/\//g, "\\").toLowerCase();
+}
+
+function commandLineContainsPathArgument(commandLine: string, projectPath: string): boolean {
+  const normalizedCommandLine = normalizeWindowsCommandPath(commandLine);
+  const normalizedProjectPath = normalizeWindowsCommandPath(path.resolve(projectPath));
+  let searchFrom = 0;
+
+  while (searchFrom < normalizedCommandLine.length) {
+    const matchIndex = normalizedCommandLine.indexOf(normalizedProjectPath, searchFrom);
+    if (matchIndex < 0) return false;
+
+    const before = matchIndex === 0 ? "" : normalizedCommandLine[matchIndex - 1];
+    const afterIndex = matchIndex + normalizedProjectPath.length;
+    const after = afterIndex === normalizedCommandLine.length ? "" : normalizedCommandLine[afterIndex];
+    const validBefore = before === "" || before === '"' || before === "'" || before === "=" || /\s/.test(before);
+    const validAfter = after === "" || after === '"' || after === "'" || /\s/.test(after);
+    if (validBefore && validAfter) return true;
+
+    searchFrom = matchIndex + normalizedProjectPath.length;
+  }
+
+  return false;
+}
+
+/**
+ * Match only an Unreal editor executable that is known to belong to the exact
+ * project command line. Source-built project targets use <Target>.exe rather
+ * than UnrealEditor.exe, so both forms are first-class process identities.
+ */
+export function isProjectEditorProcessCandidate(
+  processName: string,
+  commandLine: string,
+  projectPath: string,
+  editorTargets: readonly string[] = listEditorTargets(projectPath),
+): boolean {
+  const projectName = path.basename(projectPath, ".uproject");
+  const allowedNames = new Set(
+    ["UnrealEditor.exe", `${projectName}Editor.exe`, ...editorTargets.map((target) => `${target}.exe`)]
+      .map((name) => name.toLowerCase()),
+  );
+
+  return allowedNames.has(processName.toLowerCase()) && commandLineContainsPathArgument(commandLine, projectPath);
 }
 
 function findEditorProcessIdsForProject(project: ProjectContext): number[] {
   if (!IS_WINDOWS || !project.projectPath) return [];
 
-  const projectPath = escapePowerShellSingleQuoted(path.resolve(project.projectPath));
   const command = [
-    "$p = '", projectPath, "'.ToLowerInvariant(); ",
-    "Get-CimInstance Win32_Process | ",
-    "Where-Object { $_.Name -eq 'UnrealEditor.exe' -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($p) } | ",
-    "Select-Object -ExpandProperty ProcessId",
+    "$items = @(Get-CimInstance Win32_Process | ",
+    "Where-Object { $_.CommandLine -and ($_.Name -eq 'UnrealEditor.exe' -or $_.Name -like '*Editor.exe') } | ",
+    "Select-Object ProcessId, Name, CommandLine); ",
+    "ConvertTo-Json -InputObject $items -Compress",
   ].join("");
 
   try {
@@ -99,9 +140,25 @@ function findEditorProcessIdsForProject(project: ProjectContext): number[] {
       stdio: "pipe",
       encoding: "utf-8",
     });
-    return output
-      .split(/\r?\n/)
-      .map((line) => Number(line.trim()))
+    const processes = JSON.parse(output || "[]") as Array<{
+      ProcessId?: unknown;
+      Name?: unknown;
+      CommandLine?: unknown;
+    }>;
+    const editorTargets = listEditorTargets(project.projectPath);
+    return processes
+      .filter(
+        (process) =>
+          typeof process.Name === "string" &&
+          typeof process.CommandLine === "string" &&
+          isProjectEditorProcessCandidate(
+            process.Name,
+            process.CommandLine,
+            project.projectPath!,
+            editorTargets,
+          ),
+      )
+      .map((process) => Number(process.ProcessId))
       .filter((pid) => Number.isInteger(pid) && pid > 0);
   } catch {
     return [];
@@ -317,6 +374,65 @@ export interface BuildResult {
   exitCode: number | null;
 }
 
+function listEditorTargets(projectPath: string): string[] {
+  const sourceDir = path.join(path.dirname(projectPath), "Source");
+  if (!fs.existsSync(sourceDir)) return [];
+
+  return fs
+    .readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /Editor\.Target\.cs$/i.test(entry.name))
+    .map((entry) => entry.name.slice(0, -".Target.cs".length))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+/** Resolve the UBT editor target without assuming it matches the .uproject filename. */
+export function resolveEditorTarget(projectPath: string, requestedTarget?: string): string {
+  if (requestedTarget?.trim()) return requestedTarget.trim();
+
+  const resolvedPath = path.resolve(projectPath);
+  const projectName = path.basename(resolvedPath, ".uproject");
+  const candidates = listEditorTargets(resolvedPath);
+  const filenameMatch = candidates.find(
+    (candidate) => candidate.toLowerCase() === `${projectName}Editor`.toLowerCase(),
+  );
+  if (filenameMatch) return filenameMatch;
+
+  try {
+    const descriptor = JSON.parse(fs.readFileSync(resolvedPath, "utf8")) as {
+      Modules?: Array<{ Name?: unknown }>;
+    };
+    const moduleNames = new Set(
+      (descriptor.Modules ?? [])
+        .map((module) => (typeof module.Name === "string" ? module.Name.toLowerCase() : ""))
+        .filter(Boolean),
+    );
+    const moduleMatch = candidates.find((candidate) => {
+      const baseName = candidate.replace(/Editor$/i, "").toLowerCase();
+      return moduleNames.has(baseName);
+    });
+    if (moduleMatch) return moduleMatch;
+  } catch {
+    // A malformed descriptor is reported by UBT; target discovery can still
+    // use an unambiguous Target.cs filename or the compatibility fallback.
+  }
+
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) {
+    throw new Error(
+      `Multiple editor targets found (${candidates.join(", ")}). Pass target explicitly.`,
+    );
+  }
+
+  return `${projectName}Editor`;
+}
+
+function quoteWindowsBatchArgument(value: string): string {
+  if (value.includes("\0") || value.includes('"')) {
+    throw new Error("Windows batch arguments cannot contain NUL or double-quote characters.");
+  }
+  return `"${value}"`;
+}
+
 function getPlatformString(): string {
   if (IS_WINDOWS) return "Win64";
   if (process.platform === "darwin") return "Mac";
@@ -325,7 +441,7 @@ function getPlatformString(): string {
 
 export async function buildProject(
   projectPath: string,
-  opts: { onOutput?: (line: string) => void } = {},
+  opts: { onOutput?: (line: string) => void; target?: string } = {},
 ): Promise<BuildResult> {
   const buildTool = findUEBuildTool();
   if (!buildTool) {
@@ -342,8 +458,16 @@ export async function buildProject(
     return { success: false, exitCode: null, message: `Project file not found: ${resolvedPath}` };
   }
 
-  const projectName = path.basename(resolvedPath, ".uproject");
-  const target = `${projectName}Editor`;
+  let target: string;
+  try {
+    target = resolveEditorTarget(resolvedPath, opts.target);
+  } catch (error) {
+    return {
+      success: false,
+      exitCode: null,
+      message: `Could not resolve editor target: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   const platform = getPlatformString();
 
   const buildArgs = [target, platform, "Development", `-Project=${resolvedPath}`, "-WaitMutex", "-FromMsBuild"];
@@ -351,7 +475,16 @@ export async function buildProject(
   return new Promise((resolve) => {
     let proc;
     if (IS_WINDOWS) {
-      proc = spawn("cmd.exe", ["/d", "/s", "/c", buildTool, ...buildArgs], { shell: false, stdio: "pipe" });
+      const command = [buildTool, ...buildArgs]
+        .map(quoteWindowsBatchArgument)
+        .join(" ");
+      // Batch files require cmd.exe. Passing one fully quoted command string
+      // prevents a spaced Engine or project path from being split by cmd.
+      proc = spawn("cmd.exe", ["/d", "/v:off", "/s", "/c", `"${command}"`], {
+        shell: false,
+        stdio: "pipe",
+        windowsVerbatimArguments: true,
+      });
     } else {
       proc = spawn(buildTool, buildArgs, { shell: false, stdio: "pipe" });
     }
