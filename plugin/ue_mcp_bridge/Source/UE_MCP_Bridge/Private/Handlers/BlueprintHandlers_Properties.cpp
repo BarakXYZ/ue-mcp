@@ -213,6 +213,44 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetComponentProperty(const TSharedPtr
 			*ComponentName, *FString::Join(Available, TEXT(", "))));
 	}
 
+	// A Blueprint-authored scene attachment stores its socket on the USCS_Node,
+	// not only on the component template. Writing AttachSocketName on the
+	// template alone appears correct when read back but is discarded when the
+	// construction script calls SetupAttachment using USCS_Node::AttachToName.
+	// Keep both representations coherent so the generic property API has the
+	// runtime behavior its name promises.
+	USCS_Node* AttachmentNode = nullptr;
+	FName PreviousAttachToName = NAME_None;
+	const bool bSetsAttachSocketName = PropertyName.Equals(TEXT("AttachSocketName"), ESearchCase::CaseSensitive);
+	if (bSetsAttachSocketName)
+	{
+		if (bIsInherited)
+		{
+			return MCPError(TEXT("AttachSocketName belongs to the defining Blueprint's SCS node; edit that Blueprint instead of an inherited component override"));
+		}
+
+		if (!Cast<USceneComponent>(Template) || !Blueprint->SimpleConstructionScript)
+		{
+			return MCPError(TEXT("AttachSocketName requires a scene component authored in this Blueprint's SCS"));
+		}
+
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node && (Node->ComponentTemplate == Template || Node->GetVariableName().ToString() == ComponentName))
+			{
+				AttachmentNode = Node;
+				break;
+			}
+		}
+
+		if (!AttachmentNode)
+		{
+			return MCPError(FString::Printf(TEXT("SCS node not found for scene component: %s"), *ComponentName));
+		}
+
+		PreviousAttachToName = AttachmentNode->AttachToName;
+	}
+
 	// Walk dotted path to the final property. The helper from HandlerJsonProperty.h
 	// does the assignment (handles FVector objects, object refs, arrays, etc.);
 	// here we duplicate the walk once so we can also capture PrevValue for rollback.
@@ -260,17 +298,30 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetComponentProperty(const TSharedPtr
 	FString PrevValue;
 	FinalProp->ExportText_Direct(PrevValue, ValuePtr, ValuePtr, nullptr, PPF_None);
 
+	Blueprint->Modify();
 	Template->Modify();
+	if (AttachmentNode)
+	{
+		AttachmentNode->Modify();
+	}
 	FString SetErr;
 	if (!MCPJsonProperty::SetJsonOnProperty(FinalProp, ValuePtr, ValueField, SetErr))
 	{
 		return MCPError(FString::Printf(TEXT("Failed to set '%s': %s"), *PropertyName, *SetErr));
 	}
 
+	bool bSCSAttachmentChanged = false;
+	if (AttachmentNode)
+	{
+		const FName NewAttachToName = CastChecked<USceneComponent>(Template)->GetAttachSocketName();
+		bSCSAttachmentChanged = AttachmentNode->AttachToName != NewAttachToName;
+		AttachmentNode->AttachToName = NewAttachToName;
+	}
+
 	// Re-export for the rollback payload and no-op detection.
 	FString NewValue;
 	FinalProp->ExportText_Direct(NewValue, ValuePtr, ValuePtr, nullptr, PPF_None);
-	if (NewValue == PrevValue)
+	if (NewValue == PrevValue && !bSCSAttachmentChanged)
 	{
 		auto Noop = MCPSuccess();
 		MCPSetExisted(Noop);
@@ -282,6 +333,10 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetComponentProperty(const TSharedPtr
 	}
 
 	Template->PostEditChange();
+	if (bSCSAttachmentChanged)
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	}
 
 	// Compile and save
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
@@ -294,6 +349,11 @@ TSharedPtr<FJsonValue> FBlueprintHandlers::SetComponentProperty(const TSharedPtr
 	Result->SetStringField(TEXT("propertyName"), PropertyName);
 	Result->SetStringField(TEXT("value"), NewValue);
 	Result->SetBoolField(TEXT("inherited"), bIsInherited);
+	if (AttachmentNode)
+	{
+		Result->SetStringField(TEXT("attachToName"), AttachmentNode->AttachToName.ToString());
+		Result->SetStringField(TEXT("previousAttachToName"), PreviousAttachToName.ToString());
+	}
 
 	// Rollback: self-inverse with previous value
 	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();

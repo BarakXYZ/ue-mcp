@@ -36,6 +36,7 @@ For any existing Blueprint:
 
 - `add_component` creates a node in the Simple Construction Script. Pass `parentComponent` to put the new component under an existing parent — otherwise it becomes a top-level child of the scene root.
 - `set_component_property` writes on the child BP's InheritableComponentHandler override template, not on the parent — the parent stays untouched. This matters when editing inherited components.
+- For a scene component authored in the current Blueprint, setting `AttachSocketName` also updates `USCS_Node::AttachToName`, which is the attachment metadata the construction script consumes at runtime. Edit the defining Blueprint rather than trying to override an inherited component's socket.
 - `read_component_properties` dumps every UPROPERTY on the template, including array contents.
 - `reparent_component` moves an SCS node to a new parent.
 
